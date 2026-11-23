@@ -1,5 +1,5 @@
 -- ==========================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v12
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v13
 -- Pure Monochrome (Black & White, zero emojis)
 -- ==========================================================
 
@@ -11,7 +11,7 @@ local lp = Players.LocalPlayer
 local pg = lp:WaitForChild("PlayerGui")
 
 -- ==========================================================
--- 1. ABSOLUTE MOVEMENT UNFREEZER (Instant Revert, No Stutter)
+-- 1. ABSOLUTE MOVEMENT UNFREEZER
 -- ==========================================================
 local function unfreezeControls()
 	pcall(function()
@@ -83,7 +83,7 @@ task.spawn(function()
 			end
 
 			for _, g in ipairs(pg:GetChildren()) do
-				if g:IsA("ScreenGui") and g.Name ~= "RH_Wardrobe_v12" then
+				if g:IsA("ScreenGui") and g.Name ~= "RH_Wardrobe_v13" then
 					for _, child in ipairs(g:GetChildren()) do
 						if (child:IsA("TextButton") or child:IsA("TextLabel")) and child.Visible then
 							local t = child.Text:lower()
@@ -99,9 +99,9 @@ task.spawn(function()
 end)
 
 -- ==========================================================
--- 2. CLONE-BASED MULTI-LAYER ENGINE (Equip Multiple Items!)
+-- 2. PRECISION JOINT-PRESERVING MULTI-LAYER ENGINE
 -- ==========================================================
-local clonedWornLayers = {}
+local savedWornLayers = {}
 
 local standardBodyParts = {
 	["Head"] = true, ["Torso"] = true, ["UpperTorso"] = true, ["LowerTorso"] = true,
@@ -111,38 +111,108 @@ local standardBodyParts = {
 	["LeftUpperLeg"] = true, ["RightUpperLeg"] = true, ["Humanoid"] = true, ["Animate"] = true,
 }
 
-local function snapshotAndCloneLayers()
+local function snapshotCurrentOutfit()
 	local char = lp.Character
 	if not char then return end
 
 	for _, child in ipairs(char:GetChildren()) do
-		if (child:IsA("Accessory") or child:IsA("Model")) and not standardBodyParts[child.Name] then
+		if (child:IsA("Accessory") or child:IsA("Model")) and not standardBodyParts[child.Name] and not child.Name:find("_Layer") then
 			pcall(function()
 				child.Archivable = true
 				local copy = child:Clone()
+
+				local weldList = {}
+				for _, w in ipairs(child:GetDescendants()) do
+					if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) and w.Part1 and w.Part1:IsDescendantOf(char) then
+						table.insert(weldList, {
+							part0Name = w.Part0 and w.Part0.Name or "",
+							part1Name = w.Part1.Name,
+							c0 = (w:IsA("Motor6D") or w:IsA("Weld")) and w.C0 or nil,
+							c1 = (w:IsA("Motor6D") or w:IsA("Weld")) and w.C1 or nil,
+							className = w.ClassName,
+						})
+					end
+				end
+
 				for _, d in ipairs(copy:GetDescendants()) do
 					if d.Name:lower():find("tryon") then d:Destroy() end
 				end
 				copy:SetAttribute("IsTryOn", nil)
 				copy:SetAttribute("TryOn", nil)
-				clonedWornLayers[child.Name] = copy
+
+				savedWornLayers[child.Name] = {
+					clone = copy,
+					welds = weldList,
+					isAccessory = child:IsA("Accessory"),
+					isModel = child:IsA("Model"),
+					name = child.Name,
+				}
 			end)
 		end
 	end
 end
 
-local function restoreClonedLayers()
+local function restoreAllSavedLayers()
 	local char = lp.Character
 	if not char then return end
 
-	for name, copy in pairs(clonedWornLayers) do
-		if not char:FindFirstChild(name) and not char:FindFirstChild(name .. "_Layer") then
+	local hum = char:FindFirstChildOfClass("Humanoid")
+
+	for rawName, data in pairs(savedWornLayers) do
+		local layerName = rawName .. "_Layer"
+		if not char:FindFirstChild(rawName) and not char:FindFirstChild(layerName) then
 			pcall(function()
-				copy.Archivable = true
-				local restored = copy:Clone()
-				restored.Name = name .. "_Layer"
-				restored.Parent = char
+				if data.isAccessory and hum then
+					data.clone.Archivable = true
+					local acc = data.clone:Clone()
+					acc.Name = layerName
+					hum:AddAccessory(acc)
+				elseif data.isModel then
+					data.clone.Archivable = true
+					local mod = data.clone:Clone()
+					mod.Name = layerName
+
+					for _, wd in ipairs(data.welds) do
+						local p0 = mod:FindFirstChild(wd.part0Name, true)
+						local p1 = char:FindFirstChild(wd.part1Name)
+						if p0 and p1 then
+							if wd.className == "Motor6D" then
+								local m = Instance.new("Motor6D")
+								m.Part0 = p0
+								m.Part1 = p1
+								if wd.c0 then m.C0 = wd.c0 end
+								if wd.c1 then m.C1 = wd.c1 end
+								m.Parent = p0
+							elseif wd.className == "WeldConstraint" then
+								local wc = Instance.new("WeldConstraint")
+								wc.Part0 = p0
+								wc.Part1 = p1
+								wc.Parent = p0
+							else
+								local w = Instance.new("Weld")
+								w.Part0 = p0
+								w.Part1 = p1
+								if wd.c0 then w.C0 = wd.c0 end
+								if wd.c1 then w.C1 = wd.c1 end
+								w.Parent = p0
+							end
+						end
+					end
+
+					mod.Parent = char
+				end
 			end)
+		end
+	end
+end
+
+local function clearAllWornLayers()
+	savedWornLayers = {}
+	local char = lp.Character
+	if not char then return end
+	for _, child in ipairs(char:GetChildren()) do
+		if child.Name:find("_Layer") then
+			pcall(function() child:Destroy() end)
 		end
 	end
 end
@@ -216,7 +286,7 @@ local function triggerShopTryon(card)
 end
 
 local function equipItemDirectly(itemName, cardRef)
-	snapshotAndCloneLayers()
+	snapshotCurrentOutfit()
 
 	local card = cardRef or findLiveShopCard(itemName)
 	triggerShopTryon(card)
@@ -229,7 +299,7 @@ local function equipItemDirectly(itemName, cardRef)
 	task.spawn(function()
 		for i = 1, 8 do
 			task.wait(0.08)
-			restoreClonedLayers()
+			restoreAllSavedLayers()
 			unfreezeControls()
 		end
 	end)
@@ -472,11 +542,11 @@ scrapeAllShopItems()
 -- 6. MONOCHROME MOBILE GUI (Black & White, Zero Emojis)
 -- ==========================================================
 
-local existingGui = gethui():FindFirstChild("RH_Wardrobe_v12")
+local existingGui = gethui():FindFirstChild("RH_Wardrobe_v13")
 if existingGui then existingGui:Destroy() end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "RH_Wardrobe_v12"
+ScreenGui.Name = "RH_Wardrobe_v13"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -782,11 +852,11 @@ local equipBtn = mk("TextButton", {
 }, Inspector)
 corner(4, equipBtn)
 
-local saveBtn = mk("TextButton", {
+local clearLayersBtn = mk("TextButton", {
 	Size = UDim2.new(0.48, -4, 0, 28),
 	Position = UDim2.new(0.5, 2, 0, 130),
 	BackgroundColor3 = C.btn,
-	Text = "ADD TO RH DRESS-UP",
+	Text = "CLEAR WORN LAYERS",
 	TextColor3 = C.text,
 	Font = Enum.Font.GothamBold,
 	TextSize = 8.5,
@@ -794,8 +864,8 @@ local saveBtn = mk("TextButton", {
 	ZIndex = 26,
 	AutoButtonColor = false,
 }, Inspector)
-corner(4, saveBtn)
-stroke(1, C.border, saveBtn)
+corner(4, clearLayersBtn)
+stroke(1, C.border, clearLayersBtn)
 
 local selectedItem = nil
 local selectedCategory = "Heels"
@@ -838,11 +908,11 @@ equipBtn.MouseButton1Click:Connect(function()
 	end)
 end)
 
-saveBtn.MouseButton1Click:Connect(function()
-	if not selectedItem then return end
-	saveBtn.Text = "SAVED IN DRESS-UP!"
+clearLayersBtn.MouseButton1Click:Connect(function()
+	clearAllWornLayers()
+	clearLayersBtn.Text = "CLEARED!"
 	task.delay(1.2, function()
-		saveBtn.Text = "ADD TO RH DRESS-UP"
+		clearLayersBtn.Text = "CLEAR WORN LAYERS"
 	end)
 end)
 
@@ -1213,4 +1283,4 @@ UIS.InputChanged:Connect(function(input)
 	end
 end)
 
-print("[RH Wardrobe v12] Loaded successfully with clone multi-layering, instant unfreeze, and all-item shop scraper.")
+print("[RH Wardrobe v13] Loaded successfully with joint-preserving multi-layer engine.")
