@@ -11,8 +11,10 @@
 --    - Background category tab invoker that forces pg.Shop to render all items
 --    - Direct metadata scraper from ReplicatedStorage
 --    - Master catalog covering all Halos, Skirts, Heels, Bodices & Accessories
--- 3. Live Search Bar for immediate item filtering
--- 4. 100% Butter-smooth 60 FPS movement & touch controls
+-- 3. Automatic Off-Sale Search Invoker:
+--    - Automatically queries shop search box & off-sale filters for off-sale items like LTBS
+-- 4. Live Search Bar for immediate item filtering
+-- 5. 100% Butter-smooth 60 FPS movement & touch controls
 -- ==========================================================
 
 local Players = game:GetService("Players")
@@ -298,7 +300,7 @@ local function addItem(cat, item)
 	table.insert(categories[cat], item)
 end
 
--- Compact comprehensive database of Royale High items: {cat, name, price, img, hasToggles}
+-- Database of Royale High items: {cat, name, price, img, hasToggles}
 local masterCatalog = {
 	-- HALOS
 	{"Halos", "Glimmering Light Halo", "Special / Halo", "rbxassetid://6025681860", false},
@@ -662,8 +664,37 @@ end
 scrapeAllShopItems()
 
 -- ==========================================================
--- 6. SMART MULTI-LAYER EQUIP CONTROLLER
+-- 6. SMART MULTI-LAYER EQUIP CONTROLLER (WITH SEARCH INVOKER)
 -- ==========================================================
+local function searchShopForItem(itemName)
+	local shop = pg:FindFirstChild("Shop")
+	if not shop then return end
+
+	-- Find search box inside Shop and trigger search
+	for _, d in ipairs(shop:GetDescendants()) do
+		if d:IsA("TextBox") and (d.Name:lower():find("search") or (d.PlaceholderText and d.PlaceholderText:lower():find("search"))) then
+			pcall(function()
+				d.Text = itemName
+				if getconnections then
+					for _, c in pairs(getconnections(d.FocusLost)) do c:Fire(true) end
+				end
+			end)
+		end
+	end
+
+	-- Also enable off-sale / all items filter if present
+	for _, d in ipairs(shop:GetDescendants()) do
+		if (d:IsA("TextButton") or d:IsA("ImageButton")) and (d.Name:lower():find("offsale") or (d:IsA("TextButton") and d.Text:lower():find("offsale"))) then
+			pcall(function()
+				if firesignal then firesignal(d.MouseButton1Click) end
+				if getconnections then
+					for _, c in pairs(getconnections(d.MouseButton1Click)) do c:Fire() end
+				end
+			end)
+		end
+	end
+end
+
 local function findLiveShopCard(itemName)
 	local shop = pg:FindFirstChild("Shop")
 	if not shop then return nil end
@@ -677,6 +708,20 @@ local function findLiveShopCard(itemName)
 			end
 		end
 	end
+
+	-- Auto-search off-sale item in live shop
+	searchShopForItem(itemName)
+	task.wait(0.12)
+
+	for _, d in ipairs(shop:GetDescendants()) do
+		if d:IsA("Frame") and (d:FindFirstChild("Tryon") or d:FindFirstChild("Button")) then
+			local n = d:FindFirstChild("name")
+			if (n and n:IsA("TextLabel") and n.Text:lower() == lower) or d.Name:lower() == lower then
+				return d
+			end
+		end
+	end
+
 	return nil
 end
 
