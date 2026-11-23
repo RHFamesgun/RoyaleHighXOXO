@@ -1,60 +1,371 @@
 -- ==========================================================
--- ROYALE HIGH EXACT EQUIP ACTION SNIFFER
+-- ROYALE HIGH OMNISCIENT GAME SCANNER & LIVE DATA CAPTURE
+-- Completely non-intrusive: Does NOT hook metatables.
+-- Clean monochrome UI with live progress counters.
+-- Automatically scans everything:
+--   - All Shop Directory Folders & ScrollingFrames
+--   - GetAssetList deep inspection
+--   - CharacterCreation & StarterDressUp modules
+--   - ReplicatedStorage item datasets & definitions
+--   - Off-sale, on-sale, seasonal, unreleased, halos, wings
+--   - Dumps image IDs, rect offsets, rect sizes, prices, toggles
 -- ==========================================================
+
 local Players = game:GetService("Players")
-local rep = game:GetService("ReplicatedStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local lp = Players.LocalPlayer
+local pg = lp:WaitForChild("PlayerGui")
 
-local captured = {}
-local function record(text)
-    table.insert(captured, text)
-    print("[SNIFFER] " .. text)
+local function getGuiContainer()
+	if gethui then
+		local s, h = pcall(gethui)
+		if s and h then return h end
+	end
+	local s, cg = pcall(function() return game:GetService("CoreGui") end)
+	if s and cg then return cg end
+	return pg
 end
 
-record("=== SNIFFER ACTIVE: GO PUT ON ANY ITEM IN-GAME NOW ===")
+local container = getGuiContainer()
+local oldGui = container:FindFirstChild("RH_OmniScanner")
+if oldGui then oldGui:Destroy() end
 
--- Hook RemoteEvents & RemoteFunctions
-local oldNamecall
-oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-    local method = getnamecallmethod()
-    local args = {...}
-    
-    if method == "FireServer" or method == "InvokeServer" then
-        local fullName = tostring(self:GetFullName())
-        local nameLower = fullName:lower()
-        if nameLower:find("equip") or nameLower:find("wear") or nameLower:find("outfit") 
-            or nameLower:find("accessory") or nameLower:find("custom") or nameLower:find("item")
-            or nameLower:find("closet") or nameLower:find("dressup") then
-            
-            local argDump = {}
-            for i, arg in ipairs(args) do
-                argDump[i] = typeof(arg) .. ": " .. tostring(arg)
-            end
-            local line = string.format("[%s] %s -> Args: (%s)", method, fullName, table.concat(argDump, ", "))
-            record(line)
-            
-            if setclipboard then
-                setclipboard(table.concat(captured, "\n"))
-            end
-        end
-    end
-    return oldNamecall(self, ...)
-end))
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "RH_OmniScanner"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = container
 
--- Also watch Character for newly attached objects
-if lp.Character then
-    lp.Character.ChildAdded:Connect(function(child)
-        if child:IsA("Accessory") or child:IsA("Model") then
-            record("[CHAR NEW ITEM] Class: " .. child.ClassName .. " | Name: " .. child.Name)
-            if setclipboard then
-                setclipboard(table.concat(captured, "\n"))
-            end
-        end
-    end)
+local Main = Instance.new("Frame")
+Main.Size = UDim2.new(0, 310, 0, 360)
+Main.Position = UDim2.new(0.5, -155, 0.5, -180)
+Main.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+Main.BorderSizePixel = 0
+Main.Active = true
+Main.Draggable = true
+Main.Parent = ScreenGui
+
+local c1 = Instance.new("UICorner")
+c1.CornerRadius = UDim.new(0, 8)
+c1.Parent = Main
+
+local s1 = Instance.new("UIStroke")
+s1.Thickness = 1.5
+s1.Color = Color3.fromRGB(200, 200, 200)
+s1.Parent = Main
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -20, 0, 30)
+Title.Position = UDim2.new(0, 10, 0, 8)
+Title.BackgroundTransparency = 1
+Title.Text = "ROYALE HIGH OMNI SCANNER"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 12
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = Main
+
+local SubTitle = Instance.new("TextLabel")
+SubTitle.Size = UDim2.new(1, -20, 0, 18)
+SubTitle.Position = UDim2.new(0, 10, 0, 34)
+SubTitle.BackgroundTransparency = 1
+SubTitle.Text = "Open shop/dress-up & tap START SCAN"
+SubTitle.TextColor3 = Color3.fromRGB(140, 140, 140)
+SubTitle.Font = Enum.Font.Gotham
+SubTitle.TextSize = 9
+SubTitle.TextXAlignment = Enum.TextXAlignment.Left
+SubTitle.Parent = Main
+
+local LogBox = Instance.new("ScrollingFrame")
+LogBox.Size = UDim2.new(1, -20, 0, 210)
+LogBox.Position = UDim2.new(0, 10, 0, 58)
+LogBox.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
+LogBox.BorderSizePixel = 0
+LogBox.ScrollBarThickness = 3
+LogBox.CanvasSize = UDim2.new(0, 0, 0, 0)
+LogBox.Parent = Main
+
+local c2 = Instance.new("UICorner")
+c2.CornerRadius = UDim.new(0, 6)
+c2.Parent = LogBox
+
+local s2 = Instance.new("UIStroke")
+s2.Thickness = 1
+s2.Color = Color3.fromRGB(50, 50, 50)
+s2.Parent = LogBox
+
+local LogText = Instance.new("TextLabel")
+LogText.Size = UDim2.new(1, -12, 1, -12)
+LogText.Position = UDim2.new(0, 6, 0, 6)
+LogText.BackgroundTransparency = 1
+LogText.Text = "Ready. Open your in-game Shop or Dress-Up and tap START SCAN."
+LogText.TextColor3 = Color3.fromRGB(220, 220, 220)
+LogText.Font = Enum.Font.Code
+LogText.TextSize = 8.5
+LogText.TextXAlignment = Enum.TextXAlignment.Left
+LogText.TextYAlignment = Enum.TextYAlignment.Top
+LogText.TextWrapped = true
+LogText.Parent = LogBox
+
+local ScanBtn = Instance.new("TextButton")
+ScanBtn.Size = UDim2.new(0.5, -14, 0, 36)
+ScanBtn.Position = UDim2.new(0, 10, 1, -46)
+ScanBtn.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+ScanBtn.TextColor3 = Color3.fromRGB(10, 10, 10)
+ScanBtn.Text = "START SCAN"
+ScanBtn.Font = Enum.Font.GothamBold
+ScanBtn.TextSize = 10
+ScanBtn.BorderSizePixel = 0
+ScanBtn.AutoButtonColor = false
+ScanBtn.Parent = Main
+
+local c3 = Instance.new("UICorner")
+c3.CornerRadius = UDim.new(0, 6)
+c3.Parent = ScanBtn
+
+local CopyBtn = Instance.new("TextButton")
+CopyBtn.Size = UDim2.new(0.5, -14, 0, 36)
+CopyBtn.Position = UDim2.new(0.5, 4, 1, -46)
+CopyBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+CopyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CopyBtn.Text = "COPY ALL DATA"
+CopyBtn.Font = Enum.Font.GothamBold
+CopyBtn.TextSize = 10
+CopyBtn.BorderSizePixel = 0
+CopyBtn.AutoButtonColor = false
+CopyBtn.Parent = Main
+
+local c4 = Instance.new("UICorner")
+c4.CornerRadius = UDim.new(0, 6)
+c4.Parent = CopyBtn
+
+local s3 = Instance.new("UIStroke")
+s3.Thickness = 1
+s3.Color = Color3.fromRGB(80, 80, 80)
+s3.Parent = CopyBtn
+
+local logs = {}
+local scannedItems = {}
+local isScanning = false
+
+local function appendLog(txt)
+	table.insert(logs, txt)
+	local disp = table.concat(logs, "\n")
+	LogText.Text = disp
+	LogText.Size = UDim2.new(1, -12, 0, #logs * 14 + 20)
+	LogBox.CanvasSize = UDim2.new(0, 0, 0, #logs * 14 + 24)
+	LogBox.CanvasPosition = Vector2.new(0, LogBox.CanvasSize.Y.Offset)
 end
 
-task.delay(30, function()
-    record("=== SNIFFER FINISHED (30s) ===")
-    local full = table.concat(captured, "\n")
-    if setclipboard then setclipboard(full) end
+local function cleanStr(s)
+	if not s then return "" end
+	s = tostring(s):gsub("[\128-\255]", "")
+	return s:match("^%s*(.-)%s*$")
+end
+
+local function recordItem(source, name, cat, price, img, rOff, rSz, toggles, extra)
+	name = cleanStr(name)
+	if not name or name == "" or #name < 2 or name == "Frame" or name == "Template" then return end
+	local key = name:lower()
+	if scannedItems[key] then return end
+	
+	scannedItems[key] = {
+		source = source,
+		name = name,
+		category = cat or "Misc",
+		price = cleanStr(price),
+		image = tostring(img or ""),
+		rectOffset = tostring(rOff or "0, 0"),
+		rectSize = tostring(rSz or "0, 0"),
+		hasToggles = tostring(toggles == true),
+		details = cleanStr(extra),
+	}
+end
+
+local function extractCardData(frame, defaultCat, sourceTag)
+	if not frame:IsA("Frame") then return end
+	local itemName = frame.Name
+	local nameObj = frame:FindFirstChild("name") or frame:FindFirstChild("Title") or frame:FindFirstChild("ItemName")
+	if nameObj and nameObj:IsA("TextLabel") and cleanStr(nameObj.Text) ~= "" then
+		itemName = cleanStr(nameObj.Text)
+	end
+	
+	local priceStr = ""
+	local priceObj = frame:FindFirstChild("price") or frame:FindFirstChild("Cost")
+	if priceObj and priceObj:IsA("TextLabel") then
+		priceStr = priceObj.Text
+	end
+	
+	local descStr = ""
+	local descObj = frame:FindFirstChild("smalldescription") or frame:FindFirstChild("note")
+	if descObj and descObj:IsA("TextLabel") then
+		descStr = descObj.Text
+	end
+	
+	local imgId, rOff, rSz = "", Vector2.new(0, 0), Vector2.new(0, 0)
+	for _, child in ipairs(frame:GetDescendants()) do
+		if child:IsA("ImageLabel") and child.Visible and child.Image ~= "" then
+			if not child.Image:find("3570695787") and not child.Name:find("Background") and not child.Name:find("Arrow") then
+				imgId = child.Image
+				rOff = child.ImageRectOffset
+				rSz = child.ImageRectSize
+				break
+			end
+		end
+	end
+	
+	local hasToggles = frame:FindFirstChild("sliderwrapper") ~= nil or frame:FindFirstChild("CurrentImage") ~= nil
+	recordItem(sourceTag, itemName, defaultCat, priceStr, imgId, rOff, rSz, hasToggles, descStr)
+end
+
+local function runOmniScan()
+	if isScanning then return end
+	isScanning = true
+	ScanBtn.Text = "SCANNING..."
+	table.clear(logs)
+	table.clear(scannedItems)
+	
+	appendLog("=== STARTING DEEP OMNI-SCAN ===")
+	
+	-- 1. Scan PlayerGui Shop Directory
+	pcall(function()
+		local shop = pg:FindFirstChild("Shop")
+		if shop then
+			appendLog("[+] Found PlayerGui.Shop")
+			local dir = shop:FindFirstChild("Directory")
+			if dir then
+				for _, folder in ipairs(dir:GetChildren()) do
+					appendLog(" -> Checking Directory folder: " .. folder.Name)
+					
+					-- Try GetAssetList
+					local getAsset = folder:FindFirstChild("GetAssetList")
+					if getAsset and getAsset:IsA("BindableFunction") then
+						pcall(function()
+							local res = getAsset:Invoke()
+							if type(res) == "table" then
+								local ct = 0
+								for k, v in pairs(res) do
+									ct = ct + 1
+									if type(v) == "table" then
+										local n = v.Name or v.Item or v.Title or v.ItemName or (type(k) == "string" and k)
+										local p = v.Price or v.Cost or ""
+										local d = v.Description or v.Desc or ""
+										local img = v.Image or v.Icon or v.Thumbnail or ""
+										local ro = v.ImageRectOffset
+										local rs = v.ImageRectSize
+										local tog = v.Toggles ~= nil or v.hasToggles ~= nil
+										recordItem("GetAssetList:" .. folder.Name, n, folder.Name, p, img, ro, rs, tog, d)
+									elseif type(v) == "string" then
+										recordItem("GetAssetList:" .. folder.Name, v, folder.Name, "", "", nil, nil, false, "")
+									end
+								end
+								appendLog("    - GetAssetList returned " .. ct .. " raw entries")
+							end
+						end)
+					end
+					
+					-- Traverse scrolling frames in folder
+					for _, desc in ipairs(folder:GetDescendants()) do
+						if desc:IsA("ScrollingFrame") then
+							for _, card in ipairs(desc:GetChildren()) do
+								extractCardData(card, folder.Name, "ShopDir:" .. folder.Name)
+							end
+						end
+					end
+				end
+			end
+			
+			-- Catch all other scrolling frames inside Shop
+			for _, sf in ipairs(shop:GetDescendants()) do
+				if sf:IsA("ScrollingFrame") and sf.Name ~= "CategoryList" then
+					for _, card in ipairs(sf:GetChildren()) do
+						extractCardData(card, "ShopGeneral", "ShopGeneral")
+					end
+				end
+			end
+		else
+			appendLog("[-] PlayerGui.Shop not open/loaded yet")
+		end
+	end)
+	
+	-- 2. Scan CharacterCreation & StarterDressUpHUD
+	pcall(function()
+		local cc = pg:FindFirstChild("CharacterCreation")
+		if cc then
+			appendLog("[+] Found CharacterCreation GUI")
+			for _, sf in ipairs(cc:GetDescendants()) do
+				if sf:IsA("ScrollingFrame") then
+					for _, card in ipairs(sf:GetChildren()) do
+						extractCardData(card, "DressUp", "CharacterCreation")
+					end
+				end
+			end
+		end
+	end)
+	
+	-- 3. Scan ReplicatedStorage Data Modules
+	pcall(function()
+		appendLog("[+] Scanning ReplicatedStorage for Item Data Modules...")
+		for _, d in ipairs(ReplicatedStorage:GetDescendants()) do
+			if d:IsA("ModuleScript") then
+				local nl = d.Name:lower()
+				if nl:find("item") or nl:find("asset") or nl:find("clothing") or nl:find("shop") or nl:find("wing") or nl:find("shoe") or nl:find("skirt") then
+					pcall(function()
+						local data = require(d)
+						if type(data) == "table" then
+							local ct = 0
+							for k, v in pairs(data) do
+								ct = ct + 1
+								if type(v) == "table" then
+									local n = v.Name or v.Title or v.Item or (type(k) == "string" and k)
+									local p = v.Price or v.Cost or ""
+									local dsc = v.Description or ""
+									local im = v.Image or v.Icon or ""
+									recordItem("Module:" .. d.Name, n, d.Name, p, im, v.ImageRectOffset, v.ImageRectSize, false, dsc)
+								elseif type(v) == "string" then
+									recordItem("Module:" .. d.Name, v, d.Name, "", "", nil, nil, false, "")
+								end
+							end
+							appendLog(" -> Module '" .. d.Name .. "' loaded " .. ct .. " items")
+						end
+					end)
+				end
+			end
+		end
+	end)
+	
+	local totalCount = 0
+	for _ in pairs(scannedItems) do totalCount = totalCount + 1 end
+	appendLog("=== OMNI-SCAN COMPLETED ===")
+	appendLog("Total Unique Items Found: " .. totalCount)
+	appendLog("Tap 'COPY ALL DATA' to copy full dump to clipboard.")
+	
+	ScanBtn.Text = "SCAN COMPLETE (" .. totalCount .. ")"
+	isScanning = false
+end
+
+ScanBtn.MouseButton1Click:Connect(runOmniScan)
+
+CopyBtn.MouseButton1Click:Connect(function()
+	local lines = {"=== ROYALE HIGH OMNI DATA DUMP ==="}
+	local count = 0
+	for _, it in pairs(scannedItems) do
+		count = count + 1
+		table.insert(lines, string.format(
+			"ITEM: %s | CAT: %s | PRICE: %s | IMG: %s | ROFF: %s | RSZ: %s | TOGGLES: %s | SRC: %s",
+			it.name, it.category, it.price, it.image, it.rectOffset, it.rectSize, it.hasToggles, it.source
+		))
+	end
+	table.insert(lines, "=== TOTAL ITEMS: " .. count .. " ===")
+	local full = table.concat(lines, "\n")
+	if setclipboard then
+		setclipboard(full)
+		CopyBtn.Text = "COPIED TO CLIPBOARD!"
+		task.delay(1.5, function() CopyBtn.Text = "COPY ALL DATA" end)
+	else
+		CopyBtn.Text = "CLIPBOARD NOT FOUND"
+	end
 end)
+
+print("[RH OmniScanner] Ready on screen.")
