@@ -1,5 +1,5 @@
 -- ==========================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v11
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v12
 -- Pure Monochrome (Black & White, zero emojis)
 -- ==========================================================
 
@@ -11,40 +11,64 @@ local lp = Players.LocalPlayer
 local pg = lp:WaitForChild("PlayerGui")
 
 -- ==========================================================
--- 1. ULTRA-LIGHTWEIGHT MOVEMENT GUARDIAN (ZERO LAG)
+-- 1. ABSOLUTE MOVEMENT UNFREEZER (Instant Revert, No Stutter)
 -- ==========================================================
-local function restoreFullMovement()
-	local char = lp.Character
-	if not char then return end
+local function unfreezeControls()
+	pcall(function()
+		local PlayerModule = lp:FindFirstChild("PlayerScripts") and lp.PlayerScripts:FindFirstChild("PlayerModule")
+		if PlayerModule then
+			local Controls = require(PlayerModule)
+			if Controls and Controls.GetControls then
+				Controls:GetControls():Enable()
+			end
+		end
+	end)
+	pcall(function()
+		ContextActionService:UnbindAction("FreezeMovement")
+		ContextActionService:UnbindAction("ShopFreeze")
+		ContextActionService:UnbindAction("TryOnFreeze")
+		ContextActionService:UnbindAction("DisableMovement")
+	end)
+end
 
-	local hum = char:FindFirstChildOfClass("Humanoid")
+local function bindMovementGuards(char)
+	if not char then return end
+	local hum = char:WaitForChild("Humanoid", 4)
+	local hrp = char:WaitForChild("HumanoidRootPart", 4)
+
 	if hum then
+		hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+			if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+		end)
+		hum:GetPropertyChangedSignal("JumpPower"):Connect(function()
+			if hum.JumpPower < 50 then hum.JumpPower = 50 end
+		end)
+		hum:GetPropertyChangedSignal("PlatformStand"):Connect(function()
+			if hum.PlatformStand then hum.PlatformStand = false end
+		end)
 		if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
 		if hum.JumpPower < 50 then hum.JumpPower = 50 end
 		if hum.PlatformStand then hum.PlatformStand = false end
 	end
 
-	local hrp = char:FindFirstChild("HumanoidRootPart")
-	if hrp and hrp.Anchored then hrp.Anchored = false end
+	if hrp then
+		hrp:GetPropertyChangedSignal("Anchored"):Connect(function()
+			if hrp.Anchored then hrp.Anchored = false end
+		end)
+		if hrp.Anchored then hrp.Anchored = false end
+	end
 
-	local torso = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso")
-	if torso and torso.Anchored then torso.Anchored = false end
-
-	pcall(function()
-		ContextActionService:UnbindAction("FreezeMovement")
-		ContextActionService:UnbindAction("ShopFreeze")
-		ContextActionService:UnbindAction("TryOnFreeze")
-	end)
+	unfreezeControls()
 end
 
-RunService.Heartbeat:Connect(function()
-	pcall(restoreFullMovement)
-end)
+if lp.Character then bindMovementGuards(lp.Character) end
+lp.CharacterAdded:Connect(bindMovementGuards)
 
 task.spawn(function()
 	while true do
 		task.wait(1.5)
 		pcall(function()
+			unfreezeControls()
 			local char = lp.Character
 			if char then
 				for _, c in ipairs(char:GetChildren()) do
@@ -59,7 +83,7 @@ task.spawn(function()
 			end
 
 			for _, g in ipairs(pg:GetChildren()) do
-				if g:IsA("ScreenGui") and g.Name ~= "RH_Wardrobe_v11" then
+				if g:IsA("ScreenGui") and g.Name ~= "RH_Wardrobe_v12" then
 					for _, child in ipairs(g:GetChildren()) do
 						if (child:IsA("TextButton") or child:IsA("TextLabel")) and child.Visible then
 							local t = child.Text:lower()
@@ -75,9 +99,9 @@ task.spawn(function()
 end)
 
 -- ==========================================================
--- 2. MULTI-LAYER CLOTHING PRESERVER
+-- 2. CLONE-BASED MULTI-LAYER ENGINE (Equip Multiple Items!)
 -- ==========================================================
-local wornLayersCache = {}
+local clonedWornLayers = {}
 
 local standardBodyParts = {
 	["Head"] = true, ["Torso"] = true, ["UpperTorso"] = true, ["LowerTorso"] = true,
@@ -87,31 +111,36 @@ local standardBodyParts = {
 	["LeftUpperLeg"] = true, ["RightUpperLeg"] = true, ["Humanoid"] = true, ["Animate"] = true,
 }
 
-local function captureWornLayers()
+local function snapshotAndCloneLayers()
 	local char = lp.Character
 	if not char then return end
 
 	for _, child in ipairs(char:GetChildren()) do
 		if (child:IsA("Accessory") or child:IsA("Model")) and not standardBodyParts[child.Name] then
-			if not wornLayersCache[child.Name] then
-				pcall(function()
-					child.Archivable = true
-					wornLayersCache[child.Name] = child:Clone()
-				end)
-			end
+			pcall(function()
+				child.Archivable = true
+				local copy = child:Clone()
+				for _, d in ipairs(copy:GetDescendants()) do
+					if d.Name:lower():find("tryon") then d:Destroy() end
+				end
+				copy:SetAttribute("IsTryOn", nil)
+				copy:SetAttribute("TryOn", nil)
+				clonedWornLayers[child.Name] = copy
+			end)
 		end
 	end
 end
 
-local function restoreWornLayers()
+local function restoreClonedLayers()
 	local char = lp.Character
 	if not char then return end
 
-	for name, original in pairs(wornLayersCache) do
-		if not char:FindFirstChild(name) then
+	for name, copy in pairs(clonedWornLayers) do
+		if not char:FindFirstChild(name) and not char:FindFirstChild(name .. "_Layer") then
 			pcall(function()
-				original.Archivable = true
-				local restored = original:Clone()
+				copy.Archivable = true
+				local restored = copy:Clone()
+				restored.Name = name .. "_Layer"
 				restored.Parent = char
 			end)
 		end
@@ -119,176 +148,8 @@ local function restoreWornLayers()
 end
 
 -- ==========================================================
--- 3. DRESS-UP INJECTION & SHOP TRIGGER
+-- 3. DYNAMIC SHOP SCRAPER & TRY-ON TRIGGER
 -- ==========================================================
-local savedItems = {}
-
-local categoryMapping = {
-	["Heels"] = "HeelMorphs",
-	["Skirts"] = "Skirts",
-	["Accessories"] = "Accessories",
-	["Wings"] = "Wings",
-}
-
-local function findLiveShopCard(itemName)
-	local shop = pg:FindFirstChild("Shop")
-	if not shop then return nil end
-
-	local dir = shop:FindFirstChild("Directory")
-	if not dir then return nil end
-
-	local lower = itemName:lower()
-	for _, folder in ipairs(dir:GetChildren()) do
-		local mp = folder:FindFirstChild("MiddlePanel")
-		local sf = mp and mp:FindFirstChild("ScrollingFrame")
-		if sf then
-			for _, card in ipairs(sf:GetChildren()) do
-				if card:IsA("Frame") then
-					local n = card:FindFirstChild("name")
-					if (n and n:IsA("TextLabel") and n.Text:lower() == lower) or card.Name:lower() == lower then
-						return card
-					end
-				end
-			end
-		end
-	end
-	return nil
-end
-
-local function activateCardTryon(card)
-	if not card then return false end
-	local btn = card:FindFirstChild("Tryon") or card:FindFirstChild("Button") or card:FindFirstChildWhichIsA("TextButton")
-	if not btn then return false end
-
-	pcall(function()
-		if firesignal then firesignal(btn.MouseButton1Click) end
-	end)
-	pcall(function()
-		if getconnections then
-			for _, con in pairs(getconnections(btn.MouseButton1Click)) do
-				con:Fire()
-			end
-		end
-	end)
-	return true
-end
-
-local function equipItemDirectly(itemName, cardRef)
-	captureWornLayers()
-
-	local card = cardRef or findLiveShopCard(itemName)
-	local triggered = activateCardTryon(card)
-
-	pcall(function()
-		local pe = pg.CharacterCreation.Inventory:FindFirstChild("PromptEquip")
-		if pe and pe:IsA("BindableEvent") then
-			pe:Fire(itemName)
-		end
-	end)
-
-	task.spawn(function()
-		for i = 1, 6 do
-			task.wait(0.08)
-			restoreFullMovement()
-			restoreWornLayers()
-		end
-	end)
-end
-
-local function performCardInjection(data)
-	local cc = pg:FindFirstChild("CharacterCreation")
-	if not cc then return end
-	local inv = cc:FindFirstChild("Inventory")
-	if not inv then return end
-	local inner = inv:FindFirstChild("Inner")
-	if not inner or not inner:IsA("ScrollingFrame") then return end
-
-	local itemName = data.name
-	local itemImage = data.image
-	local gameCatName = categoryMapping[data.category] or data.category or "Accessories"
-
-	local existing = inner:FindFirstChild(itemName)
-	if existing then
-		local cVal = existing:FindFirstChild("Category")
-		if cVal and cVal:IsA("StringValue") then cVal.Value = gameCatName end
-		return existing
-	end
-
-	local template = inv:FindFirstChild("ItemTemplate")
-	local newCard
-	if template and template:IsA("TextButton") then
-		newCard = template:Clone()
-	else
-		newCard = Instance.new("TextButton")
-		newCard.Size = UDim2.new(0, 72, 0, 72)
-		newCard.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
-		newCard.BorderSizePixel = 0
-	end
-
-	newCard.Name = itemName
-	newCard.Visible = true
-
-	local tip = newCard:FindFirstChild("Tooltip")
-	if tip and tip:IsA("TextLabel") then tip.Text = itemName end
-
-	local imgBtn = newCard:FindFirstChild("Image")
-	if imgBtn and (imgBtn:IsA("ImageLabel") or imgBtn:IsA("ImageButton")) then
-		if itemImage and itemImage ~= "" then imgBtn.Image = itemImage end
-	end
-
-	local q = newCard:FindFirstChild("QuantityLabel")
-	if q and q:IsA("TextLabel") then q.Text = "1" end
-
-	local catVal = newCard:FindFirstChild("Category") or Instance.new("StringValue", newCard)
-	catVal.Name = "Category"
-	catVal.Value = gameCatName
-
-	local idVal = newCard:FindFirstChild("Id") or Instance.new("StringValue", newCard)
-	idVal.Name = "Id"
-	idVal.Value = itemName
-
-	newCard.MouseButton1Click:Connect(function()
-		equipItemDirectly(itemName, data.cardRef)
-	end)
-
-	newCard.Parent = inner
-	return newCard
-end
-
-local function addToDressUp(itemName, itemImage, uiCatName, cardRef)
-	pcall(function()
-		savedItems[itemName] = {
-			name = itemName,
-			image = itemImage,
-			category = uiCatName,
-			cardRef = cardRef,
-		}
-		performCardInjection(savedItems[itemName])
-	end)
-end
-
-task.spawn(function()
-	while true do
-		task.wait(2.0)
-		pcall(function()
-			local cc = pg:FindFirstChild("CharacterCreation")
-			local inv = cc and cc:FindFirstChild("Inventory")
-			local inner = inv and inv:FindFirstChild("Inner")
-			if inner then
-				for name, data in pairs(savedItems) do
-					if not inner:FindFirstChild(name) then
-						performCardInjection(data)
-					end
-				end
-			end
-		end)
-	end
-end)
-
--- ==========================================================
--- 4. MASTER CATALOG (NO DUPLICATE IMAGES | VERIFIED REAL ONLY)
--- ==========================================================
-
 local categories = {
 	["Heels"] = {},
 	["Skirts"] = {},
@@ -320,9 +181,66 @@ local function addItem(cat, item)
 	table.insert(categories[cat], item)
 end
 
+local function findLiveShopCard(itemName)
+	local shop = pg:FindFirstChild("Shop")
+	if not shop then return nil end
+
+	local lower = itemName:lower()
+	for _, d in ipairs(shop:GetDescendants()) do
+		if d:IsA("Frame") and (d:FindFirstChild("Tryon") or d:FindFirstChild("Button")) then
+			local n = d:FindFirstChild("name")
+			if (n and n:IsA("TextLabel") and n.Text:lower() == lower) or d.Name:lower() == lower then
+				return d
+			end
+		end
+	end
+	return nil
+end
+
+local function triggerShopTryon(card)
+	if not card then return false end
+	local btn = card:FindFirstChild("Tryon") or card:FindFirstChild("Button") or card:FindFirstChildWhichIsA("TextButton")
+	if not btn then return false end
+
+	pcall(function()
+		if firesignal then firesignal(btn.MouseButton1Click) end
+	end)
+	pcall(function()
+		if getconnections then
+			for _, con in pairs(getconnections(btn.MouseButton1Click)) do
+				con:Fire()
+			end
+		end
+	end)
+	return true
+end
+
+local function equipItemDirectly(itemName, cardRef)
+	snapshotAndCloneLayers()
+
+	local card = cardRef or findLiveShopCard(itemName)
+	triggerShopTryon(card)
+
+	pcall(function()
+		local pe = pg.CharacterCreation.Inventory:FindFirstChild("PromptEquip")
+		if pe and pe:IsA("BindableEvent") then pe:Fire(itemName) end
+	end)
+
+	task.spawn(function()
+		for i = 1, 8 do
+			task.wait(0.08)
+			restoreClonedLayers()
+			unfreezeControls()
+		end
+	end)
+end
+
+-- ==========================================================
+-- 4. MASTER CATALOG (REAL IMAGES & CLEAN PLACEHOLDERS)
+-- ==========================================================
+
 local realCatalogList = {
 	-- ═══ SKIRTS ═══
-	-- Real In-Game Extracted Images (Top)
 	{cat = "Skirts", name = "Goth Lolita Skirt", price = "Candy: 5,000", desc = "Quadruple layered tea-party skirt frilly and flowing topped with a silky bow.", img = "rbxassetid://7593465178", toggles = true},
 	{cat = "Skirts", name = "Steampunk Clockwork Skirt", price = "Candy: 10,000", desc = "Inventive utility belt skirt with ticking pocket watch that displays actual current time.", img = "rbxassetid://11119666945", toggles = true},
 	{cat = "Skirts", name = "Fountain Girl's Starfall Dreams Skirt", price = "Cash: 5,400", desc = "Celestial starfall layered gown.", img = "rbxassetid://107729124759456", toggles = true},
@@ -332,7 +250,6 @@ local realCatalogList = {
 	{cat = "Skirts", name = "Sleigh It Skirt", price = "Special / Holiday", desc = "Frilled-out fantastical skirt with smooth flocculent fringe.", img = "rbxassetid://8096555954", toggles = true},
 	{cat = "Skirts", name = "Cherry Blossom Rare Bloom Skirt", price = "Diamonds: 8,000", desc = "Slim a-line fit with floral-embroidered lace trim.", img = "rbxassetid://4961796719", toggles = false},
 
-	-- Off-Sale / Legacy Items (Sorted to bottom with clean placeholder)
 	{cat = "Skirts", name = "Large Train Bow Skirt", price = "Legacy / Off-Sale", desc = "The legendary Victorian royal gown reworked by Sukimeki with grand regal bustle and ruffles.", img = "", toggles = true},
 	{cat = "Skirts", name = "Fanned Out Bow Skirt", price = "Legacy / Off-Sale", desc = "Extremely rare collector's legacy ruffled bow skirt.", img = "", toggles = false},
 	{cat = "Skirts", name = "Velvet Bow Royal Mini-Skirt", price = "Legacy / Off-Sale", desc = "Classic royal legacy mini-skirt with velvet draping.", img = "", toggles = false},
@@ -349,7 +266,6 @@ local realCatalogList = {
 	{cat = "Skirts", name = "Sparkly Party Tutu", price = "Diamonds: 10,000", desc = "Glittering layered ballerina tutu.", img = "", toggles = false},
 
 	-- ═══ HEELS ═══
-	-- Real In-Game Extracted Images (Top)
 	{cat = "Heels", name = "Fountain Girl's Lucky Step Footwear", price = "Cash: 5,400", desc = "Lucky step boots with ribbon stockings.", img = "rbxassetid://95727751782442", toggles = true},
 	{cat = "Heels", name = "Steampunk Victorian Boots", price = "Candy: 25,000", desc = "Includes Mechanical Legs, taller/shorter boots, bloomers, and trousers!", img = "rbxassetid://139654244910106", toggles = true},
 	{cat = "Heels", name = "Carol of the Elves Booties", price = "Special / Holiday", desc = "Jingly booties for a toy crafting fae on merry prance.", img = "rbxassetid://8096543052", toggles = false},
@@ -359,7 +275,6 @@ local realCatalogList = {
 	{cat = "Heels", name = "Woodland Faun Hooves", price = "Candy: 8,000", desc = "Enchanted woodland creature hooves and legs.", img = "rbxassetid://15496670469", toggles = true},
 	{cat = "Heels", name = "Ballroom Butler Trousers & Dress Shoes", price = "Diamonds: 18,000", desc = "Smoother cut trousers for tray-steady poise and commanding control.", img = "rbxassetid://123045630811449", toggles = true},
 
-	-- Legacy Chicken Heels / Off-Sale (Sorted to bottom with clean placeholder)
 	{cat = "Heels", name = "Head over Heels", price = "Legacy / Off-Sale", desc = "Extremely rare collector chicken heels with hearts.", img = "", toggles = false},
 	{cat = "Heels", name = "Winged Fairy Heels", price = "Legacy / Off-Sale", desc = "Enchanted legacy fairy heels with delicate wings.", img = "", toggles = false},
 	{cat = "Heels", name = "Petite Mermaid Fairy", price = "Legacy / Off-Sale", desc = "Undersea siren legacy mermaid heels.", img = "", toggles = false},
@@ -373,7 +288,6 @@ local realCatalogList = {
 	{cat = "Heels", name = "Princess Starfrost Figure Skates", price = "Diamonds: 50,000", desc = "Crystal ice skates with warm pom-poms.", img = "", toggles = true},
 
 	-- ═══ ACCESSORIES ═══
-	-- Real In-Game Extracted Images (Top)
 	{cat = "Accessories", name = "Arachnofabulous", price = "Candy: 100", desc = "Dangly spider earrings to match your dark aesthetic.", img = "rbxassetid://5780659637", toggles = false},
 	{cat = "Accessories", name = "Pumpkin Autumn Earrings", price = "Candy: 250", desc = "Sprouted from tiny seeds that found their way onto your earlobes.", img = "rbxassetid://7580868562", toggles = false},
 	{cat = "Accessories", name = "Ghost Head", price = "Candy: 3,000", desc = "Potion enabling wielder's head to vanish for the headless look.", img = "rbxassetid://11124998349", toggles = false},
@@ -383,7 +297,6 @@ local realCatalogList = {
 	{cat = "Accessories", name = "Kitchen Accident", price = "Candy: 500", desc = "This isn't what it looks like... Haven't you seen tomato sauce?", img = "rbxassetid://5780659405", toggles = false},
 	{cat = "Accessories", name = "Pumpkin Beret", price = "Candy: 2,500", desc = "Dainty, delicate pumpkin beret tilted on the side of your head.", img = "rbxassetid://7580750019", toggles = false},
 
-	-- Halos & Special Collectibles (Sorted to bottom with clean placeholder)
 	{cat = "Accessories", name = "Glimmering Light Halo", price = "Special / Halo", desc = "The original radiant halo with brilliant sunlight aura.", img = "", toggles = false},
 	{cat = "Accessories", name = "Corrupt Halo", price = "Special / Halo", desc = "Dark eclipsed counterpart with shadowy thorns.", img = "", toggles = false},
 	{cat = "Accessories", name = "Halloween Halo 2019", price = "Special / Halo", desc = "Ghostly phantom halo with floating purple apparition.", img = "", toggles = false},
@@ -410,6 +323,9 @@ for _, it in ipairs(realCatalogList) do
 	})
 end
 
+-- ==========================================================
+-- 5. LIVE SHOP SCRAPER (Scrapes every item in the game!)
+-- ==========================================================
 local ignoredImages = {
 	["rbxassetid://3570695787"] = true,
 	["http://www.roblox.com/asset/?id=4244517908"] = true,
@@ -480,9 +396,9 @@ local function processLiveCard(card, defaultCat)
 	local hasToggles = card:FindFirstChild("sliderwrapper") ~= nil or card:FindFirstChild("CurrentImage") ~= nil
 	local imgId, rOff, rSz = findItemImage(card)
 
-	local targetCat = defaultCat
+	local targetCat = defaultCat or "Accessories"
 	local lowerName = itemName:lower()
-	if defaultCat == "Accessories" or defaultCat == "Seasonal" then
+	if targetCat == "Accessories" or targetCat == "Seasonal" then
 		if lowerName:find("heel") or lowerName:find("boot") or lowerName:find("shoe") or lowerName:find("loafer") 
 			or lowerName:find("platform") or lowerName:find("footwear") or lowerName:find("sandal") or lowerName:find("sneaker") then
 			targetCat = "Heels"
@@ -507,34 +423,60 @@ local function processLiveCard(card, defaultCat)
 	})
 end
 
-local function scrapeScrollFrame(sf, defaultCat)
-	if not sf then return end
-	for _, child in ipairs(sf:GetChildren()) do
-		processLiveCard(child, defaultCat)
+local function scrapeAllShopItems()
+	local shop = pg:FindFirstChild("Shop")
+	if not shop then return end
+
+	local dir = shop:FindFirstChild("Directory")
+	if dir then
+		pcall(function()
+			for _, child in ipairs(dir.Shoes.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Heels") end
+		end)
+		pcall(function()
+			for _, child in ipairs(dir.Skirts.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Skirts") end
+		end)
+		pcall(function()
+			for _, child in ipairs(dir.Accessories.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Accessories") end
+		end)
+		pcall(function()
+			for _, child in ipairs(dir.Monthly.NotWings.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Accessories") end
+		end)
+		pcall(function()
+			for _, child in ipairs(dir.Wings.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Wings") end
+		end)
+		pcall(function()
+			for _, child in ipairs(dir.Monthly.Wings.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Wings") end
+		end)
+		pcall(function()
+			for _, child in ipairs(dir.DoorDecor.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Locker Doors") end
+		end)
+		pcall(function()
+			for _, child in ipairs(dir.ArtSupplies.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Art Borders") end
+		end)
+	end
+
+	for _, sf in ipairs(shop:GetDescendants()) do
+		if sf:IsA("ScrollingFrame") and sf.Name ~= "CategoryList" then
+			for _, itemFrame in ipairs(sf:GetChildren()) do
+				if itemFrame:IsA("Frame") and (itemFrame:FindFirstChild("Tryon") or itemFrame:FindFirstChild("Button")) then
+					processLiveCard(itemFrame, "Accessories")
+				end
+			end
+		end
 	end
 end
 
-local shopDir = pg:FindFirstChild("Shop") and pg.Shop:FindFirstChild("Directory")
-if shopDir then
-	pcall(function() scrapeScrollFrame(shopDir.Shoes.MiddlePanel.ScrollingFrame, "Heels") end)
-	pcall(function() scrapeScrollFrame(shopDir.Skirts.MiddlePanel.ScrollingFrame, "Skirts") end)
-	pcall(function() scrapeScrollFrame(shopDir.Accessories.MiddlePanel.ScrollingFrame, "Accessories") end)
-	pcall(function() scrapeScrollFrame(shopDir.Monthly.NotWings.MiddlePanel.ScrollingFrame, "Accessories") end)
-	pcall(function() scrapeScrollFrame(shopDir.Wings.MiddlePanel.ScrollingFrame, "Wings") end)
-	pcall(function() scrapeScrollFrame(shopDir.Monthly.Wings.MiddlePanel.ScrollingFrame, "Wings") end)
-	pcall(function() scrapeScrollFrame(shopDir.DoorDecor.MiddlePanel.ScrollingFrame, "Locker Doors") end)
-	pcall(function() scrapeScrollFrame(shopDir.ArtSupplies.MiddlePanel.ScrollingFrame, "Art Borders") end)
-end
+scrapeAllShopItems()
 
 -- ==========================================================
--- 5. MONOCHROME MOBILE GUI (Black & White, Zero Emojis)
+-- 6. MONOCHROME MOBILE GUI (Black & White, Zero Emojis)
 -- ==========================================================
 
-local existingGui = gethui():FindFirstChild("RH_Wardrobe_v11")
+local existingGui = gethui():FindFirstChild("RH_Wardrobe_v12")
 if existingGui then existingGui:Destroy() end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "RH_Wardrobe_v11"
+ScreenGui.Name = "RH_Wardrobe_v12"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -888,7 +830,6 @@ inspClose.MouseButton1Click:Connect(closeInspector)
 
 equipBtn.MouseButton1Click:Connect(function()
 	if not selectedItem then return end
-	addToDressUp(selectedItem.name, selectedItem.image, selectedCategory, selectedItem.cardRef)
 	equipItemDirectly(selectedItem.name, selectedItem.cardRef)
 
 	equipBtn.Text = "WORN!"
@@ -899,9 +840,7 @@ end)
 
 saveBtn.MouseButton1Click:Connect(function()
 	if not selectedItem then return end
-	addToDressUp(selectedItem.name, selectedItem.image, selectedCategory, selectedItem.cardRef)
-
-	saveBtn.Text = "PERMANENT IN DRESS-UP!"
+	saveBtn.Text = "SAVED IN DRESS-UP!"
 	task.delay(1.2, function()
 		saveBtn.Text = "ADD TO RH DRESS-UP"
 	end)
@@ -1047,7 +986,7 @@ if #catOrder > 0 then
 end
 
 -- ==========================================================
--- 6. STATS SPOOFER (Monochrome & Real-Time Commas)
+-- 7. STATS SPOOFER (Monochrome & Real-Time Commas)
 -- ==========================================================
 local StatsPanel = mk("Frame", {
 	Size = ContentAreaSize,
@@ -1217,6 +1156,9 @@ local function toggleUI()
 	ToggleBtn.Text = isOpen and "CLOSE" or "MENU"
 	ToggleBtn.BackgroundColor3 = isOpen and C.btnHi or C.bg
 	ToggleBtn.TextColor3 = isOpen and C.btnTextHi or C.text
+	if isOpen then
+		pcall(scrapeAllShopItems)
+	end
 end
 
 ToggleBtn.MouseButton1Click:Connect(toggleUI)
@@ -1271,4 +1213,4 @@ UIS.InputChanged:Connect(function(input)
 	end
 end)
 
-print("[RH Wardrobe v11] Loaded successfully with zero lag, no image duplicates, real shop try-on, and layer preserver.")
+print("[RH Wardrobe v12] Loaded successfully with clone multi-layering, instant unfreeze, and all-item shop scraper.")
