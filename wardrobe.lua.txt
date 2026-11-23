@@ -1,71 +1,64 @@
 -- ==========================================================
--- ROYALE HIGH DRESS-UP & INVENTORY DEEP PROBE
+-- DRESS-UP ARGUMENT & THUMBNAIL PROBE
 -- ==========================================================
-local lp = game:GetService("Players").LocalPlayer
-local pg = lp:WaitForChild("PlayerGui")
 local rep = game:GetService("ReplicatedStorage")
+local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
 
 task.spawn(function()
     local out = {}
-    local function log(str)
-        table.insert(out, str)
-        print(str)
-    end
+    local function log(s) table.insert(out, s) print(s) end
+    log("=== DRESS-UP ARGUMENT & BUTTON PROBE ===")
 
-    log("=== ROYALE HIGH DRESS-UP & INVENTORY PROBE ===")
-
-    -- 1. Scan StarterDressUpHUD and CharacterCreation
-    local dressUpGuis = {"StarterDressUpHUD", "CharacterCreation", "ToolInventory", "Shop"}
-    for _, gName in ipairs(dressUpGuis) do
-        local g = pg:FindFirstChild(gName)
-        if g then
-            log("[GUI FOUND] " .. gName)
-            for _, d in ipairs(g:GetDescendants()) do
-                if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") or d:IsA("BindableFunction") or d:IsA("BindableEvent") then
-                    log("  -> " .. d.ClassName .. ": " .. d:GetFullName())
+    -- 1. Test GetButtonCopy on an item
+    local shoesDir = pg:FindFirstChild("Shop") and pg.Shop.Directory:FindFirstChild("Shoes")
+    if shoesDir and shoesDir:FindFirstChild("GetButtonCopy") then
+        local s, res = pcall(function()
+            return shoesDir.GetButtonCopy:Invoke("Bat-Mo-Heels")
+        end)
+        log("Shoes GetButtonCopy('Bat-Mo-Heels') success: " .. tostring(s))
+        if s and res and typeof(res) == "Instance" then
+            log("  -> Returned Instance: " .. res.ClassName .. " | Name: " .. res.Name)
+            for _, c in ipairs(res:GetDescendants()) do
+                if c:IsA("ImageLabel") or c:IsA("ImageButton") then
+                    log("  -> Image child: " .. c.Name .. " = " .. tostring(c.Image) .. " (RectSize: " .. tostring(c.ImageRectSize) .. ")")
                 end
             end
-        else
-            log("[GUI NOT FOUND] " .. gName)
         end
     end
 
-    -- 2. Scan ReplicatedStorage for DressUp / Customization Remotes & Modules
-    log("\n--- REPLICATED STORAGE DRESS-UP ASSETS ---")
-    for _, d in ipairs(rep:GetDescendants()) do
-        local nameLower = d.Name:lower()
-        if nameLower:find("dressup") or nameLower:find("wear") or nameLower:find("equip") 
-            or nameLower:find("custo") or nameLower:find("outfit") or nameLower:find("itemdata")
-            or nameLower:find("inventory") or nameLower:find("clothing") then
-            log("  -> " .. d.ClassName .. ": " .. d:GetFullName())
+    -- 2. Test GetInventoryCategoryItems
+    local invRF = rep:FindFirstChild("Inventory") and rep.Inventory:FindFirstChild("GetInventoryCategoryItems")
+    if invRF then
+        for _, cat in ipairs({"Shoes", "Skirts", "Accessories", "Wings", "All"}) do
+            local s, res = pcall(function() return invRF:InvokeServer(cat) end)
+            log("GetInventoryCategoryItems('" .. cat .. "') -> s=" .. tostring(s) .. " type=" .. typeof(res))
+            if s and type(res) == "table" then
+                local count = 0
+                for k, v in pairs(res) do
+                    count = count + 1
+                    if count <= 2 then
+                        log("    Sample item [" .. tostring(k) .. "]: type=" .. typeof(v))
+                        if type(v) == "table" then
+                            for subK, subV in pairs(v) do
+                                log("       " .. tostring(subK) .. " = " .. tostring(subV))
+                            end
+                        end
+                    end
+                end
+                log("    Total items returned for " .. cat .. ": " .. count)
+            end
         end
     end
 
-    -- 3. Probe Shop ButtonCopy (How the game generates real item thumbnails & buttons)
-    log("\n--- SHOP BUTTONCOPY TEST ---")
-    local dir = pg:FindFirstChild("Shop") and pg.Shop:FindFirstChild("Directory")
-    if dir and dir:FindFirstChild("Shoes") and dir.Shoes:FindFirstChild("GetButtonCopy") then
-        pcall(function()
-            local copyFunc = dir.Shoes.GetButtonCopy
-            log("GetButtonCopy exists in Shoes! Class: " .. copyFunc.ClassName)
-        end)
-    end
+    -- 3. Test PromptEquip structure in CharacterCreation
+    local cc = pg:FindFirstChild("CharacterCreation")
+    local promptEquip = cc and cc.Inventory:FindFirstChild("PromptEquip")
+    log("PromptEquip BindableEvent found: " .. tostring(promptEquip ~= nil))
 
-    -- 4. Check Character Anchors / Movement Freeze Root Cause
-    log("\n--- CHARACTER STATUS ---")
-    local char = lp.Character
-    if char then
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        local hum = char:FindFirstChild("Humanoid")
-        log("HRP Anchored: " .. tostring(hrp and hrp.Anchored))
-        log("Humanoid WalkSpeed: " .. tostring(hum and hum.WalkSpeed))
-        log("Humanoid PlatformStand: " .. tostring(hum and hum.PlatformStand))
-    end
-
-    log("==============================================")
+    log("========================================")
     local report = table.concat(out, "\n")
     if setclipboard then
         setclipboard(report)
-        log("[!] Report successfully copied to your clipboard!")
+        log("[!] Copied report to clipboard!")
     end
 end)
