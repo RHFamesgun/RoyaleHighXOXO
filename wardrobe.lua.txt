@@ -1,18 +1,29 @@
 -- ==========================================================
--- ROYALE HIGH MAXIMUM POWER ASSET HARVESTER (5000+ ITEMS)
--- Completely non-intrusive: Does NOT hook metatables.
--- Sweeps ALL:
---   1. ReplicatedStorage (all Models, Folders, ModuleScripts, Meshes)
---   2. ReplicatedHair & CustomOutfits
---   3. Shop Directory + GetAssetList for all categories
---   4. CharacterCreation (Makeup, Faces, Hair, Fabrics, Patterns, Wings)
---   5. Offsale / Hidden / Legacy / Event assets
---   6. Workspace & Lighting hidden asset storage
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v19
+-- Native DressUp & Multi-Layer System
+-- Fixes in v18:
+--   1. Native Equipping Engine:
+--      - Fires ReplicatedStorage.Inventory.EquipItem &
+--        Network.Events.Player.Accessory.Equip directly.
+--      - No longer touches the buggy shop Try-On buttons.
+--   2. Real Image Engine:
+--      - Cleans all false/mismatched image assignments.
+--      - Uses genuine asset IDs or high-contrast clean placeholders
+--        so no wrong images appear on items.
+--   3. Absolute Movement Freedom (Walking & Running):
+--      - Completely unbinds player control locks and disables
+--        the dress-up anchor loop so you can walk freely.
+--   4. Universal Multi-Layer Protection:
+--      - Strips layer locks, keeps accessories, bodices, heels,
+--        skirts, and halos worn concurrently without despawning.
 -- ==========================================================
 
 local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local ContextActionService = game:GetService("ContextActionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ContentProvider = game:GetService("ContentProvider")
+
 local lp = Players.LocalPlayer
 local pg = lp:WaitForChild("PlayerGui")
 
@@ -26,319 +37,2987 @@ local function getGuiContainer()
 	return pg
 end
 
-local container = getGuiContainer()
-local oldGui = container:FindFirstChild("RH_MegaHarvester")
-if oldGui then oldGui:Destroy() end
-
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "RH_MegaHarvester"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.IgnoreGuiInset = true
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent = container
-
-local Main = Instance.new("Frame")
-Main.Size = UDim2.new(0, 320, 0, 380)
-Main.Position = UDim2.new(0.5, -160, 0.5, -190)
-Main.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
-Main.BorderSizePixel = 0
-Main.Active = true
-Main.Draggable = true
-Main.Parent = ScreenGui
-
-local c1 = Instance.new("UICorner")
-c1.CornerRadius = UDim.new(0, 8)
-c1.Parent = Main
-
-local s1 = Instance.new("UIStroke")
-s1.Thickness = 1.5
-s1.Color = Color3.fromRGB(255, 255, 255)
-s1.Parent = Main
-
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -20, 0, 26)
-Title.Position = UDim2.new(0, 10, 0, 8)
-Title.BackgroundTransparency = 1
-Title.Text = "RH MEGA ASSET HARVESTER"
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.Font = Enum.Font.GothamBold
-Title.TextSize = 12
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Parent = Main
-
-local SubTitle = Instance.new("TextLabel")
-SubTitle.Size = UDim2.new(1, -20, 0, 18)
-SubTitle.Position = UDim2.new(0, 10, 0, 32)
-SubTitle.BackgroundTransparency = 1
-SubTitle.Text = "Extracting every single game asset..."
-SubTitle.TextColor3 = Color3.fromRGB(150, 150, 150)
-SubTitle.Font = Enum.Font.Gotham
-SubTitle.TextSize = 9
-SubTitle.TextXAlignment = Enum.TextXAlignment.Left
-SubTitle.Parent = Main
-
-local LogBox = Instance.new("ScrollingFrame")
-LogBox.Size = UDim2.new(1, -20, 0, 230)
-LogBox.Position = UDim2.new(0, 10, 0, 56)
-LogBox.BackgroundColor3 = Color3.fromRGB(6, 6, 6)
-LogBox.BorderSizePixel = 0
-LogBox.ScrollBarThickness = 3
-LogBox.CanvasSize = UDim2.new(0, 0, 0, 0)
-LogBox.Parent = Main
-
-local c2 = Instance.new("UICorner")
-c2.CornerRadius = UDim.new(0, 6)
-c2.Parent = LogBox
-
-local LogText = Instance.new("TextLabel")
-LogText.Size = UDim2.new(1, -12, 1, -12)
-LogText.Position = UDim2.new(0, 6, 0, 6)
-LogText.BackgroundTransparency = 1
-LogText.Text = "Ready to harvest thousands of assets. Tap HARVEST EVERYTHING."
-LogText.TextColor3 = Color3.fromRGB(220, 220, 220)
-LogText.Font = Enum.Font.Code
-LogText.TextSize = 8.5
-LogText.TextXAlignment = Enum.TextXAlignment.Left
-LogText.TextYAlignment = Enum.TextYAlignment.Top
-LogText.TextWrapped = true
-LogText.Parent = LogBox
-
-local HarvestBtn = Instance.new("TextButton")
-HarvestBtn.Size = UDim2.new(0.5, -14, 0, 38)
-HarvestBtn.Position = UDim2.new(0, 10, 1, -48)
-HarvestBtn.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
-HarvestBtn.TextColor3 = Color3.fromRGB(10, 10, 10)
-HarvestBtn.Text = "HARVEST EVERYTHING"
-HarvestBtn.Font = Enum.Font.GothamBold
-HarvestBtn.TextSize = 9.5
-HarvestBtn.BorderSizePixel = 0
-HarvestBtn.AutoButtonColor = false
-HarvestBtn.Parent = Main
-
-local c3 = Instance.new("UICorner")
-c3.CornerRadius = UDim.new(0, 6)
-c3.Parent = HarvestBtn
-
-local CopyBtn = Instance.new("TextButton")
-CopyBtn.Size = UDim2.new(0.5, -14, 0, 38)
-CopyBtn.Position = UDim2.new(0.5, 4, 1, -48)
-CopyBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-CopyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-CopyBtn.Text = "COPY ALL ASSETS"
-CopyBtn.Font = Enum.Font.GothamBold
-CopyBtn.TextSize = 9.5
-CopyBtn.BorderSizePixel = 0
-CopyBtn.AutoButtonColor = false
-CopyBtn.Parent = Main
-
-local c4 = Instance.new("UICorner")
-c4.CornerRadius = UDim.new(0, 6)
-c4.Parent = CopyBtn
-
-local s2 = Instance.new("UIStroke")
-s2.Thickness = 1
-s2.Color = Color3.fromRGB(70, 70, 70)
-s2.Parent = CopyBtn
-
-local logs = {}
-local harvested = {}
-local isRunning = false
-
-local function appendLog(txt)
-	table.insert(logs, txt)
-	local disp = table.concat(logs, "\n")
-	LogText.Text = disp
-	LogText.Size = UDim2.new(1, -12, 0, #logs * 14 + 20)
-	LogBox.CanvasSize = UDim2.new(0, 0, 0, #logs * 14 + 24)
-	LogBox.CanvasPosition = Vector2.new(0, LogBox.CanvasSize.Y.Offset)
+-- ==========================================================
+-- 1. ABSOLUTE MOVEMENT UNFREEZER
+-- ==========================================================
+local function unfreezeControls()
+	pcall(function()
+		local PlayerModule = lp:FindFirstChild("PlayerScripts") and lp.PlayerScripts:FindFirstChild("PlayerModule")
+		if PlayerModule then
+			local Controls = require(PlayerModule)
+			if Controls and Controls.GetControls then
+				Controls:GetControls():Enable()
+			end
+		end
+	end)
+	pcall(function()
+		ContextActionService:UnbindAction("FreezeMovement")
+		ContextActionService:UnbindAction("ShopFreeze")
+		ContextActionService:UnbindAction("TryOnFreeze")
+		ContextActionService:UnbindAction("DisableMovement")
+		ContextActionService:UnbindAction("CharacterCreationFreeze")
+	end)
 end
 
-local function clean(s)
-	if not s then return "" end
-	s = tostring(s):gsub("[\128-\255]", "")
-	return s:match("^%s*(.-)%s*$")
-end
+local function bindMovementGuards(char)
+	if not char then return end
+	local hum = char:WaitForChild("Humanoid", 4)
+	local hrp = char:WaitForChild("HumanoidRootPart", 4)
 
-local function record(name, category, assetId, extra)
-	name = clean(name)
-	if not name or #name < 2 or name == "Frame" or name == "Template" or name == "UIListLayout" then return end
-	local key = name:lower()
-	if harvested[key] then return end
-
-	harvested[key] = {
-		name = name,
-		category = category or "General",
-		assetId = clean(assetId),
-		extra = clean(extra),
-	}
-end
-
-local function runMegaHarvest()
-	if isRunning then return end
-	isRunning = true
-	HarvestBtn.Text = "HARVESTING..."
-	table.clear(logs)
-	table.clear(harvested)
-
-	appendLog("=== STARTING FULL MEGA HARVEST ===")
-
-	-- 1. Sweep ReplicatedStorage.ReplicatedHair
-	pcall(function()
-		local hair = ReplicatedStorage:FindFirstChild("ReplicatedHair")
-		if hair then
-			local count = 0
-			for _, h in ipairs(hair:GetChildren()) do
-				count = count + 1
-				local meshId = ""
-				for _, d in ipairs(h:GetDescendants()) do
-					if d:IsA("MeshPart") and d.MeshId ~= "" then
-						meshId = d.MeshId
-						break
-					elseif d:IsA("SpecialMesh") and d.MeshId ~= "" then
-						meshId = d.MeshId
-						break
-					end
-				end
-				record(h.Name, "Hair", meshId, "ReplicatedHair")
-			end
-			appendLog("[+] ReplicatedHair: " .. count .. " items")
-		end
-	end)
-
-	-- 2. Sweep Shop Directory (Wings, Shoes, Skirts, Accessories, Monthly)
-	pcall(function()
-		local shop = pg:FindFirstChild("Shop")
-		local dir = shop and shop:FindFirstChild("Directory")
-		if dir then
-			for _, catFolder in ipairs(dir:GetChildren()) do
-				local catName = catFolder.Name
-				local getAsset = catFolder:FindFirstChild("GetAssetList")
-				if getAsset and getAsset:IsA("BindableFunction") then
-					pcall(function()
-						local items = getAsset:Invoke()
-						if type(items) == "table" then
-							local ct = 0
-							for k, v in pairs(items) do
-								ct = ct + 1
-								if type(v) == "table" then
-									local n = v.Name or v.Item or v.Title or (type(k) == "string" and k)
-									local img = v.Image or v.Icon or v.Thumbnail or ""
-									local p = v.Price or v.Cost or ""
-									record(n, catName, img, "Price: " .. tostring(p))
-								elseif type(v) == "string" then
-									record(v, catName, "", "")
-								end
-							end
-							appendLog("[+] GetAssetList (" .. catName .. "): " .. ct .. " items")
-						end
-					end)
-				end
-
-				for _, d in ipairs(catFolder:GetDescendants()) do
-					if d:IsA("Frame") and d:FindFirstChild("Tryon") then
-						local img = ""
-						for _, ch in ipairs(d:GetDescendants()) do
-							if ch:IsA("ImageLabel") and ch.Visible and ch.Image ~= "" and not ch.Image:find("3570695787") then
-								img = ch.Image
-								break
-							end
-						end
-						record(d.Name, catName, img, "ShopTryOn")
-					end
-				end
-			end
-		end
-	end)
-
-	-- 3. Sweep CharacterCreation (Makeup, Hair, Faces, Outfits, Wings)
-	pcall(function()
-		local cc = pg:FindFirstChild("CharacterCreation")
-		if cc then
-			local count = 0
-			for _, d in ipairs(cc:GetDescendants()) do
-				if d:IsA("ImageButton") or d:IsA("ImageLabel") then
-					if d.Image ~= "" and not d.Image:find("3570695787") and #d.Name > 2 then
-						count = count + 1
-						record(d.Name, "DressUpAsset", d.Image, d.Parent and d.Parent.Name or "")
-					end
-				end
-			end
-			appendLog("[+] CharacterCreation Visual Assets: " .. count)
-		end
-	end)
-
-	-- 4. Sweep All ReplicatedStorage ModuleScripts (Item Definitions & Tables)
-	pcall(function()
-		local moduleCount = 0
-		for _, d in ipairs(ReplicatedStorage:GetDescendants()) do
-			if d:IsA("ModuleScript") then
-				pcall(function()
-					local data = require(d)
-					if type(data) == "table" then
-						for k, v in pairs(data) do
-							if type(v) == "table" then
-								local n = v.Name or v.Title or v.Item or (type(k) == "string" and k)
-								local im = v.Image or v.Icon or v.Texture or v.Thumbnail or ""
-								if n and type(n) == "string" and #n > 2 then
-									moduleCount = moduleCount + 1
-									record(n, "GameDatabase", im, d.Name)
-								end
-							elseif type(v) == "string" and #v > 2 then
-								moduleCount = moduleCount + 1
-								record(v, "GameDatabase", "", d.Name)
-							end
-						end
-					end
-				end)
-			end
-		end
-		appendLog("[+] Ingested from Game Data Modules: " .. moduleCount)
-	end)
-
-	-- 5. Sweep Meshes & Models in ReplicatedStorage
-	pcall(function()
-		local count = 0
-		for _, d in ipairs(ReplicatedStorage:GetDescendants()) do
-			if d:IsA("MeshPart") or d:IsA("SpecialMesh") then
-				local asset = d:IsA("MeshPart") and d.MeshId or d.MeshId
-				if asset ~= "" then
-					count = count + 1
-					record(d.Name, "MeshModel", asset, d.Parent and d.Parent.Name or "")
-				end
-			end
-		end
-		appendLog("[+] 3D Mesh Assets: " .. count)
-	end)
-
-	local totalCount = 0
-	for _ in pairs(harvested) do totalCount = totalCount + 1 end
-	appendLog("=== HARVEST COMPLETE: " .. totalCount .. " TOTAL ITEMS ===")
-
-	HarvestBtn.Text = "HARVESTED (" .. totalCount .. ")"
-	isRunning = false
-end
-
-HarvestBtn.MouseButton1Click:Connect(runMegaHarvest)
-
-CopyBtn.MouseButton1Click:Connect(function()
-	local lines = {"=== ROYALE HIGH 5000+ ASSET HARVEST DUMP ==="}
-	local count = 0
-	for _, it in pairs(harvested) do
-		count = count + 1
-		table.insert(lines, string.format(
-			"[%d] NAME: %s | CAT: %s | ASSET: %s | EXTRA: %s",
-			count, it.name, it.category, it.assetId, it.extra
-		))
+	if hum then
+		hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+			if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+		end)
+		hum:GetPropertyChangedSignal("PlatformStand"):Connect(function()
+			if hum.PlatformStand then hum.PlatformStand = false end
+		end)
+		if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+		if hum.PlatformStand then hum.PlatformStand = false end
 	end
-	table.insert(lines, "=== TOTAL: " .. count .. " ASSETS ===")
-	local full = table.concat(lines, "\n")
-	if setclipboard then
-		setclipboard(full)
-		CopyBtn.Text = "COPIED " .. count .. " ASSETS!"
-		task.delay(2, function() CopyBtn.Text = "COPY ALL ASSETS" end)
-	else
-		CopyBtn.Text = "CLIPBOARD ERROR"
+
+	if hrp then
+		hrp:GetPropertyChangedSignal("Anchored"):Connect(function()
+			if hrp.Anchored then hrp.Anchored = false end
+		end)
+		if hrp.Anchored then hrp.Anchored = false end
+	end
+
+	unfreezeControls()
+end
+
+if lp.Character then bindMovementGuards(lp.Character) end
+lp.CharacterAdded:Connect(bindMovementGuards)
+
+task.spawn(function()
+	while true do
+		task.wait(1)
+		pcall(function()
+			unfreezeControls()
+			local char = lp.Character
+			if char then
+				local hrp = char:FindFirstChild("HumanoidRootPart")
+				if hrp and hrp.Anchored then hrp.Anchored = false end
+				local hum = char:FindFirstChild("Humanoid")
+				if hum and hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+			end
+		end)
 	end
 end)
 
-print("[RH MegaHarvester] Ready on screen.")
+-- ==========================================================
+-- 2. METATABLE DELETION INTERCEPTOR & RECURSIVE CLONING
+-- ==========================================================
+local function deepClone(inst)
+	if not inst then return nil end
+	pcall(function()
+		inst.Archivable = true
+		for _, d in ipairs(inst:GetDescendants()) do
+			d.Archivable = true
+		end
+	end)
+	return inst:Clone()
+end
+
+pcall(function()
+	if hookmetamethod and newcclosure and checkcaller then
+		local rawNamecall
+		rawNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+			local method = getnamecallmethod()
+			if not checkcaller() and (method == "Destroy" or method == "destroy") then
+				if typeof(self) == "Instance" and self:GetAttribute("CustomSavedLayer") then
+					return nil
+				end
+			end
+			return rawNamecall(self, ...)
+		end))
+
+		local rawNewindex
+		rawNewindex = hookmetamethod(game, "__newindex", newcclosure(function(self, idx, val)
+			if not checkcaller() and (idx == "Parent" or idx == "parent") and val == nil then
+				if typeof(self) == "Instance" and self:GetAttribute("CustomSavedLayer") then
+					return nil
+				end
+			end
+			return rawNewindex(self, idx, val)
+		end))
+	end
+end)
+
+-- ==========================================================
+-- 3. PRECISION MULTI-LAYER ENGINE
+-- ==========================================================
+local savedWornLayers = {}
+
+local standardBodyParts = {
+	["Head"] = true, ["Torso"] = true, ["UpperTorso"] = true, ["LowerTorso"] = true,
+	["HumanoidRootPart"] = true, ["LeftHand"] = true, ["RightHand"] = true,
+	["LeftLowerArm"] = true, ["RightLowerArm"] = true, ["LeftUpperArm"] = true, ["RightUpperArm"] = true,
+	["LeftFoot"] = true, ["RightFoot"] = true, ["LeftLowerLeg"] = true, ["RightLowerLeg"] = true,
+	["LeftUpperLeg"] = true, ["RightUpperLeg"] = true, ["Humanoid"] = true, ["Animate"] = true,
+}
+
+local function reattachModelJoints(mod, char, joints)
+	for _, wd in ipairs(joints) do
+		local p0 = mod:FindFirstChild(wd.part0Name, true)
+		local p1 = char:FindFirstChild(wd.part1Name)
+		if p0 and p1 then
+			if wd.className == "Motor6D" then
+				local m = Instance.new("Motor6D")
+				m.Part0 = p0
+				m.Part1 = p1
+				if wd.c0 then m.C0 = wd.c0 end
+				if wd.c1 then m.C1 = wd.c1 end
+				m.Parent = p0
+			elseif wd.className == "WeldConstraint" then
+				local wc = Instance.new("WeldConstraint")
+				wc.Part0 = p0
+				wc.Part1 = p1
+				wc.Parent = p0
+			else
+				local w = Instance.new("Weld")
+				w.Part0 = p0
+				w.Part1 = p1
+				if wd.c0 then w.C0 = wd.c0 end
+				if wd.c1 then w.C1 = wd.c1 end
+				w.Parent = p0
+			end
+		end
+	end
+end
+
+local function restoreAllSavedLayers()
+	local char = lp.Character
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+
+	for rawName, data in pairs(savedWornLayers) do
+		local layerName = rawName .. "_Layer"
+		local existing = char:FindFirstChild(layerName) or char:FindFirstChild(rawName)
+		if not existing and data.backup then
+			pcall(function()
+				local copy = deepClone(data.backup)
+				copy.Name = layerName
+				copy:SetAttribute("CustomSavedLayer", true)
+
+				if data.isAccessory and hum then
+					hum:AddAccessory(copy)
+				elseif data.isModel then
+					reattachModelJoints(copy, char, data.joints or {})
+					copy.Parent = char
+				else
+					copy.Parent = char
+				end
+			end)
+		end
+	end
+end
+
+local function clearAllWornLayers()
+	local char = lp.Character
+	for rawName, data in pairs(savedWornLayers) do
+		if char then
+			local layerName = rawName .. "_Layer"
+			local i1 = char:FindFirstChild(layerName)
+			local i2 = char:FindFirstChild(rawName)
+			if i1 then
+				i1:SetAttribute("CustomSavedLayer", nil)
+				pcall(function() i1:Destroy() end)
+			end
+			if i2 then
+				i2:SetAttribute("CustomSavedLayer", nil)
+				pcall(function() i2:Destroy() end)
+			end
+		end
+	end
+	savedWornLayers = {}
+
+	if char then
+		for _, child in ipairs(char:GetChildren()) do
+			if child:GetAttribute("CustomSavedLayer") or child.Name:find("_Layer") then
+				child:SetAttribute("CustomSavedLayer", nil)
+				pcall(function() child:Destroy() end)
+			end
+		end
+	end
+
+	-- Also reset native game accessories if remote available
+	pcall(function()
+		local resetRemote = ReplicatedStorage:FindFirstChild("Network") and ReplicatedStorage.Network.Events.Player.ResetAllEquippedItems
+		if resetRemote then resetRemote:FireServer() end
+	end)
+end
+
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		pcall(function()
+			local char = lp.Character
+			if char and next(savedWornLayers) ~= nil then
+				restoreAllSavedLayers()
+			end
+		end)
+	end
+end)
+
+-- ==========================================================
+-- 4. MASTER CATALOG & COMPREHENSIVE INGESTION
+-- ==========================================================
+local categories = {
+	["Heels"] = {},
+	["Skirts"] = {},
+	["Bodices"] = {},
+	["Accessories"] = {},
+	["Halos"] = {},
+	["Wings"] = {},
+	["Hair"] = {},
+}
+
+local catOrder = {
+	"Heels",
+	"Skirts",
+	"Bodices",
+	"Accessories",
+	"Halos",
+	"Wings",
+	"Hair",
+}
+
+local seenItems = {}
+
+local function addItem(cat, item)
+	if not item.name or item.name == "" or item.name == " " then return end
+	local key = item.name:lower()
+	if seenItems[key] then return end
+	seenItems[key] = true
+
+	item.hasRealImage = (item.image ~= nil and item.image ~= "" and item.image:find("rbxassetid://") ~= nil)
+
+	if not categories[cat] then categories[cat] = {} end
+	table.insert(categories[cat], item)
+end
+
+local function classifyCategory(itemName, defaultCat)
+	local lower = itemName:lower()
+	if lower:find("halo") then
+		return "Halos"
+	elseif lower:find("heel") or lower:find("boot") or lower:find("shoe") or lower:find("loafer") or lower:find("platform") or lower:find("footwear") or lower:find("sandal") or lower:find("sneaker") then
+		return "Heels"
+	elseif lower:find("skirt") or lower:find("dress") or lower:find("tutu") then
+		return "Skirts"
+	elseif lower:find("bodice") or lower:find("corset") or lower:find("bustier") then
+		return "Bodices"
+	elseif lower:find("wing") then
+		return "Wings"
+	else
+		return defaultCat or "Accessories"
+	end
+end
+
+-- MASTER DATABASE (Curated & Real Asset IDs)
+local masterCatalog = {
+	{"Halos", "Glimmering Light Halo", "Special / Halo", "", false},
+	{"Halos", "Corrupt Halo", "Special / Halo", "", false},
+	{"Halos", "Halloween Halo 2019", "Special / Halo", "", false},
+	{"Halos", "Valentine Halo 2020", "Special / Halo", "", false},
+	{"Halos", "Autumn Halo 2019", "Special / Halo", "", false},
+	{"Halos", "Winter Halo 2019", "Special / Halo", "", false},
+	{"Halos", "Mermaid Halo 2019", "Special / Halo", "", false},
+	{"Halos", "Spring Halo 2020", "Special / Halo", "", false},
+	{"Halos", "Halloween Halo 2020", "Special / Halo", "", false},
+	{"Halos", "Winter Halo 2020", "Special / Halo", "", false},
+	{"Halos", "Valentine Halo 2021", "Special / Halo", "", false},
+	{"Halos", "Lucky Halo 2021", "Special / Halo", "", false},
+	{"Halos", "Spring Halo 2021", "Special / Halo", "", false},
+	{"Halos", "Mermaid Halo 2021", "Special / Halo", "", false},
+	{"Halos", "Halloween Halo 2021", "Special / Halo", "", false},
+	{"Halos", "Winter Halo 2021", "Special / Halo", "", false},
+	{"Halos", "Spring Halo 2022", "Special / Halo", "", false},
+	{"Halos", "Mermaid Halo 2022", "Special / Halo", "", false},
+	{"Halos", "Autumn Halo 2022 (Witching Hour)", "Special / Halo", "", false},
+	{"Halos", "Winter Halo 2022", "Special / Halo", "", false},
+	{"Halos", "Starlight Halo (Flowering)", "Special / Halo", "", false},
+	{"Halos", "Solarix Halo (Tidesturn)", "Special / Halo", "", false},
+	{"Halos", "Dark Fairy Halo (Eveningfall)", "Special / Halo", "", false},
+	{"Halos", "Everfriend Halo (Val 2024)", "Special / Halo", "", false},
+	{"Halos", "Crystal Halo (Winter 2018)", "Special / Halo", "", false},
+	{"Halos", "Easter Halo 2019", "Special / Halo", "", false},
+	{"Halos", "Lucky Halo 2019", "Special / Halo", "", false},
+	{"Halos", "Lucky Halo 2020", "Special / Halo", "", false},
+	{"Halos", "Mermaid Halo 2020", "Special / Halo", "", false},
+	{"Hair", "Sailor Lady", "Shop / Closet", "rbxassetid://941089962", false},
+	{"Accessories", "Porcelina Doll Stitched Sleeves", "23,000", "rbxassetid://102867680045115", true},
+	{"Hair", "Glamour xo", "Shop / Closet", "rbxassetid://4466600862", false},
+	{"Hair", "Lovely Rose", "Shop / Closet", "rbxassetid://6332356004", false},
+	{"Accessories", "Purple", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Hair", "Ribbon Goddess", "Shop / Closet", "rbxassetid://10730156763", false},
+	{"Hair", "guy25", "Shop / Closet", "rbxassetid://74878559", false},
+	{"Accessories", "Kitty Crossbody", "5,000", "rbxassetid://5768975150", true},
+	{"Hair", "Secret Agent", "Shop / Closet", "rbxassetid://5490209816", false},
+	{"Hair", "Kindhearted Piggies", "Shop / Closet", "rbxassetid://4568631477", false},
+	{"Bodices", "Steampunk Inventor Bodice", "20,000", "rbxassetid://98365475582824", true},
+	{"Hair", "Severe Hypnosis Bangs", "Shop / Closet", "rbxassetid://6018846334", false},
+	{"Hair", "Starlight Fairy Blunt Twists", "Shop / Closet", "rbxassetid://16575187744", false},
+	{"Hair", "Lullaby Nikolai", "Shop / Closet", "rbxassetid://107143015696071", false},
+	{"Hair", "Large Wispy Bangs", "Shop / Closet", "rbxassetid://13166359962", false},
+	{"Hair", "Nova's Hair Extensions", "Shop / Closet", "rbxassetid://12307919630", true},
+	{"Hair", "Princess of the Blossoming Flowers Bangs", "Shop / Closet", "rbxassetid://2513600193", false},
+	{"Hair", "Stormfly", "Shop / Closet", "rbxassetid://6020640687", false},
+	{"Hair", "Cloudy Dreams Bantu Knots", "Shop / Closet", "rbxassetid://16535289940", false},
+	{"Hair", "Queen Mermaid's Flowing Hair", "Shop / Closet", "rbxassetid://114883140468470", true},
+	{"Hair", "Wispy Shoulder Curls", "Shop / Closet", "rbxassetid://13166363309", false},
+	{"Hair", "Windswept Spikes Bangs", "Shop / Closet", "rbxassetid://107770593892653", false},
+	{"Hair", "guy29", "Shop / Closet", "rbxassetid://2164880354", false},
+	{"Hair", "Devon", "Shop / Closet", "rbxassetid://5312839862", false},
+	{"Hair", "Hibiscus Sideburn Curls", "Shop / Closet", "rbxassetid://97886396188510", false},
+	{"Accessories", "Warm Winter Lantern", "4,000", "rbxassetid://6011287660", true},
+	{"Accessories", "Goddess of TriumphFearless Gloves", "500 Robux", "rbxassetid://10750492683", true},
+	{"Hair", "Feathered Goddess", "Shop / Closet", "rbxassetid://13598841070", false},
+	{"Hair", "Makoto Messy Hair", "Shop / Closet", "rbxassetid://5165768199", true},
+	{"Accessories", "Tropical Breeze Tea", "Shop / Closet", "", false},
+	{"Hair", "Fanciest Updo", "Shop / Closet", "rbxassetid://843223600", false},
+	{"Hair", "Hibiscus Short Dense Bangs", "Shop / Closet", "rbxassetid://100772347741481", false},
+	{"Hair", "Buttercup", "Shop / Closet", "rbxassetid://5490141298", false},
+	{"Hair", "Everfriends Half-up Heart Buns Addon", "Shop / Closet", "rbxassetid://13166362804", false},
+	{"Accessories", "Maracas", "1,750", "rbxassetid://4268735189", true},
+	{"Heels", "Fountain Girl's Lucky Step Footwear", "Shop / Closet", "rbxassetid://4244517908", false},
+	{"Hair", "Perfectly Fluffy Bangs", "Shop / Closet", "rbxassetid://3727091417", false},
+	{"Heels", "December's Dream Shoes", "45,000", "rbxassetid://8312013005", true},
+	{"Accessories", "Figure Skater", "7,000", "", false},
+	{"Accessories", "Crescent Moon Cloak", "1,750", "rbxassetid://7595136625", true},
+	{"Hair", "Opal", "Shop / Closet", "rbxassetid://5818136198", false},
+	{"Accessories", "Aphrodite's Shoulder Bag", "12,000", "rbxassetid://2804900854", true},
+	{"Hair", "Virtual Pop Star", "Shop / Closet", "rbxassetid://6348289534", false},
+	{"Hair", "Anto", "Shop / Closet", "rbxassetid://8326665413", false},
+	{"Hair", "Short Layered Blowout", "Shop / Closet", "rbxassetid://15071813389", false},
+	{"Hair", "Big Bang Pony", "Shop / Closet", "rbxassetid://4330791239", false},
+	{"Hair", "Kokona", "Shop / Closet", "rbxassetid://5218501650", false},
+	{"Accessories", "Extreme Terror of the Deep", "12,000", "", false},
+	{"Hair", "Half-up Spiked Pigtails Addon", "Shop / Closet", "rbxassetid://13167212443", false},
+	{"Hair", "Dreaming Princess", "Shop / Closet", "rbxassetid://880932680", false},
+	{"Heels", "Winter Guardian Glacier Boots", "30,000", "rbxassetid://6061452378", true},
+	{"Hair", "Flowing in the Wind Bangs", "Shop / Closet", "rbxassetid://2778468286", false},
+	{"Hair", "Sunshine Locs", "Shop / Closet", "rbxassetid://15635724627", false},
+	{"Hair", "guy35", "Shop / Closet", "rbxassetid://83515687", false},
+	{"Hair", "Side Parted Mermaid Bangs", "Shop / Closet", "rbxassetid://13166365499", false},
+	{"Hair", "Lullaby Bang Locs", "Shop / Closet", "rbxassetid://15635725176", false},
+	{"Hair", "Charly's Mullet Addon", "Shop / Closet", "rbxassetid://13169021583", false},
+	{"Hair", "Blitzy Curls", "Shop / Closet", "rbxassetid://2066336199", false},
+	{"Hair", "Sona Bangs", "Shop / Closet", "rbxassetid://4753831906", false},
+	{"Hair", "Fountain Girl's Diamond Hair", "Shop / Closet", "rbxassetid://12458830811", true},
+	{"Accessories", "Tidy Bowtie", "300", "rbxassetid://8692936656", true},
+	{"Hair", "Curly Flapper Finger Waves", "Shop / Closet", "rbxassetid://11105113033", false},
+	{"Hair", "Boho Half-braided", "Shop / Closet", "rbxassetid://8699745588", false},
+	{"Hair", "Opulent Queen Judgement Curled Updo", "Shop / Closet", "rbxassetid://76520614389609", false},
+	{"Accessories", "Surprise Locker - Water Fairy", "Shop / Closet", "", false},
+	{"Accessories", "Ivy Pumpkins", "800", "", false},
+	{"Hair", "Supernova's Left Pony", "Shop / Closet", "rbxassetid://12273317954", false},
+	{"Accessories", "Darling Valentina Lace Cuffs", "3,000", "rbxassetid://4665355394", true},
+	{"Hair", "Golden Bantu Knots", "Shop / Closet", "rbxassetid://11138976094", false},
+	{"Accessories", "Shampoo", "Shop / Closet", "", false},
+	{"Hair", "Gothic Shoulder Strands", "Shop / Closet", "rbxassetid://15635405826", false},
+	{"Hair", "Pageant Princess Long", "Shop / Closet", "rbxassetid://4995027879", false},
+	{"Hair", "Effortlessy Cool Bun", "Shop / Closet", "rbxassetid://13778669046", false},
+	{"Hair", "Straight Cut Ponytail", "Shop / Closet", "rbxassetid://3052869274", false},
+	{"Hair", "Sakura", "Shop / Closet", "rbxassetid://4686654398", false},
+	{"Hair", "Voluminous Side Parted Bangs", "Shop / Closet", "rbxassetid://13166360966", false},
+	{"Hair", "Saltwater Spiral Bangs", "Shop / Closet", "rbxassetid://120255007244279", false},
+	{"Hair", "Chic Ponytail Locs", "Shop / Closet", "rbxassetid://16562534082", false},
+	{"Accessories", "Sphere", "Shop / Closet", "", false},
+	{"Heels", "Bat-Mo-Heels", "70,000", "rbxassetid://4244517908", true},
+	{"Hair", "Candy Braid BB Bangs", "Shop / Closet", "rbxassetid://4623117755", false},
+	{"Hair", "Emma Bangs", "Shop / Closet", "rbxassetid://4753833035", false},
+	{"Accessories", "Surprise Locker - Ice Fairy", "Shop / Closet", "", false},
+	{"Accessories", "Glitterfrost Celebration Pearl Party Shawl", "14,000", "rbxassetid://15496974533", true},
+	{"Hair", "Coco", "Shop / Closet", "rbxassetid://5313124673", false},
+	{"Accessories", "14 Karat Gold Infinity Chain", "14,000", "", false},
+	{"Hair", "Divine Haven", "Shop / Closet", "rbxassetid://9190518962", false},
+	{"Hair", "Sassy Ponies", "Shop / Closet", "rbxassetid://5818133613", false},
+	{"Hair", "Side Swept Braids & Extensions", "Shop / Closet", "rbxassetid://5361835642", false},
+	{"Accessories", "December's Dream Fur Muff", "12,500", "rbxassetid://8309592780", true},
+	{"Accessories", "Undertaker's Hands", "600", "", false},
+	{"Hair", "Famous Bangs", "Shop / Closet", "rbxassetid://6018667464", false},
+	{"Hair", "Lovebound Harmony Mullet", "Shop / Closet", "rbxassetid://18266809986", false},
+	{"Hair", "ASTROID QT", "Shop / Closet", "rbxassetid://5218480479", false},
+	{"Hair", "Lazy Summer Waves", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "The Protagonist", "Shop / Closet", "rbxassetid://3782059156", false},
+	{"Hair", "Inventor's Bangs", "Shop / Closet", "rbxassetid://91385932601799", false},
+	{"Hair", "Heartlink Backside Braids", "Shop / Closet", "rbxassetid://18267655940", false},
+	{"Hair", "Aesthetic Low Tied Ponytail", "Shop / Closet", "rbxassetid://13166358600", false},
+	{"Accessories", "Woodland Faun Ears and Antlers", "8,500", "rbxassetid://15496650699", true},
+	{"Accessories", "Art Class", "Shop / Closet", "", false},
+	{"Hair", "Starlight Front Locs", "Shop / Closet", "rbxassetid://16563428963", false},
+	{"Hair", "Big Boss Babe", "Shop / Closet", "rbxassetid://6348186093", false},
+	{"Hair", "Skin-Shaven Viper Mullet", "Shop / Closet", "rbxassetid://78000321734262", false},
+	{"Hair", "Sam", "Shop / Closet", "rbxassetid://8026664283", false},
+	{"Hair", "Joyful Spring", "Shop / Closet", "rbxassetid://9190407433", false},
+	{"Accessories", "Strawberry Punch", "Shop / Closet", "", false},
+	{"Hair", "Lead Guitarist Bangs and Buns", "Shop / Closet", "rbxassetid://3713895895", false},
+	{"Hair", "Layla", "Shop / Closet", "rbxassetid://6253962664", false},
+	{"Hair", "Queen Mermaid's Edges", "Shop / Closet", "rbxassetid://139013324570130", false},
+	{"Hair", "Kirana", "Shop / Closet", "rbxassetid://5366105839", false},
+	{"Hair", "Kiara", "Shop / Closet", "rbxassetid://5280178248", false},
+	{"Hair", "Dahlia", "Shop / Closet", "rbxassetid://7632178215", false},
+	{"Accessories", "Dashing Through the Snow Scarf", "7,500", "rbxassetid://7969717797", true},
+	{"Hair", "Kat", "Shop / Closet", "rbxassetid://5708999569", false},
+	{"Hair", "Devorah's Bangs", "Shop / Closet", "rbxassetid://5312834970", false},
+	{"Accessories", "Text", "Shop / Closet", "", false},
+	{"Accessories", "JosefinSans", "Shop / Closet", "", false},
+	{"Accessories", "Snow Swan Faux Feathery Fashion Hat", "10,000", "rbxassetid://15496796398", true},
+	{"Accessories", "Special Someone Chocolate Box", "6,500", "rbxassetid://8692937149", true},
+	{"Accessories", "Pirate Captain Hat", "5,500", "rbxassetid://6188756108", true},
+	{"Hair", "Teddy", "Shop / Closet", "rbxassetid://12113989527", false},
+	{"Hair", "Man Pony", "Shop / Closet", "rbxassetid://4686522736", false},
+	{"Accessories", "Curiosity Of Vipers", "4,500", "", false},
+	{"Hair", "Chic N' Healthy", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Inventor's Top Bun Addon", "Shop / Closet", "rbxassetid://73126692494058", false},
+	{"Hair", "Coven Student Bangs", "Shop / Closet", "rbxassetid://11079270803", false},
+	{"Hair", "Ruby", "Shop / Closet", "rbxassetid://7026173993", false},
+	{"Accessories", "Mend My Heart Stitched Teddy", "13,000", "rbxassetid://8692936428", true},
+	{"Hair", "TeddyBear", "Shop / Closet", "rbxassetid://6366167480", false},
+	{"Hair", "Rococo Christmas", "Shop / Closet", "rbxassetid://6018593889", false},
+	{"Hair", "Fierce Bangs", "Shop / Closet", "rbxassetid://4627912763", false},
+	{"Accessories", "Prince's Chocolate Caramel Nougat Bar", "Shop / Closet", "", false},
+	{"Accessories", "Blue", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Accessories", "Fluttery Frozen Fan", "35,000", "rbxassetid://8011917112", true},
+	{"Hair", "Slow Dancing", "Shop / Closet", "rbxassetid://6328533426", false},
+	{"Accessories", "Highway", "Shop / Closet", "", false},
+	{"Hair", "Flawless", "Shop / Closet", "rbxassetid://1347571818", false},
+	{"Wings", "Bad Luck Wings", "6,000", "", false},
+	{"Hair", "Disco Goddess", "Shop / Closet", "rbxassetid://5312834970", false},
+	{"Accessories", "Surprise Locker - Fire Fairy", "Shop / Closet", "", false},
+	{"Hair", "Seraphine", "Shop / Closet", "rbxassetid://12273317225", false},
+	{"Hair", "Vampy", "Shop / Closet", "rbxassetid://7649827073", false},
+	{"Hair", "Sweetheart Bantu Knots", "Shop / Closet", "rbxassetid://16142004269", false},
+	{"Wings", "Cherry Blossom Billowing Sleeves", "20,000", "rbxassetid://4961936910", true},
+	{"Hair", "Wispy Half-up Bun", "Shop / Closet", "rbxassetid://15071816221", false},
+	{"Hair", "Underwater Chic", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Stix", "Shop / Closet", "rbxassetid://7624216519", false},
+	{"Wings", "Valentines Cake Wings", "5,500", "", false},
+	{"Wings", "L_Wing", "Shop / Closet", "rbxassetid://12559084197", false},
+	{"Accessories", "Sweet Marshmallow Charms", "8,500", "", false},
+	{"Accessories", "Opposites Attract Steampunk Gloves (Sleeves)", "25,000", "rbxassetid://8692937742", true},
+	{"Hair", "Foxtrot Bangs", "Shop / Closet", "rbxassetid://134101719023478", false},
+	{"Accessories", "Blonde", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Accessories", "Locker Courtyard", "Shop / Closet", "", false},
+	{"Hair", "Double Braided Loops", "Shop / Closet", "rbxassetid://13167779809", false},
+	{"Hair", "Summer", "Shop / Closet", "rbxassetid://5313099851", false},
+	{"Hair", "Sweetheart Edges", "Shop / Closet", "rbxassetid://16144677621", false},
+	{"Hair", "Moviestar Middle Part", "Shop / Closet", "rbxassetid://16359669492", false},
+	{"Hair", "Guy8", "Shop / Closet", "rbxassetid://643138828", false},
+	{"Hair", "Blazing Soul", "Shop / Closet", "rbxassetid://2776651073", false},
+	{"Hair", "Dominique", "Shop / Closet", "rbxassetid://5312839862", false},
+	{"Hair", "Pulled Back Locs", "Shop / Closet", "rbxassetid://16562534082", false},
+	{"Accessories", "hair", "Shop / Closet", "rbxassetid://128917781421404", true},
+	{"Hair", "Doll Bob", "Shop / Closet", "rbxassetid://94943349116552", false},
+	{"Hair", "Mermia's High Tide Short Ponytail", "Shop / Closet", "rbxassetid://92621422792100", false},
+	{"Hair", "Polly", "Shop / Closet", "rbxassetid://7235921877", false},
+	{"Heels", "Snuggly Reindeer Slippers", "Shop / Closet", "rbxassetid://4244517908", false},
+	{"Hair", "Wondergirl", "Shop / Closet", "rbxassetid://3260612792", false},
+	{"Skirts", "Mon Chri Tea Party Skirt", "30,000", "rbxassetid://6365520691", true},
+	{"Wings", "West Wing Campus", "Shop / Closet", "", false},
+	{"Accessories", "Pearls of the Moon", "500", "", false},
+	{"Hair", "Split School Braids", "Shop / Closet", "rbxassetid://4336485257", false},
+	{"Heels", "Cherry Blossom Wooden Sandals", "Shop / Closet", "rbxassetid://4244517908", false},
+	{"Accessories", "Mon Chri Tea Party Palace Sleeves", "20,000", "rbxassetid://6365520855", true},
+	{"Accessories", "Flame of Love", "12,000", "", false},
+	{"Hair", "Hibiscus Wavy Bangs Right", "Shop / Closet", "rbxassetid://86846295573087", false},
+	{"Hair", "Haru", "Shop / Closet", "rbxassetid://5163238230", false},
+	{"Hair", "Punk World Gurl", "Shop / Closet", "rbxassetid://579355278", false},
+	{"Accessories", "Baby Star Penguin", "7,200", "rbxassetid://8116118294", true},
+	{"Skirts", "Sleigh It Skirt", "5,500", "rbxassetid://8096555954", true},
+	{"Hair", "Princess of the Blossoming Flowers", "Shop / Closet", "rbxassetid://2506946750", false},
+	{"Hair", "Winter Warrior", "Shop / Closet", "rbxassetid://5818134109", false},
+	{"Hair", "Dud Stud", "Shop / Closet", "rbxassetid://15730710", false},
+	{"Hair", "Bruh", "Shop / Closet", "rbxassetid://1115861904", false},
+	{"Hair", "Porcelina Bangs", "Shop / Closet", "rbxassetid://129037538451655", false},
+	{"Hair", "Peachy Pigtails", "Shop / Closet", "rbxassetid://5818135129", false},
+	{"Accessories", "Batpack", "5,000", "rbxassetid://7588478248", true},
+	{"Hair", "Voluminous Side Parted Waves", "Shop / Closet", "rbxassetid://13166360764", false},
+	{"Accessories", "Hot Head Plugs", "1,000", "rbxassetid://11128705953", true},
+	{"Hair", "Lollipop Lolita", "Shop / Closet", "rbxassetid://4327763237", false},
+	{"Accessories", "Summer Fantasy Mermaid Seashell Purse", "25,000", "rbxassetid://6950743392", true},
+	{"Hair", "Elegant Waterfall", "Shop / Closet", "rbxassetid://6020642933", false},
+	{"Hair", "guy24", "Shop / Closet", "rbxassetid://433031789", false},
+	{"Accessories", "DiarySlots8and9", "Shop / Closet", "", false},
+	{"Hair", "Fountain Girl's Bangs", "Shop / Closet", "rbxassetid://12458847266", false},
+	{"Accessories", "Parisienne", "Shop / Closet", "", false},
+	{"Accessories", "Fuzzy Earmuffs", "9,000", "rbxassetid://8219761306", true},
+	{"Accessories", "Nature Fairy Posey", "Shop / Closet", "", false},
+	{"Accessories", "LockerSlots6and7", "Shop / Closet", "", false},
+	{"Hair", "Bailey", "Shop / Closet", "rbxassetid://13166361468", false},
+	{"Accessories", "Widow's PillBox Hat", "2,250", "rbxassetid://7805321316", true},
+	{"Accessories", "Soul Scavenger", "6,000", "", false},
+	{"Hair", "Hibiscus Dense Bangs", "Shop / Closet", "rbxassetid://100772347741481", false},
+	{"Accessories", "Cherry Blossom Back Bow", "5,000", "rbxassetid://4940600691", true},
+	{"Hair", "guy28", "Shop / Closet", "rbxassetid://983426733", false},
+	{"Hair", "Casual Bun", "Shop / Closet", "rbxassetid://3276169390", false},
+	{"Accessories", "Diary Expansion - Perfect Planner!", "Shop / Closet", "", false},
+	{"Wings", "Warm JamJamnamon Roll Wings", "2,500", "", false},
+	{"Accessories", "Starlight Candy Bracelets", "11,000", "rbxassetid://16616898050", true},
+	{"Hair", "Paradise", "Shop / Closet", "rbxassetid://6558779832", false},
+	{"Heels", "Mon Chri Tea Party Platforms", "30,000", "rbxassetid://6365521288", true},
+	{"Hair", "Wavy Spacebuns Short", "Shop / Closet", "rbxassetid://5818136413", false},
+	{"Accessories", "Ubuntu", "Shop / Closet", "", false},
+	{"Hair", "Dragon Heiress Bangs", "Shop / Closet", "rbxassetid://6020735876", false},
+	{"Hair", "Spring Evening", "Shop / Closet", "rbxassetid://13554177836", false},
+	{"Hair", "Devil Horn Buns", "Shop / Closet", "rbxassetid://15071818397", false},
+	{"Accessories", "Sparkly Heart Hoop Earrings", "1,500", "rbxassetid://4643980638", true},
+	{"Hair", "Wispy Middle Part Bangs", "Shop / Closet", "rbxassetid://15071817122", false},
+	{"Hair", "Brianna", "Shop / Closet", "rbxassetid://5280112991", false},
+	{"Hair", "A hobo? Where?", "Shop / Closet", "rbxassetid://1492198449", false},
+	{"Accessories", "Fall Fairy", "5,500", "", false},
+	{"Accessories", "HEAD Antler Lights", "6,000", "", false},
+	{"Hair", "Wavy Merman Hair", "Shop / Closet", "rbxassetid://5165887400", true},
+	{"Accessories", "DiarySlots12and13", "Shop / Closet", "", false},
+	{"Hair", "Comet's Bangs", "Shop / Closet", "rbxassetid://12273317617", false},
+	{"Accessories", "I Wish for a Unicorn", "10,500", "", false},
+	{"Hair", "Dae-Hyun", "Shop / Closet", "rbxassetid://8143896327", false},
+	{"Accessories", "Dreamy Star Hair Brush & Mirror", "Shop / Closet", "", true},
+	{"Hair", "Epic Braids", "Shop / Closet", "rbxassetid://2101069090", false},
+	{"Accessories", "Goth Lolita Sleeves", "3,500", "rbxassetid://5774712034", true},
+	{"Hair", "Spirit Wisp Frontal Locs HIGH", "Shop / Closet", "rbxassetid://18367278904", false},
+	{"Accessories", "Black", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Hair", "Curly Fringe Bangs", "Shop / Closet", "rbxassetid://5280195280", false},
+	{"Hair", "Updo2", "Shop / Closet", "rbxassetid://2116151927", false},
+	{"Accessories", "GoodVibes", "Shop / Closet", "", false},
+	{"Hair", "Pumpkin Patch", "Shop / Closet", "rbxassetid://5818135721", false},
+	{"Accessories", "Widow's Webbed Fan", "10,000", "rbxassetid://106314903735320", true},
+	{"Hair", "Dream Girl", "Shop / Closet", "rbxassetid://13747002239", false},
+	{"Hair", "Sporty Side-Pony", "Shop / Closet", "rbxassetid://8073685860", false},
+	{"Hair", "Allisson", "Shop / Closet", "rbxassetid://7662424147", false},
+	{"Hair", "Curlz Twirlz", "Shop / Closet", "rbxassetid://4907709957", false},
+	{"Hair", "Watercolor Whirl Puffy Puffs", "Shop / Closet", "rbxassetid://90760698585505", false},
+	{"Hair", "Starlight Fairy Blunt Bangs 2", "Shop / Closet", "rbxassetid://16602909976", false},
+	{"Hair", "Hibiscus Sparse Bangs", "Shop / Closet", "rbxassetid://101199796182966", false},
+	{"Hair", "Zuko", "Shop / Closet", "rbxassetid://5490258026", false},
+	{"Hair", "Barbie's Signature", "Shop / Closet", "rbxassetid://2326148828", false},
+	{"Hair", "Beach Comber", "Shop / Closet", "rbxassetid://863919484", false},
+	{"Accessories", "Your Highness Hot Popcorn", "Shop / Closet", "", false},
+	{"Accessories", "Fallen Fae Torn Adorned Sleeves", "16,000", "rbxassetid://132242371259852", true},
+	{"Accessories", "Haunted", "6,500", "", false},
+	{"Hair", "Voluminous Queen", "Shop / Closet", "rbxassetid://4455090792", false},
+	{"Hair", "20's Finger Wave Bangs", "Shop / Closet", "rbxassetid://10729968366", false},
+	{"Hair", "Dragon Heiress", "Shop / Closet", "rbxassetid://6020735506", false},
+	{"Accessories", "Princess Starfrost Crystal Scepter", "15,000", "rbxassetid://4505129996", true},
+	{"Hair", "I <3 Candy", "Shop / Closet", "rbxassetid://2321984626", false},
+	{"Hair", "Lolipop Sweetheart", "Shop / Closet", "rbxassetid://579349584", false},
+	{"Hair", "Ariana", "Shop / Closet", "rbxassetid://2066489431", false},
+	{"Hair", "Cheerleader Curls", "Shop / Closet", "rbxassetid://4339540776", false},
+	{"Wings", "Cozy Flannel Bow Wings", "3,000", "", false},
+	{"Hair", "DaVinki", "Shop / Closet", "rbxassetid://5312834970", false},
+	{"Hair", "Watercolor Whirl Puffier Puffs", "Shop / Closet", "rbxassetid://94467490845265", false},
+	{"Hair", "Pixie Pigtails", "Shop / Closet", "rbxassetid://5218511234", false},
+	{"Hair", "guy30", "Shop / Closet", "rbxassetid://145283773", false},
+	{"Accessories", "GoldenDefault", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Hair", "Charly", "Shop / Closet", "rbxassetid://5774756929", false},
+	{"Hair", "French Braid Beauty Ponies", "Shop / Closet", "rbxassetid://4647502694", false},
+	{"Accessories", "Aurora's Longsword", "13,500", "rbxassetid://8121750656", true},
+	{"Hair", "guy18", "Shop / Closet", "rbxassetid://212348733", false},
+	{"Accessories", "Fire Fairy", "Shop / Closet", "", false},
+	{"Accessories", "Good Tidings Shawl Cape", "12,000", "rbxassetid://7969720148", true},
+	{"Accessories", "Study Break Antioxidant Chocolate", "Shop / Closet", "", false},
+	{"Accessories", "Gothicutie Earrings", "5,000", "rbxassetid://7542251722", true},
+	{"Hair", "Despair Twintails", "Shop / Closet", "rbxassetid://4557003218", false},
+	{"Bodices", "Mon Chri Tea Party Bowtie Bodice", "18,000", "rbxassetid://6365521460", true},
+	{"Hair", "guy33", "Shop / Closet", "rbxassetid://375815502", false},
+	{"Skirts", "Merry Sparkly Dress", "3,200", "rbxassetid://6024656579", true},
+	{"Hair", "Miss Amazing at Everything Bangs", "Shop / Closet", "rbxassetid://3735279448", false},
+	{"Hair", "Ethereal Curls", "Shop / Closet", "rbxassetid://17525585336", false},
+	{"Hair", "Elegant Waterfall Bangs", "Shop / Closet", "rbxassetid://6020643121", false},
+	{"Hair", "Cheer Captain", "Shop / Closet", "rbxassetid://6185103180", false},
+	{"Hair", "Countess", "Shop / Closet", "rbxassetid://7632179143", false},
+	{"Hair", "Annoying Strand", "Shop / Closet", "rbxassetid://7026889668", false},
+	{"Accessories", "HidePlayers", "Shop / Closet", "rbxassetid://13051316455", false},
+	{"Hair", "Granddad's Cosplaying Santa Claus", "Shop / Closet", "rbxassetid://15856449", false},
+	{"Hair", "Magic Gurl Curls", "Shop / Closet", "rbxassetid://4618487014", false},
+	{"Hair", "Melody Bangs", "Shop / Closet", "rbxassetid://5818134241", false},
+	{"Skirts", "Peppermint Princess Skirt", "32,000", "rbxassetid://8009656460", true},
+	{"Hair", "Delicate Empress", "Shop / Closet", "rbxassetid://3714753718", false},
+	{"Hair", "Guy16", "Shop / Closet", "rbxassetid://208526917", false},
+	{"Hair", "Love Fairy's Bangs", "Shop / Closet", "rbxassetid://12296912815", false},
+	{"Accessories", "Surf Board", "28,000", "rbxassetid://5192155191", true},
+	{"Hair", "Dashing Bangs", "Shop / Closet", "rbxassetid://5490250671", false},
+	{"Hair", "Pageant Wave", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Accessories", "Antique", "Shop / Closet", "", false},
+	{"Hair", "Stellar Ponies", "Shop / Closet", "rbxassetid://8073687149", false},
+	{"Accessories", "BG Behind Inventory", "Shop / Closet", "rbxassetid://1454133912", false},
+	{"Hair", "Sweet and Shy", "Shop / Closet", "rbxassetid://2965881546", false},
+	{"Hair", "Symphony Accent Ribbons", "Shop / Closet", "rbxassetid://18266961796", false},
+	{"Hair", "Preppy Basic Bangs", "Shop / Closet", "rbxassetid://15071815519", false},
+	{"Hair", "Elite", "Shop / Closet", "rbxassetid://736015315", false},
+	{"Hair", "Cheer Captain Ponytail Addon", "Shop / Closet", "rbxassetid://6185103180", false},
+	{"Accessories", "Rootbeer Soda", "Shop / Closet", "", false},
+	{"Accessories", "Kelp", "Shop / Closet", "rbxassetid://105229619624492", false},
+	{"Hair", "Elegant Royalty", "Shop / Closet", "rbxassetid://2507563024", false},
+	{"Hair", "Wispy Shy Bangs", "Shop / Closet", "rbxassetid://15071817414", false},
+	{"Accessories", "neon middle section", "Shop / Closet", "rbxassetid://97695248253910", false},
+	{"Hair", "Onyx Skull-Shaven Mullet Extension", "Shop / Closet", "rbxassetid://73865980131701", false},
+	{"Accessories", "Elemental Studies - New Magical Element! Book 2", "Shop / Closet", "", false},
+	{"Accessories", "Roblox Cheezy Crackers", "Shop / Closet", "", false},
+	{"Wings", "Candy Cane Sugar Wings", "4,000", "", false},
+	{"Accessories", "Diamond Beach Shops", "Shop / Closet", "", false},
+	{"Accessories", "Front Tails", "Shop / Closet", "rbxassetid://76111343507093", false},
+	{"Accessories", "LockerSlots10and11", "Shop / Closet", "", false},
+	{"Hair", "Curl Bangs", "Shop / Closet", "rbxassetid://972874829", false},
+	{"Accessories", "DiarySlots10and11", "Shop / Closet", "", false},
+	{"Accessories", "BackTails", "Shop / Closet", "rbxassetid://100702506248808", false},
+	{"Hair", "Mermia's High Tide Ponytail", "Shop / Closet", "rbxassetid://105628930672359", false},
+	{"Accessories", "BzierCurve.286", "Shop / Closet", "rbxassetid://76521476651930", false},
+	{"Hair", "Valley Of The Dolls", "Shop / Closet", "rbxassetid://5708890519", false},
+	{"Hair", "Despair Twintails Bangs", "Shop / Closet", "rbxassetid://4557014753", false},
+	{"Hair", "Paradise Bangs", "Shop / Closet", "rbxassetid://6558785822", false},
+	{"Hair", "Swoopy Bangs", "Shop / Closet", "rbxassetid://7235922025", false},
+	{"Hair", "Blazing Soul Bangs", "Shop / Closet", "rbxassetid://2952866367", false},
+	{"Hair", "Crest Pointed Mane", "Shop / Closet", "rbxassetid://127505953291859", false},
+	{"Accessories", "BzierCurve.275", "Shop / Closet", "rbxassetid://114883140468470", false},
+	{"Accessories", "Edges", "Shop / Closet", "rbxassetid://74726757759487", false},
+	{"Heels", "Royale Rebel Laced Boots", "Shop / Closet", "rbxassetid://4244517908", true},
+	{"Accessories", "BzierCurve.278", "Shop / Closet", "rbxassetid://76111343507093", false},
+	{"Hair", "Garden Leisure Curled Updo", "Shop / Closet", "rbxassetid://73656181513691", false},
+	{"Accessories", "Sphere.002", "Shop / Closet", "rbxassetid://106174943083599", false},
+	{"Hair", "Katherine", "Shop / Closet", "rbxassetid://7461353720", false},
+	{"Hair", "Kagura", "Shop / Closet", "rbxassetid://6332761099", false},
+	{"Hair", "Joey", "Shop / Closet", "rbxassetid://8699744723", false},
+	{"Hair", "Becky", "Shop / Closet", "rbxassetid://4603934061", false},
+	{"Hair", "Posey's Etheral Locks", "Shop / Closet", "rbxassetid://19005316034", false},
+	{"Hair", "Phantom of the Opera", "Shop / Closet", "rbxassetid://941268301", false},
+	{"Hair", "Watercolor Whirl Puffs", "Shop / Closet", "rbxassetid://92049574465640", false},
+	{"Hair", "80's Messy Bangs", "Shop / Closet", "rbxassetid://7026943056", false},
+	{"Hair", "Keiko Bangs", "Shop / Closet", "rbxassetid://4753848578", false},
+	{"Accessories", "Plane.052", "Shop / Closet", "rbxassetid://112751293744932", false},
+	{"Accessories", "Eater", "Shop / Closet", "", false},
+	{"Accessories", "SpecialMesh", "Shop / Closet", "rbxassetid://4250784505", false},
+	{"Accessories", "Audiowide", "Shop / Closet", "", false},
+	{"Accessories", "Plane.015", "Shop / Closet", "rbxassetid://92965154838942", false},
+	{"Accessories", "Giant Teddy Bear", "8,000", "rbxassetid://6358739502", true},
+	{"Accessories", "Sea Star Pearl Bracelet", "7,000", "rbxassetid://3234776742", true},
+	{"Hair", "Posey's Flowing Pigtails", "Shop / Closet", "rbxassetid://19005186807", false},
+	{"Accessories", "bangs", "Shop / Closet", "rbxassetid://134101719023478", false},
+	{"Accessories", "Mon Chri Tea Party Clutch", "8,000", "rbxassetid://6365520394", true},
+	{"Wings", "Steampunk Aerotechnic Wings", "13,000", "rbxassetid://11119083957", true},
+	{"Accessories", "pigtails.006", "Shop / Closet", "rbxassetid://12458842831", false},
+	{"Accessories", "searchicon1", "Shop / Closet", "rbxassetid://14346979989", false},
+	{"Accessories", "pigtails", "Shop / Closet", "rbxassetid://12458830811", false},
+	{"Accessories", "bangs.001", "Shop / Closet", "rbxassetid://12458847266", false},
+	{"Accessories", "BuilderSansExtraBold", "Shop / Closet", "", false},
+	{"Hair", "Split School Braids Bangs", "Shop / Closet", "rbxassetid://4336485257", false},
+	{"Accessories", "KeyTemplate", "Shop / Closet", "rbxassetid://8553626111", false},
+	{"Hair", "Guy2", "Shop / Closet", "rbxassetid://643138159", false},
+	{"Accessories", "Radiant Liquid Foundation", "Shop / Closet", "", false},
+	{"Hair", "Effortlessy Cool Bangs", "Shop / Closet", "rbxassetid://13777812621", false},
+	{"Hair", "Lina", "Shop / Closet", "rbxassetid://6021619866", false},
+	{"Accessories", "Celebration Sombrero", "5,000", "rbxassetid://114907566839210", true},
+	{"Accessories", "Magical Field of Clovers", "6,000", "", false},
+	{"Accessories", "34", "Shop / Closet", "rbxassetid://13119449049", false},
+	{"Accessories", "FurnitureScale", "Shop / Closet", "", false},
+	{"Accessories", "Powder Heart Backpack", "18,000", "rbxassetid://8692936828", true},
+	{"Hair", "Posey's Curled Tendrils", "Shop / Closet", "rbxassetid://19005819103", false},
+	{"Accessories", "28", "Shop / Closet", "rbxassetid://13119449049", false},
+	{"Heels", "Opposites Attract Transformation Boots", "55,000", "rbxassetid://8692913581", true},
+	{"Accessories", "color1", "Shop / Closet", "rbxassetid://7478790613", false},
+	{"Hair", "Curly Ladrona Pigtails", "Shop / Closet", "rbxassetid://13775352661", false},
+	{"Accessories", "Stylish Tree Fashion", "6,250", "", false},
+	{"Accessories", "Peppermint Princess Sleeves", "3,000", "rbxassetid://8096543653", true},
+	{"Hair", "Popstar Pony", "Shop / Closet", "rbxassetid://5998269597", false},
+	{"Accessories", "33", "Shop / Closet", "rbxassetid://7199772851", false},
+	{"Accessories", "31", "Shop / Closet", "rbxassetid://5673172057", false},
+	{"Hair", "Very Envy Punk Pigtails", "Shop / Closet", "rbxassetid://13600143938", false},
+	{"Hair", "Buns for Days", "Shop / Closet", "rbxassetid://3014369412", false},
+	{"Accessories", "30", "Shop / Closet", "rbxassetid://7199772871", false},
+	{"Accessories", "Love Me Forever Handbag", "8,000", "rbxassetid://2804900981", true},
+	{"Accessories", "16", "Shop / Closet", "rbxassetid://7199772873", false},
+	{"Accessories", "CloseandSave", "Shop / Closet", "rbxassetid://4957796872", false},
+	{"Accessories", "bgheart", "Shop / Closet", "rbxassetid://12156357522", false},
+	{"Accessories", "FuzzyBubbles", "Shop / Closet", "", false},
+	{"Accessories", "Walk Packs", "Shop / Closet", "", false},
+	{"Hair", "Fountain Girl's Hair", "Shop / Closet", "rbxassetid://12458830811", true},
+	{"Accessories", "17", "Shop / Closet", "rbxassetid://5673202279", false},
+	{"Accessories", "Elegance Rose Boutineer", "10,000", "rbxassetid://4643990755", true},
+	{"Skirts", "Ballroom Butler Trousers & Dress Shoes", "Shop / Closet", "rbxassetid://123045630811449", false},
+	{"Hair", "guy22", "Shop / Closet", "rbxassetid://538172339", false},
+	{"Hair", "Sidebraid Beauty", "Shop / Closet", "rbxassetid://966163138", false},
+	{"Hair", "Fallen Fae's Chopped Bangs", "Shop / Closet", "rbxassetid://110528828687393", false},
+	{"Accessories", "25", "Shop / Closet", "rbxassetid://7199772858", false},
+	{"Hair", "Genie in a Bottle", "Shop / Closet", "rbxassetid://2325443459", false},
+	{"Accessories", "AmaticSC", "Shop / Closet", "", false},
+	{"Accessories", "10", "Shop / Closet", "rbxassetid://13119449049", false},
+	{"Hair", "Guy13", "Shop / Closet", "rbxassetid://212966179", false},
+	{"Hair", "Shy Tidalmist", "Shop / Closet", "rbxassetid://107928949336526", false},
+	{"Accessories", "KeyHoleInside", "Shop / Closet", "rbxassetid://7199772839", false},
+	{"Accessories", "KeyHole", "Shop / Closet", "rbxassetid://7199772842", false},
+	{"Accessories", "11", "Shop / Closet", "rbxassetid://13119449049", false},
+	{"Hair", "Wispy Half-up Ponytail", "Shop / Closet", "rbxassetid://15071816221", false},
+	{"Accessories", "Gooey S'mores", "10,000", "", false},
+	{"Hair", "Middle Parted Locs", "Shop / Closet", "rbxassetid://16562534082", false},
+	{"Skirts", "Lullaby Nikolai and Lauralai Skirt", "36,000", "rbxassetid://98314600779755", true},
+	{"Hair", "Wavy Mermaid Hair", "Shop / Closet", "rbxassetid://5165896996", true},
+	{"Hair", "Stormfly Bangs", "Shop / Closet", "rbxassetid://6020640819", false},
+	{"Bodices", "Winter Guardian Thermal Bodice/Tailcoat", "24,000", "rbxassetid://6061452188", true},
+	{"Hair", "Sona", "Shop / Closet", "rbxassetid://4686535526", false},
+	{"Hair", "Star of the School", "Shop / Closet", "rbxassetid://3801564177", false},
+	{"Hair", "Powerdered Aristocrat Bangs", "Shop / Closet", "rbxassetid://133474866702280", false},
+	{"Accessories", "TEDDYZILLA", "20,000", "rbxassetid://6358739753", true},
+	{"Hair", "Casual Side Part", "Shop / Closet", "rbxassetid://7674267982", false},
+	{"Hair", "Too Much Homework", "Shop / Closet", "rbxassetid://6185199535", false},
+	{"Accessories", "diamond", "Shop / Closet", "rbxassetid://13119449049", false},
+	{"Accessories", "Black Widow", "3,650", "", false},
+	{"Hair", "Jumbo Goddess Braids", "Shop / Closet", "rbxassetid://11150675278", false},
+	{"Accessories", "Checkmark", "Shop / Closet", "rbxassetid://7092210601", false},
+	{"Accessories", "Builders Boutique", "Shop / Closet", "", false},
+	{"Wings", "R_Wing", "Shop / Closet", "rbxassetid://12559084183", false},
+	{"Hair", "Rainbow Eclipse", "Shop / Closet", "rbxassetid://4322260704", false},
+	{"Accessories", "Body", "Shop / Closet", "rbxassetid://12559084185", false},
+	{"Accessories", "Middle", "Shop / Closet", "rbxassetid://746813002", false},
+	{"Accessories", "Crystal", "Shop / Closet", "rbxassetid://12048441559", false},
+	{"Accessories", "Science Fashion Pack + Scientist Doll", "Shop / Closet", "", false},
+	{"Hair", "LNS Streak Bangs", "Shop / Closet", "rbxassetid://4677955522", false},
+	{"Hair", "Anna", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Spring Twist", "Shop / Closet", "rbxassetid://5312834970", false},
+	{"Hair", "Starlight Fairy Pigtail Twists", "Shop / Closet", "rbxassetid://16552701970", false},
+	{"Accessories", "Summit Shredder X  Crystal Clear Goggles", "12,000", "rbxassetid://93824137588267", true},
+	{"Accessories", "star", "Shop / Closet", "rbxassetid://7478789632", false},
+	{"Accessories", "rose bush", "Shop / Closet", "rbxassetid://5053372234", false},
+	{"Skirts", "Snow Swan Holiday Soire Skirt", "32,000", "rbxassetid://15640855410", true},
+	{"Hair", "Pony Princess", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Accessories", "column 1", "Shop / Closet", "rbxassetid://9024919795", false},
+	{"Accessories", "lowPolyCyl", "Shop / Closet", "rbxassetid://4830738486", false},
+	{"Accessories", "MeshPart", "Shop / Closet", "rbxassetid://9022135886", false},
+	{"Wings", "Chocolate Truffle Love", "6,500", "", false},
+	{"Accessories", "Reindeer Crossbody Purse / Backpack", "16,000", "rbxassetid://6024672063", true},
+	{"Hair", "Fallen Fae's Longing Braids", "Shop / Closet", "rbxassetid://88418116415438", false},
+	{"Hair", "Porcelina Ringlets Bonnet", "Shop / Closet", "rbxassetid://89582332737261", false},
+	{"Accessories", "TemplateConfig", "Shop / Closet", "", false},
+	{"Accessories", "base", "Shop / Closet", "rbxassetid://6986788039", false},
+	{"Hair", "Seraphine's Left Pony", "Shop / Closet", "rbxassetid://12273317954", false},
+	{"Accessories", "Father Christmas' Present Bag", "2,000", "rbxassetid://7969720753", true},
+	{"Accessories", "lastTorsoPositions", "Shop / Closet", "", false},
+	{"Accessories", "bush", "Shop / Closet", "rbxassetid://9098991338", false},
+	{"Accessories", "Pumpkin Spice Scented Candle", "500", "", false},
+	{"Hair", "Popstar Ponytail", "Shop / Closet", "rbxassetid://7674267253", false},
+	{"Hair", "Class Angel", "Shop / Closet", "rbxassetid://3280448678", false},
+	{"Hair", "Glistening Star-fro", "Shop / Closet", "rbxassetid://105252481463669", false},
+	{"Hair", "Devil Horn Buns & Scalp Addon", "Shop / Closet", "rbxassetid://15071819108", false},
+	{"Hair", "Running Through the Sprinklers", "Shop / Closet", "rbxassetid://4397677339", false},
+	{"Accessories", "VolumeArrow", "Shop / Closet", "", false},
+	{"Hair", "Blazing Braids Full", "Shop / Closet", "rbxassetid://83589025028182", false},
+	{"Accessories", "FlagPole", "Shop / Closet", "rbxassetid://4830731540", false},
+	{"Accessories", "School Spirit Cheerleader Fashion Pack + Cheerleader Doll", "Shop / Closet", "", false},
+	{"Accessories", "squarePlanter", "Shop / Closet", "rbxassetid://7199772744", false},
+	{"Accessories", "rh - heart1", "Shop / Closet", "rbxassetid://13119449049", false},
+	{"Hair", "Kaori Bangs", "Shop / Closet", "rbxassetid://4753834464", false},
+	{"Accessories", "dont color", "Shop / Closet", "rbxassetid://7478790678", false},
+	{"Accessories", "curtain", "Shop / Closet", "rbxassetid://7696029167", false},
+	{"Accessories", "LockerSlots2and3", "Shop / Closet", "", false},
+	{"Accessories", "Baby Star Bear", "7,500", "rbxassetid://15496813004", true},
+	{"Accessories", "1k tris column", "Shop / Closet", "rbxassetid://9022273675", false},
+	{"Accessories", "gate", "Shop / Closet", "rbxassetid://7478790101", false},
+	{"Accessories", "frame", "Shop / Closet", "rbxassetid://7478789946", false},
+	{"Accessories", "CameraShakeState", "Shop / Closet", "", false},
+	{"Accessories", "crown molding", "Shop / Closet", "rbxassetid://9021333191", false},
+	{"Hair", "Updo8", "Shop / Closet", "rbxassetid://643128901", false},
+	{"Accessories", "Quicksand", "Shop / Closet", "", false},
+	{"Hair", "Make the World Dance Bangs", "Shop / Closet", "rbxassetid://4381845797", false},
+	{"Accessories", "RubikWetPaint", "Shop / Closet", "", false},
+	{"Hair", "rawr xD", "Shop / Closet", "rbxassetid://398987591", false},
+	{"Accessories", "FasterOne", "Shop / Closet", "", false},
+	{"Hair", "Sweetener", "Shop / Closet", "rbxassetid://6579783642", false},
+	{"Wings", "Love Dragon", "8,500", "", false},
+	{"Accessories", "NothingYouCouldDo", "Shop / Closet", "", false},
+	{"Accessories", "DancingScript", "Shop / Closet", "", false},
+	{"Hair", "Pageant Queen", "Shop / Closet", "rbxassetid://743084813", false},
+	{"Hair", "Summit Shredder X Baby Bangs", "Shop / Closet", "rbxassetid://111454269027322", false},
+	{"Hair", "Short & Sweet", "Shop / Closet", "rbxassetid://5490179523", false},
+	{"Accessories", "Frijole", "Shop / Closet", "", false},
+	{"Accessories", "Celestial Cathedral Veil", "15,000", "rbxassetid://8692995862", true},
+	{"Hair", "Onyx Razor-cut Bangs", "Shop / Closet", "rbxassetid://130451231732607", false},
+	{"Accessories", "Marhey", "Shop / Closet", "", false},
+	{"Hair", "Cosplay Queen", "Shop / Closet", "rbxassetid://2995229846", false},
+	{"Hair", "Blunt Waterfall Bangs", "Shop / Closet", "rbxassetid://15071819930", false},
+	{"Hair", "Lydia Bangs", "Shop / Closet", "rbxassetid://6020640070", false},
+	{"Hair", "Sabrina", "Shop / Closet", "rbxassetid://13166359582", false},
+	{"Hair", "Whispy Study Bangs", "Shop / Closet", "rbxassetid://6185211711", false},
+	{"Accessories", "December's Dream Earrings", "6,000", "rbxassetid://8309593144", true},
+	{"Wings", "Baby Dragon's Wings", "2,750", "", false},
+	{"Hair", "Starlit Rocker Blowout", "Shop / Closet", "rbxassetid://17306580608", false},
+	{"Accessories", "Yellowtail", "Shop / Closet", "", false},
+	{"Accessories", "NotoSerifTC", "Shop / Closet", "", false},
+	{"Hair", "Princess of Hearts", "Shop / Closet", "rbxassetid://2778071428", false},
+	{"Accessories", "Codystar", "Shop / Closet", "", false},
+	{"Hair", "Fairytale Princess Braid", "Shop / Closet", "rbxassetid://8635368421", false},
+	{"Hair", "Blazing Braids", "Shop / Closet", "rbxassetid://83589025028182", false},
+	{"Wings", "Heart Chocolate Donuts", "4,500", "", false},
+	{"Accessories", "Winter Guardian Aura Antlers", "8,000", "rbxassetid://6061463462", true},
+	{"Hair", "Kaito", "Shop / Closet", "rbxassetid://5165758278", false},
+	{"Wings", "Blossoming Admirer", "4,000", "", false},
+	{"Hair", "Fountain Girl's Diamond Bangs", "Shop / Closet", "rbxassetid://12458847266", false},
+	{"Skirts", "December's Dream Dancer Skirt", "45,000", "rbxassetid://8309593608", true},
+	{"Accessories", "Italianno", "Shop / Closet", "", false},
+	{"Hair", "Guy7", "Shop / Closet", "rbxassetid://643138828", false},
+	{"Accessories", "Lobster", "Shop / Closet", "", false},
+	{"Hair", "Volleyball Star Locs", "Shop / Closet", "rbxassetid://15635724627", false},
+	{"Hair", "I Borrowed your Pencil in English Class", "Shop / Closet", "rbxassetid://972964895", false},
+	{"Accessories", "Diamond Beach", "Shop / Closet", "", false},
+	{"Skirts", "CaesarDressing", "Shop / Closet", "", false},
+	{"Accessories", "Sparkly Soul-Snatcher", "1,800", "", false},
+	{"Accessories", "FingerPaint", "Shop / Closet", "", false},
+	{"Hair", "Cloudy Braids Bangs", "Shop / Closet", "rbxassetid://8699789578", false},
+	{"Hair", "Fallen Fae's Chopped Braids Extensions", "Shop / Closet", "rbxassetid://121809791580972", false},
+	{"Accessories", "Barrio", "Shop / Closet", "", false},
+	{"Hair", "Loveknit Backside Braids", "Shop / Closet", "rbxassetid://18266958058", false},
+	{"Accessories", "SedgwickAveDisplay", "Shop / Closet", "", false},
+	{"Accessories", "UnicaOne", "Shop / Closet", "", false},
+	{"Accessories", "Princess Starfrost Shooting Stars Cape", "10,000", "rbxassetid://4506012295", true},
+	{"Accessories", "Fantasia Getaway Resort", "Shop / Closet", "", false},
+	{"Hair", "Balcony Princess Short", "Shop / Closet", "rbxassetid://4327933081", false},
+	{"Accessories", "BungeeInline", "Shop / Closet", "", false},
+	{"Accessories", "Code", "Shop / Closet", "", false},
+	{"Hair", "LoveStruck Braided Hearts", "Shop / Closet", "rbxassetid://16523077066", false},
+	{"Hair", "Peonie Patch's Bangs", "Shop / Closet", "rbxassetid://9192399609", false},
+	{"Accessories", "RubikIso", "Shop / Closet", "", false},
+	{"Accessories", "AreYouSerious", "Shop / Closet", "", false},
+	{"Hair", "It's not a phase, mom!", "Shop / Closet", "rbxassetid://2506999130", false},
+	{"Hair", "Elegant Royalty Bangs", "Shop / Closet", "rbxassetid://2507563024", false},
+	{"Accessories", "Damion", "Shop / Closet", "", false},
+	{"Hair", "Side Swept BoyWonder", "Shop / Closet", "rbxassetid://5165862773", false},
+	{"Accessories", "LaBelleAurore", "Shop / Closet", "", false},
+	{"Hair", "Preppy Fluffy Pigtails Addon", "Shop / Closet", "rbxassetid://15071815319", false},
+	{"Accessories", "ArimoBold", "Shop / Closet", "", false},
+	{"Hair", "Ultra Fluff", "Shop / Closet", "rbxassetid://7674267055", false},
+	{"Accessories", "Arimo", "Shop / Closet", "", false},
+	{"Accessories", "Part", "Shop / Closet", "rbxassetid://134884306982316", false},
+	{"Hair", "Double Buns", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Saltwater Siren Ponytail", "Shop / Closet", "rbxassetid://109610050724728", false},
+	{"Accessories", "Sparkly Sarong", "15,000", "rbxassetid://3231256354", true},
+	{"Heels", "Shadow Empress Chained Boots", "Shop / Closet", "rbxassetid://4244517908", true},
+	{"Hair", "Poison Ivy", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Highrise Buns", "Shop / Closet", "rbxassetid://13166359008", false},
+	{"Hair", "Fallen Fae's Messy Bob", "Shop / Closet", "rbxassetid://88418116415438", false},
+	{"Accessories", "BuilderSansMedium", "Shop / Closet", "", false},
+	{"Accessories", "Twas the Night before Christmas", "10,000", "", false},
+	{"Accessories", "BuilderSans", "Shop / Closet", "", false},
+	{"Accessories", "TitilliumWeb", "Shop / Closet", "", false},
+	{"Hair", "Izumi", "Shop / Closet", "rbxassetid://4753839924", false},
+	{"Accessories", "Small Background", "Shop / Closet", "rbxassetid://1454133912", false},
+	{"Accessories", "Royale High Nature Sounds App", "Shop / Closet", "", false},
+	{"Hair", "PunkStar Pigtails Bangs", "Shop / Closet", "rbxassetid://8699744454", false},
+	{"Accessories", "SpecialElite", "Shop / Closet", "", false},
+	{"Hair", "Fluffy Clipped Ponytail", "Shop / Closet", "rbxassetid://15071813896", false},
+	{"Accessories", "Sarpanch", "Shop / Closet", "", false},
+	{"Hair", "Hollywood Glam", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "ROBLOX Pony Hair", "Shop / Closet", "rbxassetid://398618628", true},
+	{"Hair", "Lovely Loose Braids", "Shop / Closet", "rbxassetid://5000831182", false},
+	{"Hair", "Cartoon Lady", "Shop / Closet", "rbxassetid://570653196", false},
+	{"Accessories", "Light Up Ornament Necklace", "3,000", "rbxassetid://6026890878", true},
+	{"Hair", "Hijab", "Shop / Closet", "rbxassetid://5312834970", false},
+	{"Accessories", "Art Studio Access!", "Shop / Closet", "", false},
+	{"Hair", "Posey's Etheral Flowing Locks", "Shop / Closet", "rbxassetid://92965154838942", false},
+	{"Hair", "Golden Bantu Knots Edges", "Shop / Closet", "rbxassetid://11138976707", false},
+	{"Accessories", "VolumeBox", "Shop / Closet", "", false},
+	{"Hair", "Royal Curls Bangs", "Shop / Closet", "rbxassetid://3741815543", false},
+	{"Hair", "Sporty Dreamboat", "Shop / Closet", "rbxassetid://167549828", false},
+	{"Accessories", "PermanentMarker", "Shop / Closet", "", false},
+	{"Hair", "Crowned Elegance Bangs", "Shop / Closet", "rbxassetid://6185189358", false},
+	{"Hair", "Opal's Bangs", "Shop / Closet", "rbxassetid://5818136033", false},
+	{"Accessories", "Glowachromatic Diamond Solarix", "Shop / Closet", "", false},
+	{"Hair", "Gelled-Up Needle Spikes", "Shop / Closet", "rbxassetid://131256758687297", false},
+	{"Accessories", "PatrickHand", "Shop / Closet", "", false},
+	{"Accessories", "Oswald", "Shop / Closet", "", false},
+	{"Hair", "Boyband Idol", "Shop / Closet", "rbxassetid://2757715813", false},
+	{"Accessories", "Michroma", "Shop / Closet", "", false},
+	{"Accessories", "Mystical Spices", "Shop / Closet", "", false},
+	{"Accessories", "Surprise Locker - Dark Fairy", "Shop / Closet", "", false},
+	{"Hair", "Wavy Hiking Braids Bangs", "Shop / Closet", "rbxassetid://8073686831", false},
+	{"Accessories", "Merriweather", "Shop / Closet", "", false},
+	{"Hair", "Starlit Frontal Spikes", "Shop / Closet", "rbxassetid://17306582148", false},
+	{"Hair", "Dalila", "Shop / Closet", "rbxassetid://5366081757", false},
+	{"Hair", "Dainty Doll", "Shop / Closet", "rbxassetid://13552290462", false},
+	{"Accessories", "Kalam", "Shop / Closet", "", false},
+	{"Accessories", "Jura", "Shop / Closet", "", false},
+	{"Accessories", "GothamBlack", "Shop / Closet", "", false},
+	{"Accessories", "IndieFlower", "Shop / Closet", "", false},
+	{"Accessories", "TealDefault", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Accessories", "FredokaOne", "Shop / Closet", "", false},
+	{"Hair", "Sunshine Locs Bangs", "Shop / Closet", "rbxassetid://18283712669", false},
+	{"Accessories", "Sweet Peach Tea", "Shop / Closet", "", false},
+	{"Hair", "Straight A Student Short", "Shop / Closet", "rbxassetid://3260744836", false},
+	{"Accessories", "Creepster", "Shop / Closet", "", false},
+	{"Accessories", "Bangers", "Shop / Closet", "", false},
+	{"Hair", "Summer Twist", "Shop / Closet", "rbxassetid://7026870517", false},
+	{"Hair", "Shoreline Tidal Braids", "Shop / Closet", "rbxassetid://133257393747562", false},
+	{"Wings", "Heavenly Love", "11,000", "", false},
+	{"Accessories", "Frozen Angel", "15,000", "", false},
+	{"Hair", "Seasalt Waves", "Shop / Closet", "rbxassetid://8699745387", false},
+	{"Hair", "Zombie Queen", "Shop / Closet", "rbxassetid://11079271502", false},
+	{"Accessories", "Gotham", "Shop / Closet", "", false},
+	{"Hair", "Blunt Waterfall Bangs Large", "Shop / Closet", "rbxassetid://15071819930", false},
+	{"Hair", "Jason", "Shop / Closet", "rbxassetid://7610313648", false},
+	{"Hair", "InquisitorMaster", "Shop / Closet", "rbxassetid://2515278584", false},
+	{"Accessories", "New Years", "Shop / Closet", "", false},
+	{"Accessories", "Magical Witch", "2,000", "rbxassetid://2411972167", true},
+	{"Accessories", "Arcade", "Shop / Closet", "", false},
+	{"Accessories", "SciFi", "Shop / Closet", "", false},
+	{"Accessories", "RubikMarkerHatch", "Shop / Closet", "", false},
+	{"Accessories", "Mermaid Seashell Hair Brush & Mirror", "Shop / Closet", "", true},
+	{"Accessories", "Cartoon", "Shop / Closet", "", false},
+	{"Hair", "Iconic Chic", "Shop / Closet", "rbxassetid://734902470", false},
+	{"Accessories", "Garamond", "Shop / Closet", "", false},
+	{"Accessories", "Porcelina Doll Haunted Mask", "24,000", "rbxassetid://108412897312140", true},
+	{"Skirts", "Christmas Queen Pageant Skirt", "28,000", "rbxassetid://7969720914", true},
+	{"Hair", "Eleanor", "Shop / Closet", "rbxassetid://7026861716", false},
+	{"Accessories", "Royale Rebel Spiked Veil", "15,000", "rbxassetid://5774278702", true},
+	{"Accessories", "Bodoni", "Shop / Closet", "", false},
+	{"Accessories", "SourceSansSemibold", "Shop / Closet", "", false},
+	{"Hair", "Destiny", "Shop / Closet", "rbxassetid://5280014244", false},
+	{"Accessories", "SourceSansLight", "Shop / Closet", "", false},
+	{"Hair", "Exalted Elegance Full", "Shop / Closet", "rbxassetid://87541450948270", false},
+	{"Accessories", "SourceSansBold", "Shop / Closet", "", false},
+	{"Hair", "Inventor's Top Bun Windy", "Shop / Closet", "rbxassetid://115670878551717", false},
+	{"Accessories", "SourceSans", "Shop / Closet", "", false},
+	{"Hair", "Sweet Pony", "Shop / Closet", "rbxassetid://843131269", false},
+	{"Hair", "Beach Boy", "Shop / Closet", "rbxassetid://6328177401", false},
+	{"Accessories", "Ghost Head", "175", "rbxassetid://11124998349", true},
+	{"Hair", "Saka Ears", "Shop / Closet", "rbxassetid://5818157021", false},
+	{"Hair", "Updo3", "Shop / Closet", "rbxassetid://1347571818", false},
+	{"Wings", "Social Love Butterfly", "5,000", "", false},
+	{"Hair", "Curly Ladrona Bigtails", "Shop / Closet", "rbxassetid://13775359758", false},
+	{"Bodices", "Darling Valentina Lace Bodice", "28,000", "rbxassetid://11111531725", true},
+	{"Hair", "Young and Passionate Bangs", "Shop / Closet", "rbxassetid://2948746701", false},
+	{"Accessories", "Gold Keeper", "20,000", "", false},
+	{"Hair", "Sweetie Bangs", "Shop / Closet", "rbxassetid://4444199310", false},
+	{"Accessories", "Goodbyes", "Shop / Closet", "", false},
+	{"Accessories", "Greetings", "Shop / Closet", "", false},
+	{"Accessories", "Huggly Snuggly Knitted Beanie Hat", "15,500", "rbxassetid://15499622873", true},
+	{"Accessories", "Rainy Graveyard Lurker", "6,500", "", false},
+	{"Accessories", "Questions", "Shop / Closet", "", false},
+	{"Accessories", "Compliments", "Shop / Closet", "", false},
+	{"Accessories", "background", "Shop / Closet", "rbxassetid://2391516273", false},
+	{"Accessories", "Status", "Shop / Closet", "", false},
+	{"Hair", "Ms Ponytail", "Shop / Closet", "rbxassetid://7026851454", false},
+	{"Bodices", "Versailles Snow Powder Coat", "12,000", "rbxassetid://8097469054", true},
+	{"Accessories", "VolumeCone", "Shop / Closet", "", false},
+	{"Hair", "Exalted Elegance Tresses", "Shop / Closet", "rbxassetid://87541450948270", false},
+	{"Accessories", "Ray", "Shop / Closet", "", false},
+	{"Hair", "Vanity", "Shop / Closet", "rbxassetid://8140643537", false},
+	{"Accessories", "RoomOverlay2", "Shop / Closet", "", false},
+	{"Wings", "Teddy 4 My Valentine Cookies", "7,000", "", false},
+	{"Accessories", "Ice Prince Shawl Cape", "12,000", "rbxassetid://8096541824", true},
+	{"Accessories", "Out Shopping for Presents Reusable Bags", "5,000", "rbxassetid://15499676281", true},
+	{"Hair", "Nova's Bangs", "Shop / Closet", "rbxassetid://12307916536", false},
+	{"Accessories", "Mini Hot Cocoa", "2,000", "", false},
+	{"Hair", "Riven", "Shop / Closet", "rbxassetid://4628035561", false},
+	{"Accessories", "Wedge", "Shop / Closet", "", false},
+	{"Accessories", "Otherworldly Potion", "20,000", "rbxassetid://7595071041", true},
+	{"Hair", "Spirit Wisp Frontal Locs LOW", "Shop / Closet", "rbxassetid://18367437906", false},
+	{"Accessories", "The Ace", "750", "", false},
+	{"Bodices", "Royale Rebel Locket Pendant Corset", "20,000", "rbxassetid://5773536816", true},
+	{"Hair", "Late Night Studier", "Shop / Closet", "rbxassetid://4677952329", false},
+	{"Hair", "Monica", "Shop / Closet", "rbxassetid://6357464193", false},
+	{"Hair", "Soft Wind", "Shop / Closet", "rbxassetid://4628018185", false},
+	{"Accessories", "Nomnom Frosted Donut Waist Floatie", "3,500", "rbxassetid://3444484354", true},
+	{"Accessories", "Circle", "Shop / Closet", "", false},
+	{"Accessories", "Cylinder", "Shop / Closet", "", false},
+	{"Hair", "Everybody's Dream Girl", "Shop / Closet", "rbxassetid://13747104232", false},
+	{"Accessories", "Line", "Shop / Closet", "", false},
+	{"Accessories", "Sparkly Christmas Bells Earrings", "2,000", "rbxassetid://6011346784", true},
+	{"Hair", "Rosalie", "Shop / Closet", "rbxassetid://12296734345", false},
+	{"Accessories", "Snowglobe Summit", "Shop / Closet", "", false},
+	{"Hair", "Hypnosis Bangs", "Shop / Closet", "rbxassetid://6018826139", false},
+	{"Hair", "Isana Osana", "Shop / Closet", "rbxassetid://5218490913", false},
+	{"Hair", "Saka Bangs", "Shop / Closet", "rbxassetid://5818157134", false},
+	{"Hair", "Teddy's Short Bangs", "Shop / Closet", "rbxassetid://12114063481", false},
+	{"Hair", "Sound of Harmony", "Shop / Closet", "rbxassetid://5256891392", false},
+	{"Hair", "Cottage Maiden", "Shop / Closet", "rbxassetid://13554016058", false},
+	{"Hair", "Ice Queen", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Cupid's Touch Bantu Knots", "Shop / Closet", "rbxassetid://16535309031", false},
+	{"Hair", "Riven Bangs", "Shop / Closet", "rbxassetid://4645443383", false},
+	{"Hair", "Estrella", "Shop / Closet", "rbxassetid://5365606084", false},
+	{"Hair", "Half-up Spiked Pigtails", "Shop / Closet", "rbxassetid://13166360246", false},
+	{"Accessories", "Styles", "Shop / Closet", "", false},
+	{"Accessories", "Roboto", "Shop / Closet", "", false},
+	{"Accessories", "VolumeCylinder", "Shop / Closet", "", false},
+	{"Accessories", "sizeDefault", "Shop / Closet", "", false},
+	{"Accessories", "Windy Witch Hat", "1,250", "rbxassetid://7593488871", true},
+	{"Accessories", "Vampire's Bride", "7,000", "", false},
+	{"Hair", "Heartbreaker", "Shop / Closet", "rbxassetid://2757754085", false},
+	{"Accessories", "sizeClear", "Shop / Closet", "", false},
+	{"Hair", "Peachy Pigtails Bangs", "Shop / Closet", "rbxassetid://5818134955", false},
+	{"Hair", "Damon", "Shop / Closet", "rbxassetid://7631578999", false},
+	{"Hair", "Sakura Bangs", "Shop / Closet", "rbxassetid://4686549720", false},
+	{"Accessories", "colorLight", "Shop / Closet", "", false},
+	{"Hair", "Spiked Uneven Bangs", "Shop / Closet", "rbxassetid://13166362039", false},
+	{"Hair", "Dark Pixie", "Shop / Closet", "rbxassetid://5490222361", false},
+	{"Hair", "Starlight Ponytail Locs", "Shop / Closet", "rbxassetid://16562534082", false},
+	{"Accessories", "Internal", "Shop / Closet", "", false},
+	{"Accessories", "_config", "Shop / Closet", "", false},
+	{"Accessories", "Args", "Shop / Closet", "", false},
+	{"Accessories", "Duchess Spire Veil Hat", "7,000", "rbxassetid://132330579005333", true},
+	{"Accessories", "Events", "Shop / Closet", "", false},
+	{"Accessories", "swirl", "Shop / Closet", "rbxassetid://6986788060", false},
+	{"Hair", "Cottage Maiden Bangs", "Shop / Closet", "rbxassetid://13599057865", false},
+	{"Accessories", "0.5.0", "Shop / Closet", "", false},
+	{"Accessories", "Fabulous Fur Boa", "35,000", "rbxassetid://8009685411", true},
+	{"Accessories", "Spring", "Shop / Closet", "", false},
+	{"Accessories", "Arial", "Shop / Closet", "", false},
+	{"Hair", "Blunt Waterfall Waves", "Shop / Closet", "rbxassetid://15071819610", false},
+	{"Hair", "Foxtrot", "Shop / Closet", "rbxassetid://95702835920635", false},
+	{"Hair", "Avery", "Shop / Closet", "rbxassetid://7026142006", false},
+	{"Accessories", "Castle's Heart", "Shop / Closet", "", false},
+	{"Accessories", "Nature Fairy Class", "Shop / Closet", "", false},
+	{"Hair", "Rebellious Waves", "Shop / Closet", "rbxassetid://9204784800", false},
+	{"Hair", "Morrigan", "Shop / Closet", "rbxassetid://5782909632", false},
+	{"Hair", "SunBun", "Shop / Closet", "rbxassetid://5490415600", false},
+	{"Accessories", "Heavenly Harp", "6,500", "rbxassetid://8692937003", true},
+	{"Hair", "Hollyday", "Shop / Closet", "rbxassetid://6018876932", false},
+	{"Accessories", "Fantasy", "Shop / Closet", "", false},
+	{"Accessories", "Whimsy Witch Dark Sisters Coven Hat", "25,000", "rbxassetid://7709196630", true},
+	{"Wings", "Wings", "Shop / Closet", "rbxassetid://15054481461", false},
+	{"Hair", "Casual Bun Bangs", "Shop / Closet", "rbxassetid://3276122060", false},
+	{"Hair", "Gothic Swan Cut", "Shop / Closet", "rbxassetid://15635405507", false},
+	{"Hair", "Porcelina Ringlets Front", "Shop / Closet", "rbxassetid://75830257667330", false},
+	{"Accessories", "Blackwood Manor", "Shop / Closet", "", false},
+	{"Hair", "Mermia's Low Tide Locks Addon", "Shop / Closet", "rbxassetid://97862265873418", false},
+	{"Accessories", "PlayfairDisplay", "Shop / Closet", "", false},
+	{"Accessories", "Apartments Lobby", "Shop / Closet", "", false},
+	{"Hair", "Sheek Sleek", "Shop / Closet", "rbxassetid://899375972", false},
+	{"Accessories", "Trading Hub", "Shop / Closet", "", false},
+	{"Hair", "Miss Beauty Bohemian", "Shop / Closet", "rbxassetid://4996310240", false},
+	{"Accessories", "Divinia Park", "Shop / Closet", "", false},
+	{"Hair", "Outlaw Backside Plaits", "Shop / Closet", "rbxassetid://18266988683", false},
+	{"Hair", "Kara's Hair", "Shop / Closet", "rbxassetid://3329888177", true},
+	{"Hair", "Upgraded Bacon", "Shop / Closet", "rbxassetid://83293901", false},
+	{"Accessories", "Cute Carrot Nose", "500", "rbxassetid://8120763722", true},
+	{"Accessories", "Royale Archery", "Shop / Closet", "", false},
+	{"Hair", "Juna", "Shop / Closet", "rbxassetid://5490169879", false},
+	{"Hair", "Ellanie", "Shop / Closet", "rbxassetid://7610216329", false},
+	{"Accessories", "Shadow Empress Fallen Angel Sleeves", "20,000", "rbxassetid://4081565202", true},
+	{"Accessories", "Safety Pin Sweetheart Earrings", "1,000", "rbxassetid://7805317953", true},
+	{"Hair", "Inventor's Buns", "Shop / Closet", "rbxassetid://70576788989567", false},
+	{"Heels", "Cookie Cutter Lover Loafers", "28,000", "rbxassetid://8010121056", true},
+	{"Accessories", "Starlight Hair Bow", "10,000", "rbxassetid://16616894091", true},
+	{"Hair", "High Thick Ponytail", "Shop / Closet", "rbxassetid://972917686", false},
+	{"Bodices", "Steampunk Alchemist Top Hat", "2,500", "rbxassetid://127305075259524", true},
+	{"Accessories", "Beach House", "Shop / Closet", "", false},
+	{"Accessories", "TTYL Chick Lip Gloss & Goss Plush Purse", "13,500", "rbxassetid://15499336327", true},
+	{"Accessories", "Kings", "Shop / Closet", "", false},
+	{"Accessories", "Plane.059", "Shop / Closet", "rbxassetid://131256040937652", false},
+	{"Accessories", "Pumpkin Spice Sparkluccino", "12,000", "", false},
+	{"Hair", "Windy Feathered Bangs", "Shop / Closet", "rbxassetid://7636599064", false},
+	{"Accessories", "Royale High Campus 2", "Shop / Closet", "", false},
+	{"Accessories", "Toxicity", "2,000", "", false},
+	{"Accessories", "Wickery Cliffs", "Shop / Closet", "", false},
+	{"Accessories", "Laundry Basket", "Shop / Closet", "", false},
+	{"Hair", "The Cutest Hairstyle", "Shop / Closet", "rbxassetid://2507348062", true},
+	{"Accessories", "RP Classroom", "Shop / Closet", "", false},
+	{"Hair", "Festival Day", "Shop / Closet", "rbxassetid://6348215041", false},
+	{"Accessories", "Elemental Studies - New Magical Element! Book 5", "Shop / Closet", "", false},
+	{"Accessories", "Rainy Day Classroom", "Shop / Closet", "", false},
+	{"Accessories", "The Dungeon", "Shop / Closet", "", false},
+	{"Accessories", "Throne Tower", "Shop / Closet", "", false},
+	{"Accessories", "School Cafeteria", "Shop / Closet", "", false},
+	{"Accessories", "Tangerine", "Shop / Closet", "", false},
+	{"Accessories", "School Office", "Shop / Closet", "", false},
+	{"Skirts", "Winter Guardian Snowstorm Skirt", "35,000", "rbxassetid://6061463262", true},
+	{"Hair", "Beth", "Shop / Closet", "rbxassetid://13747251756", false},
+	{"Accessories", "Nightmare Cavern Lantern", "15,000", "rbxassetid://11141945467", true},
+	{"Accessories", "Starry Eyed Felines", "2,500", "", false},
+	{"Hair", "LoveStruck", "Shop / Closet", "rbxassetid://16523077066", false},
+	{"Accessories", "School Gymnasium", "Shop / Closet", "", false},
+	{"Hair", "Kanzashi Beauty", "Shop / Closet", "rbxassetid://966158978", false},
+	{"Accessories", "Dormitory Bathing Quarters", "Shop / Closet", "", false},
+	{"Accessories", "AFK Realm", "Shop / Closet", "", false},
+	{"Hair", "Mermalina", "Shop / Closet", "rbxassetid://7612398870", false},
+	{"Hair", "Hibiscus Waves", "Shop / Closet", "rbxassetid://138208473589276", false},
+	{"Hair", "Beachy Beauty Braids Bangs", "Shop / Closet", "rbxassetid://18283919917", false},
+	{"Wings", "Mini Roses are Red Valentines", "3,750", "", false},
+	{"Accessories", "Falling Leaves Festival", "Shop / Closet", "", false},
+	{"Accessories", "Campus 4", "Shop / Closet", "", false},
+	{"Hair", "Wavy Hiking Braids", "Shop / Closet", "rbxassetid://8073686382", false},
+	{"Hair", "Mermia's Shore Swirls", "Shop / Closet", "rbxassetid://92621422792100", false},
+	{"Accessories", "Silver", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Hair", "Wind Blown Waves", "Shop / Closet", "rbxassetid://17627760963", false},
+	{"Hair", "Cutesy Bangs", "Shop / Closet", "rbxassetid://3820890446", false},
+	{"Hair", "Lust For Life", "Shop / Closet", "rbxassetid://5711425426", false},
+	{"Hair", "Alt Wolf Cut", "Shop / Closet", "rbxassetid://8699745475", false},
+	{"Hair", "Balcony Princess", "Shop / Closet", "rbxassetid://4327933081", false},
+	{"Accessories", "Steampunk Inventor's Engineering Goggles", "7,500", "rbxassetid://137599402321299", true},
+	{"Accessories", "Fly Through a Rainbow", "8,750", "", false},
+	{"Hair", "Camila", "Shop / Closet", "rbxassetid://6020721934", false},
+	{"Accessories", "Gold", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Hair", "Coven's Supreme", "Shop / Closet", "rbxassetid://7614994521", false},
+	{"Accessories", "Dances", "Shop / Closet", "", false},
+	{"Hair", "Positions", "Shop / Closet", "rbxassetid://6373798069", false},
+	{"Hair", "Side Swept Braids", "Shop / Closet", "rbxassetid://5361846098", false},
+	{"Hair", "Foxy Bangs", "Shop / Closet", "rbxassetid://9204784480", false},
+	{"Hair", "The Bully", "Shop / Closet", "rbxassetid://6375513501", false},
+	{"Accessories", "Sitting Poses", "Shop / Closet", "", false},
+	{"Hair", "Guy15", "Shop / Closet", "rbxassetid://12259117", false},
+	{"Accessories", "Standing Poses", "Shop / Closet", "", false},
+	{"Accessories", "BBQ Chippies", "Shop / Closet", "", false},
+	{"Bodices", "top background", "Shop / Closet", "rbxassetid://2391364980", false},
+	{"Hair", "Wanna see me comb my hair, really fast?", "Shop / Closet", "rbxassetid://29448832", true},
+	{"Accessories", "Green Tea", "Shop / Closet", "", false},
+	{"Hair", "Cupid's Touch Extensions", "Shop / Closet", "rbxassetid://16535575461", false},
+	{"Accessories", "Dry Erase Board", "Shop / Closet", "", false},
+	{"Hair", "Over-Eyes Locs", "Shop / Closet", "rbxassetid://16562534082", false},
+	{"Accessories", "Novamoon Nebula Sorcerix", "Shop / Closet", "", false},
+	{"Accessories", "Mermaidix Sparklefoam Rush", "Shop / Closet", "", false},
+	{"Accessories", "Fluffy, Clean, Warm Towel", "Shop / Closet", "", false},
+	{"Bodices", "Starlight T-Shirt (Bodice)", "18,500", "rbxassetid://16616901393", true},
+	{"Hair", "Sporty Side-Pony Bangs", "Shop / Closet", "rbxassetid://8073686987", false},
+	{"Accessories", "DotD Ancestor's Celebration Skull", "10,000", "rbxassetid://84828488637315", true},
+	{"Accessories", "Tray", "Shop / Closet", "", false},
+	{"Hair", "Windy Day Ain't It", "Shop / Closet", "rbxassetid://121575613", false},
+	{"Hair", "Mamo", "Shop / Closet", "rbxassetid://5165874326", false},
+	{"Accessories", "Grape Soda", "Shop / Closet", "", false},
+	{"Accessories", "Magical Water", "Shop / Closet", "", false},
+	{"Hair", "Cheer Captain Bangs", "Shop / Closet", "rbxassetid://6185121761", false},
+	{"Accessories", "Luscious Lipstick", "Shop / Closet", "", false},
+	{"Accessories", "Magical Broomstick", "100,000", "rbxassetid://5780519719", true},
+	{"Accessories", "Luminix Highlighter Blush", "Shop / Closet", "", false},
+	{"Accessories", "Personal Snow Flurry", "4,500", "rbxassetid://6024788969", true},
+	{"Accessories", "Cheesy Garlic Popcorn", "Shop / Closet", "", false},
+	{"Accessories", "Sparkle Lotion", "Shop / Closet", "", false},
+	{"Hair", "Valentine Goddess", "Shop / Closet", "rbxassetid://8635368421", false},
+	{"Hair", "Princess Sophia Long", "Shop / Closet", "rbxassetid://3817124517", false},
+	{"Skirts", "Opposites Attract Transformation Dress & Bodice", "35,000", "rbxassetid://8708478789", true},
+	{"Accessories", "Magical Condiments", "Shop / Closet", "", false},
+	{"Hair", "Long Heavy Layered Fringe", "Shop / Closet", "rbxassetid://13600258769", false},
+	{"Accessories", "Caramel Popcorn", "Shop / Closet", "", false},
+	{"Accessories", "Lemon Lime Soda", "Shop / Closet", "", false},
+	{"Accessories", "Princess Hair Brush & Mirror", "Shop / Closet", "", true},
+	{"Accessories", "Goddess of Triumph Hair Brush & Mirror", "Shop / Closet", "", true},
+	{"Hair", "Lead Guitarist", "Shop / Closet", "rbxassetid://3713895895", false},
+	{"Accessories", "Flowerix Shimmerdust", "Shop / Closet", "", false},
+	{"Hair", "Spring Soiree", "Shop / Closet", "rbxassetid://13554151106", false},
+	{"Accessories", "Compact Hair Brush & Mirror", "Shop / Closet", "", true},
+	{"Hair", "Devorah", "Shop / Closet", "rbxassetid://8300966804", false},
+	{"Hair", "Kawaii Schoolgirl", "Shop / Closet", "rbxassetid://2515286241", false},
+	{"Accessories", "Loofa", "Shop / Closet", "", false},
+	{"Accessories", "Cherry Soda", "Shop / Closet", "", false},
+	{"Hair", "Lollipop Lolita Bangs", "Shop / Closet", "rbxassetid://4327762473", false},
+	{"Hair", "guy27", "Shop / Closet", "rbxassetid://522538570", false},
+	{"Accessories", "Nail File", "Shop / Closet", "", false},
+	{"Accessories", "Blaka", "Shop / Closet", "", false},
+	{"Hair", "Shalisa", "Shop / Closet", "rbxassetid://5366127714", false},
+	{"Hair", "Inventor's Top Bun", "Shop / Closet", "rbxassetid://104607009511456", false},
+	{"Heels", "Darling Valentina Lollipop Heels", "Shop / Closet", "rbxassetid://4244517908", true},
+	{"Hair", "PunkStar Pigtails", "Shop / Closet", "rbxassetid://8699744077", false},
+	{"Hair", "Messy Grunge Bangs", "Shop / Closet", "rbxassetid://16361010089", false},
+	{"Accessories", "Sour Cream & Onion Chippies", "Shop / Closet", "", false},
+	{"Accessories", "Robux Mini Chocolate Chip Cookies", "Shop / Closet", "", false},
+	{"Hair", "Ready to Party Bangs", "Shop / Closet", "rbxassetid://2513593079", false},
+	{"Hair", "Heavy Layered Fringe", "Shop / Closet", "rbxassetid://13600252825", false},
+	{"Heels", "Steampunk Victorian Boots", "25,000", "rbxassetid://139654244910106", true},
+	{"Accessories", "__index", "Shop / Closet", "", false},
+	{"Hair", "Jaxon", "Shop / Closet", "rbxassetid://8026641171", false},
+	{"Bodices", "Shadow Empress Chained Bodice", "20,000", "rbxassetid://4082198916", true},
+	{"Hair", "Rosemary", "Shop / Closet", "rbxassetid://5218493800", false},
+	{"Hair", "Blossom Princess", "Shop / Closet", "rbxassetid://5490288699", false},
+	{"Accessories", "Refreshing Water", "Shop / Closet", "", false},
+	{"Accessories", "Fruity Lip Gloss", "Shop / Closet", "", false},
+	{"Hair", "Cloud", "Shop / Closet", "rbxassetid://6328544904", false},
+	{"Hair", "Pearly Princess", "Shop / Closet", "rbxassetid://5490267241", false},
+	{"Accessories", "Glitterfrost Flurrix Blast", "Shop / Closet", "", false},
+	{"Hair", "Plant Boy", "Shop / Closet", "rbxassetid://208526917", false},
+	{"Skirts", "Goth Lolita Skirt", "5,000", "rbxassetid://7593465178", true},
+	{"Hair", "Natural Bliss", "Shop / Closet", "rbxassetid://77035810722286", false},
+	{"Accessories", "Volumix Mascara & Mermaid Mirror", "Shop / Closet", "", false},
+	{"Accessories", "Versailles Snow Powder Bonnet", "8,500", "rbxassetid://8097469550", true},
+	{"Accessories", "Ice Berry Tea", "Shop / Closet", "", false},
+	{"Accessories", "Salted & Buttered Popcorn", "Shop / Closet", "", false},
+	{"Hair", "Layered Pushed Back", "Shop / Closet", "rbxassetid://13748310932", false},
+	{"Hair", "Vintage Beauty", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Shy Tidalmist Flipped", "Shop / Closet", "rbxassetid://93004766046185", false},
+	{"Accessories", "Elemental Studies - New Magical Element! Book 4", "Shop / Closet", "", false},
+	{"Hair", "Powdered Aristocrat Judgement", "Shop / Closet", "rbxassetid://77035810722286", false},
+	{"Accessories", "8650495328", "Shop / Closet", "", false},
+	{"Hair", "Valkyrie Bang Curls", "Shop / Closet", "rbxassetid://18417343530", false},
+	{"Accessories", "8997174058", "Shop / Closet", "", false},
+	{"Hair", "Graceful Fairy", "Shop / Closet", "rbxassetid://3260588288", false},
+	{"Hair", "Nova's Buns", "Shop / Closet", "rbxassetid://12307975786", false},
+	{"Accessories", "DropDownButtonforlooks", "Shop / Closet", "rbxassetid://5941121032", false},
+	{"Accessories", "Surprise Locker - Light Fairy", "Shop / Closet", "", false},
+	{"Accessories", "Art Class Playset + Artist Doll", "Shop / Closet", "", false},
+	{"Hair", "Sleek Chic Loose Strand", "Shop / Closet", "rbxassetid://16361088691", false},
+	{"Hair", "Spiked Fluffy Ponytail", "Shop / Closet", "rbxassetid://13166361763", false},
+	{"Accessories", "Icon", "Shop / Closet", "rbxassetid://12156357522", false},
+	{"Hair", "Shaved", "Shop / Closet", "rbxassetid://16433551229", false},
+	{"Accessories", "Mystery Friends - Cynthia", "Shop / Closet", "", false},
+	{"Hair", "Princess Sophia Short", "Shop / Closet", "rbxassetid://3817318854", false},
+	{"Accessories", "Hybrid", "Shop / Closet", "", false},
+	{"Accessories", "Mystery Friends - Molly", "Shop / Closet", "", false},
+	{"Accessories", "Cutting Edge Claw Nails", "3,000", "rbxassetid://88397039737720", true},
+	{"Accessories", "Dark Fairy", "Shop / Closet", "", false},
+	{"Hair", "Foxy Low-Tied Ponytail", "Shop / Closet", "rbxassetid://9204783248", false},
+	{"Hair", "Mess with the spikes you get the HURT", "Shop / Closet", "rbxassetid://984736285", false},
+	{"Accessories", "Cherry Blossom Hairpins", "15,000", "rbxassetid://4940534712", true},
+	{"Accessories", "Mystery Friends - Melody", "Shop / Closet", "", false},
+	{"Hair", "Porcelina Ringlets Full", "Shop / Closet", "rbxassetid://78773124618305", false},
+	{"Accessories", "ClearInventoryPopup", "Shop / Closet", "rbxassetid://933761772", false},
+	{"Accessories", "Water Fairy Mermia", "Shop / Closet", "", false},
+	{"Hair", "Messy Grunge Side Bun", "Shop / Closet", "rbxassetid://16361009858", false},
+	{"Accessories", "Mystery Friends - Rosie", "Shop / Closet", "", false},
+	{"Accessories", "bottomdecor", "Shop / Closet", "rbxassetid://7018837423", false},
+	{"Hair", "Sweet Carolina", "Shop / Closet", "rbxassetid://13599426473", false},
+	{"Hair", "Guy11", "Shop / Closet", "rbxassetid://667528488", false},
+	{"Accessories", "Mystery Friends - Cassie", "Shop / Closet", "", false},
+	{"Hair", "Rockstar Blowout", "Shop / Closet", "rbxassetid://8699745068", false},
+	{"Hair", "Gelled-Up Razor Spikes", "Shop / Closet", "rbxassetid://74756165298911", false},
+	{"Accessories", "Present Disguise", "1,500", "rbxassetid://8121741078", true},
+	{"Hair", "Beachy Beauty Locs", "Shop / Closet", "rbxassetid://15635724627", false},
+	{"Accessories", "Baking Class Playset + Baking Doll", "Shop / Closet", "", false},
+	{"Accessories", "Ice Fairy Chromae", "Shop / Closet", "", false},
+	{"Accessories", "DotD Aromatic Head Flowers", "6,500", "rbxassetid://90197212222680", true},
+	{"Accessories", "Mystery Friends - Vesta", "Shop / Closet", "", false},
+	{"Accessories", "SortIcon", "Shop / Closet", "rbxassetid://12897609699", false},
+	{"Hair", "Princess Braids", "Shop / Closet", "rbxassetid://4622795810", false},
+	{"Hair", "Flower Gal", "Shop / Closet", "rbxassetid://13749049887", false},
+	{"Accessories", "Goth Lolita Wrist Cuffs", "3,500", "rbxassetid://7593491733", true},
+	{"Hair", "Hibiscus Wavy Bangs", "Shop / Closet", "rbxassetid://105475283565287", false},
+	{"Hair", "Killer Bangs", "Shop / Closet", "rbxassetid://11079836632", false},
+	{"Accessories", "Grungy Gas Glaring Goggles", "3,250", "rbxassetid://140264295106252", true},
+	{"Accessories", "A Witch's Best Friend", "5,500", "", false},
+	{"Hair", "Flower Queen", "Shop / Closet", "rbxassetid://13749073798", false},
+	{"Hair", "Tucked in Business Bob", "Shop / Closet", "rbxassetid://15071820274", false},
+	{"Accessories", "Surprise Locker - Nature Fairy", "Shop / Closet", "", false},
+	{"Accessories", "Artist Fashion Pack + Artist Doll", "Shop / Closet", "", false},
+	{"Hair", "Starlight Half-up Locs Addon", "Shop / Closet", "rbxassetid://16562570852", false},
+	{"Accessories", "Ice Fairy", "Shop / Closet", "", false},
+	{"Accessories", "Light Fairy", "Shop / Closet", "", false},
+	{"Hair", "Festival Day Bangs", "Shop / Closet", "rbxassetid://6348216083", false},
+	{"Accessories", "Nature Fairy", "Shop / Closet", "", false},
+	{"Hair", "Queen Mermaid's Bubble Braids", "Shop / Closet", "rbxassetid://89587428785147", false},
+	{"Accessories", "Dark Fairy Avrilla", "Shop / Closet", "", false},
+	{"Accessories", "Too Cool for Skull Shoulder Bag", "2,500", "rbxassetid://5740427550", true},
+	{"Hair", "It's Snowing Outside", "Shop / Closet", "rbxassetid://6023289794", false},
+	{"Heels", "Summer Fantasy Seashell Sandals", "50,000", "rbxassetid://6947549574", true},
+	{"Hair", "guy26", "Shop / Closet", "rbxassetid://169445595", false},
+	{"Accessories", "Mystery Friends - Lilly", "Shop / Closet", "", false},
+	{"Hair", "Salt Water Waves", "Shop / Closet", "rbxassetid://15071817992", false},
+	{"Accessories", "Teacher's Lounge Keycard", "Shop / Closet", "", false},
+	{"Accessories", "DiarySlots18and19and20", "Shop / Closet", "", false},
+	{"Hair", "Study Girl", "Shop / Closet", "rbxassetid://5490063540", false},
+	{"Heels", "Merry Marching Band Prance Boots", "42,000", "rbxassetid://125957483333692", true},
+	{"Accessories", "LockerSlots18and19and20", "Shop / Closet", "", false},
+	{"Hair", "Estrella's Blunt Bangs", "Shop / Closet", "rbxassetid://5365606537", false},
+	{"Hair", "Short Combed Side-part", "Shop / Closet", "rbxassetid://88482588253721", false},
+	{"Accessories", "LockerSlots16and17", "Shop / Closet", "", false},
+	{"Hair", "Chemtrails", "Shop / Closet", "rbxassetid://5783002068", false},
+	{"Accessories", "Construction Mode: Architect's Key", "Shop / Closet", "", false},
+	{"Accessories", "DiarySlots16and17", "Shop / Closet", "", false},
+	{"Accessories", "RoomOverlay3", "Shop / Closet", "", false},
+	{"Hair", "Double Ponytail Bangs", "Shop / Closet", "rbxassetid://2513713816", false},
+	{"Accessories", "Room Light Magic!", "Shop / Closet", "", false},
+	{"Accessories", "LockerSlots14and15", "Shop / Closet", "", false},
+	{"Bodices", "December's Dream Bodice", "18,000", "rbxassetid://8309592942", true},
+	{"Accessories", "Plane", "Shop / Closet", "", false},
+	{"Hair", "Sleek Chic Middle Part", "Shop / Closet", "rbxassetid://16361088593", false},
+	{"Accessories", "Gone with the Wind Bow Headband", "2,000", "rbxassetid://6025736756", true},
+	{"Hair", "Glamorous Diva", "Shop / Closet", "rbxassetid://2506946750", false},
+	{"Accessories", "RoomOverlay1", "Shop / Closet", "", false},
+	{"Wings", "Falling into Fate", "8,000", "", false},
+	{"Accessories", "Spin and Flip Stickers Upgrade!", "Shop / Closet", "", false},
+	{"Accessories", "Elemental Mastery", "Shop / Closet", "", false},
+	{"Hair", "Avrilla's Buns", "Shop / Closet", "rbxassetid://103892948674149", false},
+	{"Wings", "Scarf Wings", "4,500", "", false},
+	{"Accessories", "ALIEN INVASION!!!", "2,500", "", false},
+	{"Accessories", "Counselor's Office Owner!", "Shop / Closet", "", false},
+	{"Heels", "Time Bender Wheel Enchantment", "Shop / Closet", "", true},
+	{"Accessories", "QuestSlot3", "Shop / Closet", "", false},
+	{"Hair", "Class Angel Long", "Shop / Closet", "rbxassetid://3260635902", false},
+	{"Accessories", "StyleSync Scepter", "Shop / Closet", "", false},
+	{"Accessories", "Friendship Portals", "Shop / Closet", "", false},
+	{"Accessories", "LockerSlots8and9", "Shop / Closet", "", false},
+	{"Accessories", "Elf Helper Hat", "2,750", "rbxassetid://7969718774", true},
+	{"Accessories", "Summer Fantasy Rings and Sleeves", "22,000", "rbxassetid://6947540077", true},
+	{"Hair", "Akari's Bangs", "Shop / Closet", "rbxassetid://8026105531", false},
+	{"Heels", "Whimsy Witch Academia Troublemaker Shoes", "80,000", "rbxassetid://7709555887", true},
+	{"Accessories", "Merry Marching Band Rhythm Drum", "15,000", "rbxassetid://121095373610737", true},
+	{"Hair", "Party of 1", "Shop / Closet", "rbxassetid://6348191798", false},
+	{"Hair", "Poof Down", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Garden Leisure Casual Curled Updo", "Shop / Closet", "rbxassetid://73656181513691", false},
+	{"Accessories", "Cashout Premium! Tidy Textbooks", "Shop / Closet", "", false},
+	{"Hair", "Braid Extensions", "Shop / Closet", "rbxassetid://5361835126", false},
+	{"Hair", "Buns and Bangs", "Shop / Closet", "rbxassetid://2071475257", false},
+	{"Hair", "Where's my Water Bottle", "Shop / Closet", "rbxassetid://4461569469", false},
+	{"Hair", "Vampy Bangs", "Shop / Closet", "rbxassetid://7649836241", false},
+	{"Accessories", "DiarySlots6and7", "Shop / Closet", "", false},
+	{"Accessories", "Trading Hub!", "Shop / Closet", "", false},
+	{"Hair", "Feathered Hair", "Shop / Closet", "rbxassetid://13598561511", true},
+	{"Accessories", "Lullaby Nikolai and Lauralai Collar", "13,000", "rbxassetid://132810662340895", true},
+	{"Hair", "Spiked Sleek Bangs", "Shop / Closet", "rbxassetid://13166360480", false},
+	{"Accessories", "Vacation Mode! Smart Streak Saver", "Shop / Closet", "", false},
+	{"Hair", "Flapper Style Finger Wave Bangs", "Shop / Closet", "rbxassetid://11105229673", false},
+	{"Hair", "Lovely Curled Ends", "Shop / Closet", "rbxassetid://13166363586", false},
+	{"Accessories", "LockerSlots4and5", "Shop / Closet", "", false},
+	{"Hair", "Curlz Delight", "Shop / Closet", "rbxassetid://2066517266", false},
+	{"Accessories", "Glow", "Shop / Closet", "rbxassetid://3336093090", false},
+	{"Accessories", "Create Your Own Realm!", "Shop / Closet", "", false},
+	{"Accessories", "DiarySlots2and3", "Shop / Closet", "", false},
+	{"Accessories", "QuestSlot2", "Shop / Closet", "", false},
+	{"Accessories", "Goddess of TriumphFemme Fleur Fascinator", "400 Robux", "rbxassetid://10758265593", true},
+	{"Accessories", "Locker Makeover!", "Shop / Closet", "", false},
+	{"Accessories", "DarkBackground", "Shop / Closet", "rbxassetid://1454133912", false},
+	{"Hair", "Puddin Bangs", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Heels", "Summit Shredder X  Snowboarder Pants & Boots", "42,000", "rbxassetid://112792200470293", true},
+	{"Hair", "Avrilla's Chained Tails", "Shop / Closet", "rbxassetid://103892948674149", false},
+	{"Accessories", "MatchingBangsButton", "Shop / Closet", "rbxassetid://4628593410", false},
+	{"Hair", "Spiked Straight Bangs", "Shop / Closet", "rbxassetid://13166361901", false},
+	{"Hair", "guy21", "Shop / Closet", "rbxassetid://13199950", false},
+	{"Accessories", "Starlight Arm Warmers", "8,000", "rbxassetid://16616900394", true},
+	{"Hair", "Erik", "Shop / Closet", "rbxassetid://5312834970", false},
+	{"Accessories", "Orange", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Accessories", "Princess Spire Veil Hat", "6,500", "rbxassetid://121210902983670", true},
+	{"Accessories", "LightBlue", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Hair", "Comet's Right Pony", "Shop / Closet", "rbxassetid://12273319407", false},
+	{"Hair", "Flynn", "Shop / Closet", "rbxassetid://7636601167", false},
+	{"Hair", "Symone", "Shop / Closet", "rbxassetid://5312834970", false},
+	{"Accessories", "Responses", "Shop / Closet", "", false},
+	{"Hair", "Braided Double Buns", "Shop / Closet", "rbxassetid://5312834970", false},
+	{"Hair", "Glamour Queen", "Shop / Closet", "rbxassetid://844546880", false},
+	{"Heels", "ALTER/EGO Platform Boots", "Shop / Closet", "rbxassetid://4244517908", true},
+	{"Accessories", "The Unfortunate", "1,800", "", false},
+	{"Accessories", "GrenzeGotisch", "Shop / Closet", "", false},
+	{"Hair", "Hibiscus Wavy Bangs Left", "Shop / Closet", "rbxassetid://105475283565287", false},
+	{"Accessories", "Fondamento", "Shop / Closet", "", false},
+	{"Hair", "Mermia's Conditioned Cascade", "Shop / Closet", "rbxassetid://116327611666682", false},
+	{"Accessories", "Light Black", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Accessories", "Baby Spider", "5,000", "", false},
+	{"Hair", "Clara", "Shop / Closet", "rbxassetid://7610228685", false},
+	{"Accessories", "Natural Red", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Hair", "Punctured Punk Spikes", "Shop / Closet", "rbxassetid://18135407391", false},
+	{"Accessories", "Green", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Hair", "Erika", "Shop / Closet", "rbxassetid://6020639395", false},
+	{"Hair", "Princess of Love and Magic", "Shop / Closet", "rbxassetid://3260522900", false},
+	{"Accessories", "Snow Swan Rosette Lace Gloves", "12,000", "rbxassetid://15496744686", true},
+	{"Hair", "Cosmic Princess", "Shop / Closet", "rbxassetid://8073686629", false},
+	{"Accessories", "Santa Hat", "5,000", "rbxassetid://8219762237", true},
+	{"Hair", "Styled Windswept Hair", "Shop / Closet", "rbxassetid://16359669919", true},
+	{"Accessories", "Vampire Crown", "2,500", "rbxassetid://5780659107", true},
+	{"Hair", "Main Character", "Shop / Closet", "rbxassetid://6328360998", false},
+	{"Accessories", "Mermaid Glam Earrings", "10,000", "rbxassetid://3235065293", true},
+	{"Hair", "Colorable Shaved", "Shop / Closet", "rbxassetid://16433551229", false},
+	{"Accessories", "Mon Chri Tea Party Lovely Beret", "10,000", "rbxassetid://6365520940", true},
+	{"Hair", "Everfriends Half-up Heart Buns", "Shop / Closet", "rbxassetid://13166362630", false},
+	{"Accessories", "big baby roof", "Shop / Closet", "rbxassetid://9171979200", false},
+	{"Hair", "Justine", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Accessories", "Image", "Shop / Closet", "rbxassetid://924320031", false},
+	{"Hair", "Tidalmist", "Shop / Closet", "rbxassetid://102927850203723", false},
+	{"Accessories", "NoButton", "Shop / Closet", "rbxassetid://1090899027", false},
+	{"Accessories", "Castle Campus Playset + Leon and Aeverie", "Shop / Closet", "", false},
+	{"Accessories", "MainDesignImage", "Shop / Closet", "rbxassetid://2357028183", false},
+	{"Accessories", "ShowInventoryBG", "Shop / Closet", "rbxassetid://1454133912", false},
+	{"Hair", "Salon-Fresh Curls", "Shop / Closet", "rbxassetid://4339540776", false},
+	{"Accessories", "Mystery Friends - April", "Shop / Closet", "", false},
+	{"Accessories", "Paint", "Shop / Closet", "rbxassetid://8380406324", false},
+	{"Accessories", "Sparkly Snowflake Skater", "7,500", "", false},
+	{"Accessories", "Roots", "Shop / Closet", "rbxassetid://12229492339", false},
+	{"Accessories", "Mini Figure Skater", "3,000", "", false},
+	{"Accessories", "backwardonlyvisual", "Shop / Closet", "rbxassetid://5941121032", false},
+	{"Accessories", "Checkmark2", "Shop / Closet", "rbxassetid://12156357522", false},
+	{"Accessories", "rock", "Shop / Closet", "rbxassetid://6409859209", false},
+	{"Accessories", "Button", "Shop / Closet", "rbxasset://textures/ui/GuiImagePlaceholder.png", false},
+	{"Accessories", "arrow label", "Shop / Closet", "rbxassetid://7791468974", false},
+	{"Accessories", "OutfitsBG", "Shop / Closet", "rbxassetid://1454133912", false},
+	{"Hair", "Valkyrie Side Ponytail", "Shop / Closet", "rbxassetid://18417342942", false},
+	{"Accessories", "Pumpkin Autumn Earrings", "100", "rbxassetid://7580868562", true},
+	{"Hair", "Bun Head", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Skirts", "Darling Valentina Morning & Evening Skirt", "30,000", "rbxassetid://4665955657", true},
+	{"Accessories", "BzierCurve.281", "Shop / Closet", "rbxassetid://100702506248808", false},
+	{"Accessories", "Shrink 'n Grow Stickers Upgrade!", "Shop / Closet", "", false},
+	{"Accessories", "Legacy", "Shop / Closet", "", false},
+	{"Accessories", "Dorm Door Makeover!", "Shop / Closet", "", false},
+	{"Accessories", "Red", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Hair", "Sassy Side Swept Bangs", "Shop / Closet", "rbxassetid://5818133238", false},
+	{"Accessories", "Widow's Wilted Bouquet", "5,000", "rbxassetid://7805326561", true},
+	{"Hair", "Bookworm", "Shop / Closet", "rbxassetid://5490375479", false},
+	{"Accessories", "Vamp Tote", "4,000", "rbxassetid://7593492398", true},
+	{"Hair", "Guy14", "Shop / Closet", "rbxassetid://1147479531", false},
+	{"Hair", "Hibiscus Curls", "Shop / Closet", "rbxassetid://101381884605992", false},
+	{"Accessories", "Goth Lolita Purse", "4,000", "rbxassetid://7593473355", true},
+	{"Accessories", "Mystery Friends - Luna", "Shop / Closet", "", false},
+	{"Hair", "Sunshine Braids Bangs", "Shop / Closet", "rbxassetid://18283712669", false},
+	{"Hair", "The quiet kid", "Shop / Closet", "rbxassetid://6328472521", false},
+	{"Accessories", "Distinguished Doctor Mask", "3,500", "rbxassetid://130325638012778", true},
+	{"Hair", "Flower Bed", "Shop / Closet", "rbxassetid://6018893590", false},
+	{"Hair", "Starlight Fairy Blunt Bangs", "Shop / Closet", "rbxassetid://16303748018", false},
+	{"Skirts", "Goddess of TriumphVictorious Skirt", "1,000 Robux", "rbxassetid://10747530752", true},
+	{"Accessories", "Hellion Horns", "5,000", "rbxassetid://14944124640", true},
+	{"Hair", "Keiko", "Shop / Closet", "rbxassetid://4686533295", false},
+	{"Accessories", "forwardonlyvisual", "Shop / Closet", "rbxassetid://5941121032", false},
+	{"Hair", "Chibimoon", "Shop / Closet", "rbxassetid://2757303952", false},
+	{"Hair", "Fire Flames", "Shop / Closet", "rbxassetid://4753830926", false},
+	{"Hair", "guy19", "Shop / Closet", "rbxassetid://62246019", false},
+	{"Hair", "Too Kawaii!", "Shop / Closet", "rbxassetid://2995723795", false},
+	{"Accessories", "Magical Hair Ribbon", "7,000", "rbxassetid://2804826656", true},
+	{"Accessories", "Grungy Gas Muffs and Mask", "8,500", "rbxassetid://125068042471821", true},
+	{"Hair", "Brain Freeze", "Shop / Closet", "rbxassetid://11079731882", false},
+	{"Hair", "Spiked Fluffy Bangs", "Shop / Closet", "rbxassetid://13166362039", false},
+	{"Accessories", "My Teddy Bear", "8,000", "rbxassetid://4646088435", true},
+	{"Hair", "Twin Ringlets", "Shop / Closet", "rbxassetid://2326749955", false},
+	{"Accessories", "Frozen Royalty Crown", "18,000", "rbxassetid://8097468251", true},
+	{"Hair", "Good Girl Bangs", "Shop / Closet", "rbxassetid://6018639099", false},
+	{"Hair", "Chromae's Side Swept Bang", "Shop / Closet", "rbxassetid://87709174449885", false},
+	{"Accessories", "Magical Crystal Perfume", "Shop / Closet", "", false},
+	{"Hair", "Coronation Ceremony", "Shop / Closet", "rbxassetid://542278998", false},
+	{"Hair", "Stubby Punk Pigtails", "Shop / Closet", "rbxassetid://15071814495", false},
+	{"Accessories", "Chamber Chains", "450", "rbxassetid://7593462444", true},
+	{"Hair", "Volleyball Star Locs Bangs", "Shop / Closet", "rbxassetid://18283709329", false},
+	{"Accessories", "Kitchen Accident", "500", "rbxassetid://5780659405", true},
+	{"Hair", "Preppy Fuffy Pigtails", "Shop / Closet", "rbxassetid://15071814495", false},
+	{"Hair", "Aphrodite", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Accessories", "Fancy Monocle Eyepiece", "275", "rbxassetid://7593486019", true},
+	{"Accessories", "Pumpkin Beret", "600", "rbxassetid://7580750019", true},
+	{"Hair", "Starlet", "Shop / Closet", "rbxassetid://4161253055", false},
+	{"Accessories", "Pumpkin Costume", "275", "rbxassetid://7618103761", true},
+	{"Hair", "Becky Bangs", "Shop / Closet", "rbxassetid://4603930781", false},
+	{"Skirts", "Steampunk Clockwork Skirt", "10,000", "rbxassetid://11119666945", true},
+	{"Hair", "Experiment : 1235", "Shop / Closet", "rbxassetid://118608049481226", false},
+	{"Hair", "Bora", "Shop / Closet", "rbxassetid://8143906862", false},
+	{"Hair", "Testy", "Shop / Closet", "rbxassetid://715169630", false},
+	{"Accessories", "Catty Glasses", "3,500", "rbxassetid://15932396131", true},
+	{"Hair", "Fountain Girl's Diamond Blowing Hair", "Shop / Closet", "rbxassetid://12458830811", true},
+	{"Hair", "Devil Horn Buns Addon", "Shop / Closet", "rbxassetid://15085413822", false},
+	{"Accessories", "Close", "Shop / Closet", "rbxassetid://935455855", false},
+	{"Accessories", "Apartments", "Shop / Closet", "", false},
+	{"Hair", "Fluffy Clipped Ponytail Addon", "Shop / Closet", "rbxassetid://15071814077", false},
+	{"Hair", "Ombre Girl Long", "Shop / Closet", "rbxassetid://1164734259", false},
+	{"Hair", "Wispy Ponytail Addon", "Shop / Closet", "rbxassetid://15071816499", false},
+	{"Accessories", "Earth", "Shop / Closet", "", false},
+	{"Accessories", "Distinguished Doctor Hat", "2,800", "rbxassetid://102924085367188", true},
+	{"Hair", "Cutie Cupid Bangs", "Shop / Closet", "rbxassetid://6348178155", false},
+	{"Accessories", "Couture Coffin Nails", "2,750", "rbxassetid://129599085337775", true},
+	{"Accessories", "Brown", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Accessories", "Orange Soda", "Shop / Closet", "", false},
+	{"Accessories", "Vampiric Bat Heart Ring", "1,600", "rbxassetid://108340199355549", true},
+	{"Accessories", "Poinsettia Wreath Arm Beauty", "2,000", "rbxassetid://6024645425", true},
+	{"Accessories", "Fiendish Ears", "2,000", "rbxassetid://120250878985771", true},
+	{"Bodices", "Porcelina Doll Baby Bodice", "22,000", "rbxassetid://99294811196038", true},
+	{"Hair", "Cloudy Dreams Afro Extensions", "Shop / Closet", "rbxassetid://16534722707", false},
+	{"Accessories", "Shimmerix Nail Polish", "Shop / Closet", "", false},
+	{"Accessories", "Goddess of TriumphRosette Rhinestone Earrings", "300 Robux", "rbxassetid://10758263657", true},
+	{"Hair", "Double Ponytail", "Shop / Closet", "rbxassetid://2507076539", false},
+	{"Accessories", "Goddess of TriumphRibbon Parasol", "4,000 Robux", "rbxassetid://10758264344", true},
+	{"Bodices", "Goddess of TriumphBodice of Hope", "800 Robux", "rbxassetid://10729348560", true},
+	{"Wings", "Spirit Of Halloween Wings", "1,200", "", false},
+	{"Bodices", "Cherry Blossom Budding Bodice", "20,000", "rbxassetid://4961936060", true},
+	{"Bodices", "Summer Fantasy Beach Boardwalk Bodice", "24,000", "rbxassetid://6950918497", true},
+	{"Heels", "Snow Swan Embraced by Lace Luxe Heels", "70,000", "rbxassetid://110386116890089", true},
+	{"Accessories", "Chroma Dreams", "8,500", "", false},
+	{"Hair", "Sorin", "Shop / Closet", "rbxassetid://5366161203", false},
+	{"Accessories", "Wish of Good Luck", "14,000", "", false},
+	{"Accessories", "White", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Accessories", "Banisters", "Shop / Closet", "rbxassetid://7885260409", false},
+	{"Accessories", "New Royale Campus", "Shop / Closet", "", false},
+	{"Heels", "Gothicutie Boots", "55,000", "rbxassetid://7546862517", true},
+	{"Hair", "Caramel to Creme Long Waves", "Shop / Closet", "rbxassetid://4250784505", false},
+	{"Accessories", "Mermaid Royalty", "50,000", "rbxassetid://6968849380", true},
+	{"Hair", "Side Parted Mermaid Waves", "Shop / Closet", "rbxassetid://13166365340", false},
+	{"Skirts", "Whimsy Witch Spells & Incantations Skirt", "50,000", "rbxassetid://7709190886", true},
+	{"Hair", "Ethan", "Shop / Closet", "rbxassetid://8026653981", false},
+	{"Accessories", "Jack-o-Lantern Head", "1,000", "rbxassetid://97765390274797", true},
+	{"Skirts", "Babydoll Adorable Dress", "24,000", "rbxassetid://5332502061", true},
+	{"Hair", "Lights Camera Action", "Shop / Closet", "rbxassetid://5708878682", false},
+	{"Hair", "Windswept Spikes", "Shop / Closet", "rbxassetid://100005485805544", false},
+	{"Bodices", "Summit Shredder X  Polar Puffer Jacket", "42,000", "rbxassetid://79846956845715", true},
+	{"Skirts", "DressUpCameraToggle", "Shop / Closet", "rbxassetid://16357517832", false},
+	{"Wings", "Fallen Fae Mistwoven Wings", "40,000", "rbxassetid://83872288940809", true},
+	{"Hair", "Tucked in Waves", "Shop / Closet", "rbxassetid://13167960495", false},
+	{"Bodices", "December's Dream Coat Jacket", "35,000", "rbxassetid://8309598477", true},
+	{"Accessories", "RH Castle Student Dormitories", "Shop / Closet", "", false},
+	{"Hair", "Cutie Cupid", "Shop / Closet", "rbxassetid://6348177781", false},
+	{"Accessories", "DiarySlots4and5", "Shop / Closet", "", false},
+	{"Hair", "Fresh Cut", "Shop / Closet", "rbxassetid://6357495553", false},
+	{"Skirts", "Starlight Rainbow Skirt", "33,000", "rbxassetid://16616904426", true},
+	{"Hair", "Studded Biker Buzz", "Shop / Closet", "rbxassetid://136587070869225", false},
+	{"Skirts", "Fallen Fae Wicked Rose Skirt", "33,000", "rbxassetid://84633162449325", true},
+	{"Hair", "Beachy Beauty Locs Bangs", "Shop / Closet", "rbxassetid://18283919917", false},
+	{"Skirts", "TTYL Chick Blush Crush Plush Skirt", "32,000", "rbxassetid://15506166634", true},
+	{"Skirts", "Princess Starfrost Magical Skirt", "32,000", "rbxassetid://4506012062", true},
+	{"Hair", "Stubby Punk Pigtail Addon", "Shop / Closet", "rbxassetid://15071814794", false},
+	{"Hair", "Experiment : 1238", "Shop / Closet", "rbxassetid://127157908658013", false},
+	{"Accessories", "basicBowl01", "Shop / Closet", "rbxassetid://7478790723", false},
+	{"Hair", "Pulled Back Locs Bangs", "Shop / Closet", "rbxassetid://16573941452", false},
+	{"Hair", "Dainty Doll Bangs", "Shop / Closet", "rbxassetid://13552346179", false},
+	{"Skirts", "Porcelina Doll Shelfworn Skirt", "30,000", "rbxassetid://120316119211140", true},
+	{"Accessories", "December's Dream Sleeves & Gloves", "30,000", "rbxassetid://8309586738", true},
+	{"Hair", "Layered Blowout Bangs", "Shop / Closet", "rbxassetid://15071813653", false},
+	{"Bodices", "Merry Marching Band Parade Bodice", "19,000", "rbxassetid://106522859729695", true},
+	{"Skirts", "Merry Marching Band Twirl Skirt", "28,000", "rbxassetid://76046613133739", true},
+	{"Hair", "Wispy Half-up Bun Addon", "Shop / Closet", "rbxassetid://15071816701", false},
+	{"Hair", "Angel Bangs", "Shop / Closet", "rbxassetid://7632179927", false},
+	{"Accessories", "TTYL Chick Snowball Puff Earrings", "7,500", "rbxassetid://15496628951", true},
+	{"Hair", "Preppy Pony", "Shop / Closet", "rbxassetid://4995068023", false},
+	{"Hair", "Flowing in the Wind", "Shop / Closet", "rbxassetid://2753438193", false},
+	{"Wings", "Rainbow Shamrock Butterfly Wings", "7,000", "", false},
+	{"Hair", "Winter Warrior Bangs", "Shop / Closet", "rbxassetid://5818133918", false},
+	{"Hair", "Salon-Fresh Curls Bangs", "Shop / Closet", "rbxassetid://4339539827", false},
+	{"Accessories", "Cherry Blossom Hand Fan", "28,000", "rbxassetid://4940581713", true},
+	{"Skirts", "Royale Rebel Bustle Skirt", "28,000", "rbxassetid://5773603687", true},
+	{"Bodices", "Snow Swan Angelic Opera Bodice", "27,000", "rbxassetid://15640855233", true},
+	{"Hair", "I woke up like dis", "Shop / Closet", "rbxassetid://972984350", false},
+	{"Hair", "Picnic Wispy Bangs", "Shop / Closet", "rbxassetid://13166359333", false},
+	{"Accessories", "Starlight Cardigan", "27,000", "rbxassetid://16616903762", true},
+	{"Bodices", "Summit Shredder X  Peak Performance Bodice", "26,000", "rbxassetid://118347724237289", true},
+	{"Accessories", "Porcelina Doll Hushaby Bonnet", "26,000", "rbxassetid://130455231953209", true},
+	{"Bodices", "Lullaby Nikolai and Lauralai Bodice & Sleeves", "25,000", "rbxassetid://75769379684174", true},
+	{"Accessories", "Snow Swan Silky Slumber Luxe Sleeves", "25,000", "rbxassetid://15640855790", true},
+	{"Hair", "Grundge Bangs", "Shop / Closet", "rbxassetid://5816999466", false},
+	{"Heels", "Porcelina Doll Tiptoe Shoes", "Shop / Closet", "rbxassetid://4244517908", false},
+	{"Bodices", "Gothicutie Bodice/Jacket", "25,000", "rbxassetid://7547725606", true},
+	{"Hair", "COLORGEIST", "Shop / Closet", "rbxassetid://122328767534973", false},
+	{"Accessories", "Winter Snowglobe", "7,500", "rbxassetid://6025036596", true},
+	{"Hair", "Study Girl's Bangs", "Shop / Closet", "rbxassetid://5490070154", false},
+	{"Accessories", "Starlight Sneaks", "77,000", "rbxassetid://16617013493", true},
+	{"Accessories", "Dragon Teeth", "3,000", "", false},
+	{"Accessories", "Golden Guardian of Rainbows", "12,000", "", false},
+	{"Hair", "Cute Short and Wavy", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Jade", "Shop / Closet", "rbxassetid://5313537627", false},
+	{"Hair", "Fierce Curls", "Shop / Closet", "rbxassetid://4627908280", false},
+	{"Bodices", "Merry Marching Band Prestige Jacket", "22,000", "rbxassetid://111956099301798", true},
+	{"Bodices", "Crisp Air Puffy Jacket", "20,000", "rbxassetid://6026062237", true},
+	{"Hair", "Crowned Elegance", "Shop / Closet", "rbxassetid://6185182461", false},
+	{"Hair", "Am Baby Curls", "Shop / Closet", "rbxassetid://4618886905", false},
+	{"Accessories", "Wild Roses", "6,500", "", false},
+	{"Hair", "Delicate Framing Curls", "Shop / Closet", "rbxassetid://133474866702280", false},
+	{"Accessories", "Winter Guardian Enchanted Sleeves", "20,000", "rbxassetid://6061499502", true},
+	{"Hair", "Candy Dreams", "Shop / Closet", "rbxassetid://9192352893", false},
+	{"Hair", "Devil Hair Extensions Longer", "Shop / Closet", "rbxassetid://15071818397", true},
+	{"Accessories", "Royale Rebel Sheer Laced Gloves & Sleeves", "20,000", "rbxassetid://5774686941", true},
+	{"Hair", "Mermaid Bangs", "Shop / Closet", "rbxassetid://6348252139", false},
+	{"Hair", "Perfect Waves", "Shop / Closet", "rbxassetid://3014333544", false},
+	{"Accessories", "Rye", "Shop / Closet", "", false},
+	{"Hair", "Powdered Aristocrat", "Shop / Closet", "rbxassetid://77035810722286", false},
+	{"Accessories", "Translucent Heart Sunglasses", "3,500", "rbxassetid://2804901269", true},
+	{"Bodices", "TTYL Chick Fave Bodice & Necklace", "19,500", "rbxassetid://15506255178", true},
+	{"Accessories", "Nomnom Frosted Donut Arm Floaties", "3,500", "rbxassetid://3444495197", true},
+	{"Hair", "Brielle", "Shop / Closet", "rbxassetid://7236613786", false},
+	{"Hair", "Jasmine Braids", "Shop / Closet", "rbxassetid://818739298", false},
+	{"Hair", "Drill Thrills", "Shop / Closet", "rbxassetid://4621366811", false},
+	{"Hair", "Picnic Braids", "Shop / Closet", "rbxassetid://13166361195", false},
+	{"Hair", "60's Curled Bangs", "Shop / Closet", "rbxassetid://7026182716", false},
+	{"Hair", "Lovely Loose Braids Bangs", "Shop / Closet", "rbxassetid://5000833110", false},
+	{"Accessories", "beautiful arch", "Shop / Closet", "rbxassetid://7018729261", false},
+	{"Accessories", "Gameplay", "Shop / Closet", "", false},
+	{"Hair", "Girl Next Door", "Shop / Closet", "rbxassetid://2688730430", false},
+	{"Accessories", "Elemental Studies - New Magical Element! Book 3", "Shop / Closet", "", false},
+	{"Accessories", "Shadow Empress Jeweled Crown", "15,000", "rbxassetid://4074397467", true},
+	{"Accessories", "Lolita Lovely Bow Lacey Scarf", "14,000", "rbxassetid://15496859686", true},
+	{"Hair", "Locksmith's Top Bun Windy", "Shop / Closet", "rbxassetid://115670878551717", false},
+	{"Hair", "Charles", "Shop / Closet", "rbxassetid://13169198509", false},
+	{"Accessories", "Archery Kit for Love Fairies", "13,500", "rbxassetid://2804901110", true},
+	{"Accessories", "Polar Cutie Fur Leg Warmers", "13,500", "rbxassetid://8120763135", true},
+	{"Hair", "Kaori", "Shop / Closet", "rbxassetid://4686546433", false},
+	{"Hair", "Spirit Wisp Locs", "Shop / Closet", "rbxassetid://18367390724", false},
+	{"Accessories", "Aurora's Battleaxe", "13,500", "rbxassetid://8121752268", true},
+	{"Accessories", "curtain in the window1", "Shop / Closet", "rbxassetid://7696029167", false},
+	{"Accessories", "Snow Swan Adorned Ornamental Necklace & Earrings Set", "12,750", "rbxassetid://15496767919", true},
+	{"Accessories", "Runaway Damsel Candelabra", "12,500", "rbxassetid://8097467736", true},
+	{"Hair", "Seraphine's Ponies", "Shop / Closet", "rbxassetid://12273317225", false},
+	{"Accessories", "Starlight Glasses", "12,500", "rbxassetid://16616895678", true},
+	{"Hair", "Miracles Happen", "Shop / Closet", "rbxassetid://3019163021", false},
+	{"Wings", "Song of the Lovebird", "11,000", "", false},
+	{"Hair", "Aesthetic Low Bun", "Shop / Closet", "rbxassetid://13166358230", false},
+	{"Accessories", "Crazy in Love Glasses", "3,500", "rbxassetid://2804901380", true},
+	{"Accessories", "Very Cozy Gloves / Mittens", "12,000", "rbxassetid://4505119926", true},
+	{"Accessories", "Divine Diamonds Heart Earrings", "12,000", "rbxassetid://8692996254", true},
+	{"Accessories", "Cone", "Shop / Closet", "", false},
+	{"Accessories", "Prince's Strawberry Crisped Rice Bar", "Shop / Closet", "", false},
+	{"Hair", "Duri", "Shop / Closet", "rbxassetid://8143892778", false},
+	{"Bodices", "Princess Starfrost Cozy Bodice", "12,000", "rbxassetid://4506011686", true},
+	{"Bodices", "Sleigh It Bodice", "12,000", "rbxassetid://8096555550", true},
+	{"Accessories", "Reindeer Ride", "12,250", "rbxassetid://8233210555", true},
+	{"Accessories", "Lace Snowflake Stole Scarf", "11,000", "rbxassetid://8097468581", true},
+	{"Hair", "Flapper Finger Waves", "Shop / Closet", "rbxassetid://11105052101", false},
+	{"Accessories", "BlueberryBackground", "Shop / Closet", "rbxassetid://933761772", false},
+	{"Accessories", "Pacifico", "Shop / Closet", "", false},
+	{"Accessories", "23", "Shop / Closet", "rbxassetid://7199772858", false},
+	{"Accessories", "Jeweled Elven Ear Cuff", "10,000", "rbxassetid://15496999505", true},
+	{"Hair", "Fringe BB", "Shop / Closet", "rbxassetid://972864188", false},
+	{"Hair", "Pin Up Rolled Bangs", "Shop / Closet", "rbxassetid://7632179698", false},
+	{"Accessories", "Mystery Friends - Stardust", "Shop / Closet", "", false},
+	{"Hair", "Braided Bun Beauty", "Shop / Closet", "rbxassetid://4461584272", false},
+	{"Accessories", "Sunset Island", "Shop / Closet", "", false},
+	{"Hair", "French Braids", "Shop / Closet", "rbxassetid://966201193", false},
+	{"Accessories", "Very Cozy Hat", "9,000", "rbxassetid://4505120671", true},
+	{"Accessories", "Celestial Flower Bouquet", "8,500", "rbxassetid://8692996045", true},
+	{"Skirts", "Cherry Blossom Rare Bloom Skirt", "8,000", "rbxassetid://4961796719", true},
+	{"Hair", "Starlight Fairy Curls", "Shop / Closet", "rbxassetid://16303747665", false},
+	{"Hair", "Glamour Rockstar", "Shop / Closet", "rbxassetid://643128901", false},
+	{"Accessories", "Frozen Luggage", "8,000", "rbxassetid://8097395651", true},
+	{"Hair", "Sorceress", "Shop / Closet", "rbxassetid://7632177468", false},
+	{"Hair", "Summer Fantasy Bangs", "Shop / Closet", "rbxassetid://6951562688", false},
+	{"Hair", "Deepsea Radiant Puffs", "Shop / Closet", "rbxassetid://115805250440418", false},
+	{"Hair", "God is a Singer", "Shop / Closet", "rbxassetid://4347400875", false},
+	{"Hair", "Updo4", "Shop / Closet", "rbxassetid://941299455", false},
+	{"Heels", "Woodland Faun Hooves", "22,000", "rbxassetid://15496670469", true},
+	{"Hair", "Thin Summer Braids", "Shop / Closet", "rbxassetid://13166365772", false},
+	{"Accessories", "Warm Glittering Cloak", "8,000", "rbxassetid://6011395860", true},
+	{"Accessories", "Vaudevillian Ballroom Mask", "3,000", "rbxassetid://7805326954", true},
+	{"Accessories", "GothamBold", "Shop / Closet", "", false},
+	{"Accessories", "Starlight Necklace", "8,000", "rbxassetid://16616893500", true},
+	{"Hair", "Rosalie's Bangs", "Shop / Closet", "rbxassetid://12296739474", false},
+	{"Accessories", "ShadowsIntoLight", "Shop / Closet", "", false},
+	{"Accessories", "main", "Shop / Closet", "rbxassetid://95702835920635", false},
+	{"Hair", "Lullaby Nikolai Bangs", "Shop / Closet", "rbxassetid://80082604943680", false},
+	{"Accessories", "Porcelina Doll Lost Beret", "8,000", "rbxassetid://70679231430058", true},
+	{"Hair", "Experimental Mullet Add-on", "Shop / Closet", "rbxassetid://85614806092398", false},
+	{"Accessories", "22", "Shop / Closet", "rbxassetid://7199772858", false},
+	{"Hair", "guy17", "Shop / Closet", "rbxassetid://346578029", false},
+	{"Accessories", "CustomSkintone", "Shop / Closet", "rbxassetid://1454183175", false},
+	{"Accessories", "Babydoll Adorable Sleeves", "7,500", "rbxassetid://5332534268", true},
+	{"Hair", "Swirly Anime Bangs", "Shop / Closet", "rbxassetid://13166365043", false},
+	{"Accessories", "arch", "Shop / Closet", "rbxassetid://7478789946", false},
+	{"Hair", "Swept Back Vampire", "Shop / Closet", "rbxassetid://15071815842", false},
+	{"Accessories", "Starlight Beret (Hat)", "7,000", "rbxassetid://16616895098", true},
+	{"Accessories", "Merry Marching Band Majorette Hat", "7,000", "rbxassetid://128796568804969", true},
+	{"Accessories", "Steampunk Undercity Sword Belt", "10,000", "rbxassetid://11125612755", true},
+	{"Hair", "NINJA FAST", "Shop / Closet", "rbxassetid://340609774", false},
+	{"Hair", "Gothic Hime Messy Bangs", "Shop / Closet", "rbxassetid://15635405718", false},
+	{"Accessories", "DotD Aromatic Chest Flowers", "6,500", "rbxassetid://101315025526338", true},
+	{"Hair", "Cottage Maid", "Shop / Closet", "rbxassetid://5490399613", false},
+	{"Wings", "Mini Social Love Butterfly", "1,000", "", false},
+	{"Bodices", "Christmas Window Shopping Top Hat", "6,500", "rbxassetid://7969718150", true},
+	{"Hair", "Windy Middle Parted Waves", "Shop / Closet", "rbxassetid://13166366036", false},
+	{"Hair", "Dream Gurl Bangs", "Shop / Closet", "rbxassetid://4586632941", false},
+	{"Hair", "Ice woke up like dis", "Shop / Closet", "rbxassetid://6357464193", false},
+	{"Hair", "Disco Queen", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Joji", "Shop / Closet", "rbxassetid://6328437770", false},
+	{"Accessories", "DotD Aromatic Flower Crown", "6,500", "rbxassetid://91893418760922", true},
+	{"Accessories", "2497565331", "Shop / Closet", "", false},
+	{"Hair", "Buzzy Bunz", "Shop / Closet", "rbxassetid://132218908249112", false},
+	{"Accessories", "Princess Starfrost Ribbon Bonnet", "6,500", "rbxassetid://4506011365", true},
+	{"Accessories", "December's Dream Cossack Hat", "6,500", "rbxassetid://8309588314", true},
+	{"Accessories", "Opposites Attract Headphones", "6,000", "rbxassetid://8713477587", true},
+	{"Accessories", "Polar Cutie Bear Hat", "5,500", "rbxassetid://8120762218", true},
+	{"Hair", "Cosplay Queen Bangs", "Shop / Closet", "rbxassetid://2995284640", false},
+	{"Accessories", "Divine Diamonds Heart Ring & Bracelet", "5,000", "rbxassetid://8692996168", true},
+	{"Hair", "Over-Eyes Locs Bangs", "Shop / Closet", "rbxassetid://16571153319", false},
+	{"Bodices", "Snowman's Top Hat", "5,000", "rbxassetid://4503062749", true},
+	{"Hair", "Melody", "Shop / Closet", "rbxassetid://5818134555", false},
+	{"Hair", "Royal Curls", "Shop / Closet", "rbxassetid://3741784572", false},
+	{"Hair", "Guy12", "Shop / Closet", "rbxassetid://19999424", false},
+	{"Accessories", "Magical Glitterfrost Blinking Lights", "3,500", "rbxassetid://6024637074", true},
+	{"Hair", "Porcelina Ringlets Back", "Shop / Closet", "rbxassetid://78773124618305", false},
+	{"Bodices", "Peppermint Princess Bodice", "18,000", "rbxassetid://8010122496", true},
+	{"Accessories", "Polar Bear Beret Cap", "3,000", "rbxassetid://6024741936", true},
+	{"Hair", "Dutch Braids Bangs", "Shop / Closet", "rbxassetid://5000431627", false},
+	{"Wings", "Ragged Prince", "4,000", "", false},
+	{"Wings", "Arachnophobia SpiderLeg Wings", "10,000", "", false},
+	{"Accessories", "VolumeSphere", "Shop / Closet", "", false},
+	{"Hair", "Inventor's Top Bun Windy Addon", "Shop / Closet", "rbxassetid://84375125124930", false},
+	{"Hair", "Cherub Destiny", "Shop / Closet", "rbxassetid://16534670508", false},
+	{"Accessories", "DiarySlots14and15", "Shop / Closet", "", false},
+	{"Accessories", "Iced Gingerbread Earrings", "1,800", "rbxassetid://7969718463", true},
+	{"Hair", "Dutch Braids", "Shop / Closet", "rbxassetid://5000431627", false},
+	{"Hair", "TeddyBear Bangs", "Shop / Closet", "rbxassetid://6366167270", false},
+	{"Hair", "Monster Girl Ponytail Bangs", "Shop / Closet", "rbxassetid://4556972789", false},
+	{"Accessories", "Glittering Noel Bows", "1,500", "rbxassetid://6026190385", true},
+	{"Accessories", "Sparkly Candy Cane Ears", "1,000", "rbxassetid://6024728792", true},
+	{"Hair", "Boss Babe", "Shop / Closet", "rbxassetid://6332524758", false},
+	{"Hair", "Princess of Hearts Bangs", "Shop / Closet", "rbxassetid://2951032139", false},
+	{"Accessories", "GothamMedium", "Shop / Closet", "", false},
+	{"Hair", "Valentina", "Shop / Closet", "rbxassetid://5365694952", false},
+	{"Accessories", "Large Enchanting Christmas", "12,500", "", false},
+	{"Accessories", "Roses are Red Valentines", "12,000", "", false},
+	{"Accessories", "Soul Keeper", "12,000", "", false},
+	{"Hair", "Teddy's Long Bangs", "Shop / Closet", "rbxassetid://12121502711", false},
+	{"Accessories", "Dragon's Demise", "12,000", "", false},
+	{"Accessories", "Shooting Stars", "10,000", "", false},
+	{"Hair", "Royale Pageant Queen", "Shop / Closet", "rbxassetid://1347572301", false},
+	{"Hair", "Camila's Bangs", "Shop / Closet", "rbxassetid://6020642027", false},
+	{"Accessories", "Black Widow Whisper", "4,000", "", false},
+	{"Accessories", "Seashell Hair Clips", "3,000", "rbxassetid://3358329523", true},
+	{"Hair", "Straight Blunt Tassel Bangs", "Shop / Closet", "rbxassetid://13166364746", false},
+	{"Hair", "Nick", "Shop / Closet", "rbxassetid://6020642551", false},
+	{"Accessories", "Treasure Hunter", "4,500", "", false},
+	{"Accessories", "Large Antler Lights", "10,000", "", false},
+	{"Accessories", "Fallen Love Fairy", "8,500", "", false},
+	{"Hair", "Coven Student", "Shop / Closet", "rbxassetid://11079268903", false},
+	{"Accessories", "Dragon Blaze", "8,000", "", false},
+	{"Wings", "Glowing Fairy of Luck", "7,500", "", false},
+	{"Hair", "Aripunzel", "Shop / Closet", "rbxassetid://5490163877", false},
+	{"Hair", "Afro Flapper Finger Waves", "Shop / Closet", "rbxassetid://11105052101", false},
+	{"Accessories", "Irish Forest Fairy", "5,500", "", false},
+	{"Accessories", "Special Wrapped Presents", "7,500", "", false},
+	{"Accessories", "Baby Unicorn", "4,000", "", false},
+	{"Hair", "Men's Staple", "Shop / Closet", "rbxassetid://74878559", false},
+	{"Bodices", "Lullaby Nikolai and Lauralai Fuzzy Coat", "28,000", "rbxassetid://130798324378859", true},
+	{"Accessories", "Steampunk Gadgeteer Gloves", "5,000", "rbxassetid://92747340488620", true},
+	{"Hair", "Disco Queen Bangs", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Accessories", "SourceSansItalic", "Shop / Closet", "", false},
+	{"Skirts", "Darling Academia Uniform Jacket and Skirt", "20,000", "rbxassetid://15496834534", true},
+	{"Accessories", "ArialBold", "Shop / Closet", "", false},
+	{"Accessories", "no", "Shop / Closet", "rbxassetid://4329875758", false},
+	{"Hair", "Miss Amazing at Everything", "Shop / Closet", "rbxassetid://3765486966", false},
+	{"Hair", "Thread the Bobbin", "Shop / Closet", "rbxassetid://4169420053", false},
+	{"Hair", "Santana", "Shop / Closet", "rbxassetid://5312834970", false},
+	{"Hair", "Chanel", "Shop / Closet", "rbxassetid://6018279145", false},
+	{"Accessories", "Terror of the Deep", "6,500", "", false},
+	{"Accessories", "27", "Shop / Closet", "rbxassetid://13119449049", false},
+	{"Hair", "Day Dreams Pigtails", "Shop / Closet", "rbxassetid://5218464618", false},
+	{"Hair", "So We're Buds Right", "Shop / Closet", "rbxassetid://726889242", false},
+	{"Hair", "Ethereal Curls Bangs", "Shop / Closet", "rbxassetid://17525382531", false},
+	{"Hair", "Princess of the Blossoming Flowers Bangs and Bun", "Shop / Closet", "rbxassetid://2513600193", false},
+	{"Hair", "Sweetie", "Shop / Closet", "rbxassetid://4444199310", false},
+	{"Accessories", "RobotoCondensed", "Shop / Closet", "", false},
+	{"Accessories", "Night of the Full Moon", "2,500", "", false},
+	{"Hair", "Cutesy Buns Pulled Back", "Shop / Closet", "rbxassetid://3820887670", false},
+	{"Hair", "Seraphine's Flyaways", "Shop / Closet", "rbxassetid://12273317407", false},
+	{"Hair", "Lolipop Piggies", "Shop / Closet", "rbxassetid://6348204906", false},
+	{"Bodices", "Whimsy Witch Hexed Bodice", "28,000", "rbxassetid://7709194526", true},
+	{"Hair", "Monster Girl Ponytail", "Shop / Closet", "rbxassetid://4556971707", false},
+	{"Accessories", "Jack-o-Lantern", "6,000", "", false},
+	{"Hair", "Am I a Magical Girl Yet?", "Shop / Closet", "rbxassetid://3823105578", false},
+	{"Hair", "Side parted Wavy Bangs", "Shop / Closet", "rbxassetid://13167960705", false},
+	{"Accessories", "Legend of the Harp Fairy", "5,500", "", false},
+	{"Hair", "2Cool4School", "Shop / Closet", "rbxassetid://2689751470", false},
+	{"Hair", "Lovebound Sleek Fringe", "Shop / Closet", "rbxassetid://18266813656", false},
+	{"Hair", "Charly's Layered Mullet", "Shop / Closet", "rbxassetid://13166366290", false},
+	{"Hair", "Chic Ponytail Front Locs", "Shop / Closet", "rbxassetid://17513806690", false},
+	{"Hair", "Hannah", "Shop / Closet", "rbxassetid://5365810935", false},
+	{"Hair", "guy34", "Shop / Closet", "rbxassetid://19326912", false},
+	{"Hair", "Soft Half-up Ponytail", "Shop / Closet", "rbxassetid://13166362237", false},
+	{"Hair", "The 'I tried in the back but not in the front' Look", "Shop / Closet", "rbxassetid://972986960", false},
+	{"Accessories", "Frankenfairy", "5,500", "", false},
+	{"Wings", "Gobble Gobble Wings", "5,500", "", false},
+	{"Accessories", "Autumn Glow", "5,000", "", false},
+	{"Hair", "Flawless Boy", "Shop / Closet", "rbxassetid://6018980015", false},
+	{"Accessories", "Pink", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Accessories", "Elegance Rose Corsage", "10,000", "rbxassetid://4643956412", true},
+	{"Hair", "Strawberry Sweetheart", "Shop / Closet", "rbxassetid://5818135475", false},
+	{"Hair", "Everfriends Bangs", "Shop / Closet", "rbxassetid://13166363009", false},
+	{"Hair", "Charming Gentleman", "Shop / Closet", "rbxassetid://2757699409", false},
+	{"Hair", "Soft Middle Parted Bangs", "Shop / Closet", "rbxassetid://13166362373", false},
+	{"Hair", "Power Pony", "Shop / Closet", "rbxassetid://2066527212", false},
+	{"Accessories", "Up In Heaven's Clouds", "4,500", "", false},
+	{"Hair", "Fluffy Cat Ears", "Shop / Closet", "rbxassetid://91763373955555", false},
+	{"Hair", "Tucked in Sorority", "Shop / Closet", "rbxassetid://15071817687", false},
+	{"Hair", "Updo5", "Shop / Closet", "rbxassetid://1347571818", false},
+	{"Hair", "Avrilla's Blunt Bang", "Shop / Closet", "rbxassetid://81581982470606", false},
+	{"Hair", "Who Ordered the Breadsticks", "Shop / Closet", "rbxassetid://84396019", false},
+	{"Accessories", "Autumn Fairy", "4,250", "", false},
+	{"Hair", "Flynn's Bangs", "Shop / Closet", "rbxassetid://7636599337", false},
+	{"Hair", "Majestic Savant Swoop", "Shop / Closet", "rbxassetid://15635423509", false},
+	{"Hair", "Comet", "Shop / Closet", "rbxassetid://12273331001", false},
+	{"Hair", "Chloe", "Shop / Closet", "rbxassetid://5218498110", false},
+	{"Hair", "Opulent Queen Curled Updo", "Shop / Closet", "rbxassetid://76520614389609", false},
+	{"Hair", "Heartlink Frontal Braids", "Shop / Closet", "rbxassetid://18267649930", false},
+	{"Hair", "Darla", "Shop / Closet", "rbxassetid://7588324731", false},
+	{"Hair", "Devil Pulled Back Bangs", "Shop / Closet", "rbxassetid://15071818736", false},
+	{"Accessories", "ring mesh", "Shop / Closet", "rbxassetid://7466807035", false},
+	{"Hair", "Aphrodite Pony", "Shop / Closet", "rbxassetid://6185156839", false},
+	{"Hair", "guy23", "Shop / Closet", "rbxassetid://248341525", false},
+	{"Hair", "December's Dream", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Mermia's Sea Swoosh", "Shop / Closet", "rbxassetid://108199586703529", false},
+	{"Accessories", "Fallen Fae Twisted Tiara", "20,000", "rbxassetid://129823584781837", true},
+	{"Hair", "Comet's Left Pony", "Shop / Closet", "rbxassetid://12273318521", false},
+	{"Hair", "French Braid Beauty Buns", "Shop / Closet", "rbxassetid://4647504617", false},
+	{"Hair", "Emma", "Shop / Closet", "rbxassetid://4686544373", false},
+	{"Hair", "Updo6", "Shop / Closet", "rbxassetid://1347571818", false},
+	{"Hair", "We're in.", "Shop / Closet", "rbxassetid://6328275860", false},
+	{"Hair", "Asuna", "Shop / Closet", "rbxassetid://5163345742", false},
+	{"Hair", "Fallen Fae's Chopped Braids", "Shop / Closet", "rbxassetid://121809791580972", false},
+	{"Accessories", "Steampunk Mechanical Arms", "10,000", "rbxassetid://122846174741325", true},
+	{"Accessories", "Vampire's Graveyard", "2,500", "", false},
+	{"Accessories", "utilityDefault", "Shop / Closet", "", false},
+	{"Accessories", "Elemental Studies - New Magical Element! Book 6", "Shop / Closet", "", false},
+	{"Hair", "Valkyrie Flowing Ponytail", "Shop / Closet", "rbxassetid://18417342942", false},
+	{"Hair", "Perfectly Fluffy", "Shop / Closet", "rbxassetid://3727091417", false},
+	{"Accessories", "Kawaii Spookeye", "750", "", false},
+	{"Accessories", "Hair Straightener", "Shop / Closet", "", true},
+	{"Wings", "Mini Gingerbread Wings", "2,750", "", false},
+	{"Hair", "Sunshine Braids", "Shop / Closet", "rbxassetid://15635724627", false},
+	{"Hair", "Glamour xo Bangs", "Shop / Closet", "rbxassetid://4466600862", false},
+	{"Hair", "Candy's Bangs", "Shop / Closet", "rbxassetid://12296565878", false},
+	{"Accessories", "Soft Locks Hair Brush & Mirror", "Shop / Closet", "", true},
+	{"Heels", "Lullaby Nikolai and Lauralai Shoes", "60,000", "rbxassetid://94363318313444", true},
+	{"Accessories", "Autumn Fairy *Mini*", "2,000", "", false},
+	{"Hair", "I'm Here Dude Stop Yelling", "Shop / Closet", "rbxassetid://157924852", false},
+	{"Hair", "Odette", "Shop / Closet", "rbxassetid://2066497553", false},
+	{"Accessories", "Bewitched Chonker", "1,500", "", false},
+	{"Hair", "Locksmith's Top Bun Addon", "Shop / Closet", "rbxassetid://73126692494058", false},
+	{"Hair", "Straight A Student", "Shop / Closet", "rbxassetid://3260732023", false},
+	{"Accessories", "Moonlight's Magic", "2,250", "", false},
+	{"Accessories", "Starlight Puppy Poodle Purse", "18,000", "rbxassetid://16616896145", true},
+	{"Accessories", "Capsule", "Shop / Closet", "", false},
+	{"Accessories", "Sweet Sugar Skulls", "600", "", false},
+	{"Hair", "Portrait Framing Curls", "Shop / Closet", "rbxassetid://128917781421404", false},
+	{"Hair", "Independent Woman", "Shop / Closet", "rbxassetid://3008847849", false},
+	{"Accessories", "searchicon3", "Shop / Closet", "rbxassetid://14346981038", false},
+	{"Skirts", "Magical Enchantress", "N/A", "rbxassetid://10569909230", true},
+	{"Skirts", "Midnight Mademoiselle", "N/A", "rbxassetid://3368732051", true},
+	{"Hair", "Lullaby Pigtail Locs", "Shop / Closet", "rbxassetid://15635724627", false},
+	{"Hair", "Mermia's Low Tide Locks", "Shop / Closet", "rbxassetid://92621422792100", false},
+	{"Hair", "Fallen Fae's Reminiscing Braids Extensions", "Shop / Closet", "rbxassetid://92974560232828", false},
+	{"Hair", "Devil Hair Extensions Long", "Shop / Closet", "rbxassetid://15071818397", true},
+	{"Hair", "Running Through the Sprinklers Bangs", "Shop / Closet", "rbxassetid://4339471350", false},
+	{"Accessories", "Ember Flaria Ignitix", "Shop / Closet", "", false},
+	{"Hair", "Moonlit Lagoon Afro", "Shop / Closet", "rbxassetid://139594265943964", false},
+	{"Hair", "Messy Summer Waves", "Shop / Closet", "rbxassetid://7674266153", false},
+	{"Hair", "SuperSpy", "Shop / Closet", "rbxassetid://5709334558", false},
+	{"Hair", "LoveStruck Heart Bangs", "Shop / Closet", "rbxassetid://16523076739", false},
+	{"Accessories", "ArachnoCutie", "2,500", "", false},
+	{"Hair", "Locksmith's Top Bun Windy Addon", "Shop / Closet", "rbxassetid://84375125124930", false},
+	{"Accessories", "Knight's Peanut Butter Caramel Cups", "Shop / Closet", "", false},
+	{"Hair", "Untidy Pony Bangs", "Shop / Closet", "rbxassetid://13598940341", false},
+	{"Hair", "Snow Guardian", "Shop / Closet", "rbxassetid://6020735506", false},
+	{"Hair", "Guy4", "Shop / Closet", "rbxassetid://643128213", false},
+	{"Hair", "Starbound Cowlick", "Shop / Closet", "rbxassetid://124701518015386", false},
+	{"Accessories", "Hair Dryer", "Shop / Closet", "", true},
+	{"Hair", "Adorable Idol", "Shop / Closet", "rbxassetid://3260522900", false},
+	{"Heels", "Huggly Snuggly Booties", "Shop / Closet", "rbxassetid://4244517908", true},
+	{"Hair", "Guy5", "Shop / Closet", "rbxassetid://643130465", false},
+	{"Skirts", "Summer Fantasy Breezy Beach Skirt", "35,000", "rbxassetid://6947538941", true},
+	{"Hair", "They Call Me GILLZ", "Shop / Closet", "rbxassetid://1179199744", false},
+	{"Accessories", "TTYL Chick Fave Sleeves", "8,000", "rbxassetid://15499484034", true},
+	{"Accessories", "Love Beyond the Grave", "3,500", "", false},
+	{"Accessories", "Castle Entrance", "Shop / Closet", "", false},
+	{"Hair", "Night Star", "Shop / Closet", "rbxassetid://5163422936", false},
+	{"Wings", "Heart Container", "10,000", "", false},
+	{"Accessories", "Mystery Friends - Carmilla", "Shop / Closet", "", false},
+	{"Hair", "Long Layered Blowout", "Shop / Closet", "rbxassetid://15071813065", false},
+	{"Hair", "Bow Obsession Pigtails", "Shop / Closet", "rbxassetid://13778440533", false},
+	{"Skirts", "North Pole Presents Skirt", "13,500", "rbxassetid://7969721449", true},
+	{"Wings", "Sparkling Valentine", "5,500", "", false},
+	{"Hair", "Guy6", "Shop / Closet", "rbxassetid://1125231485", false},
+	{"Hair", "Cloudy Braids", "Shop / Closet", "rbxassetid://8699790068", false},
+	{"Hair", "Princess Braid Bangs", "Shop / Closet", "rbxassetid://4622797161", false},
+	{"Hair", "Shoreline Half-up Buns", "Shop / Closet", "rbxassetid://7674266643", false},
+	{"Hair", "Cheer Squad", "Shop / Closet", "rbxassetid://6185284006", false},
+	{"Accessories", "Mystery Friends - Nina", "Shop / Closet", "", false},
+	{"Hair", "Queen of Weebs", "Shop / Closet", "rbxassetid://2778071428", false},
+	{"Accessories", "Silkscreen", "Shop / Closet", "", false},
+	{"Hair", "Nicky", "Shop / Closet", "rbxassetid://5312677074", false},
+	{"Hair", "Moonchild", "Shop / Closet", "rbxassetid://5218484512", false},
+	{"Hair", "Love Fairy", "5,500", "rbxassetid://12296918537", false},
+	{"Hair", "Gothic Hime Cut", "Shop / Closet", "rbxassetid://15635405507", false},
+	{"Hair", "At The Ball", "Shop / Closet", "rbxassetid://972979511", false},
+	{"Hair", "Updo9", "Shop / Closet", "rbxassetid://972986746", false},
+	{"Hair", "Side Choppy Bangs", "Shop / Closet", "rbxassetid://11079522542", false},
+	{"Accessories", "Lovely Bat Charms", "4,000", "", false},
+	{"Accessories", "2509968186", "Shop / Closet", "", false},
+	{"Hair", "Wind in my Hair", "Shop / Closet", "rbxassetid://5490035702", true},
+	{"Hair", "Short Anime Hair", "Shop / Closet", "rbxassetid://5218518464", true},
+	{"Hair", "Kagura Bangs", "Shop / Closet", "rbxassetid://6332763119", false},
+	{"Hair", "Shayla", "Shop / Closet", "rbxassetid://5366146540", false},
+	{"Hair", "Wavy Spacebuns", "Shop / Closet", "rbxassetid://5818136793", false},
+	{"Hair", "guy32", "Shop / Closet", "rbxassetid://23594638", false},
+	{"Hair", "Short&Curly Sweetheart", "Shop / Closet", "rbxassetid://8073686128", false},
+	{"Hair", "Cutesy Buns", "Shop / Closet", "rbxassetid://3820887670", false},
+	{"Hair", "Criminal Mind", "Shop / Closet", "rbxassetid://11079836632", false},
+	{"Hair", "Blazing Tresses", "Shop / Closet", "rbxassetid://133040905923621", false},
+	{"Hair", "Watercolor Whirl Painting Waves", "Shop / Closet", "rbxassetid://116507918939162", false},
+	{"Hair", "Morrigan Bangs", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Curls n Buns", "Shop / Closet", "rbxassetid://715163525", false},
+	{"Hair", "Onyx Skull-Shaven Mullet", "Shop / Closet", "rbxassetid://88893824584332", false},
+	{"Hair", "We had homework?", "Shop / Closet", "rbxassetid://6328222626", false},
+	{"Hair", "Sweetie Ponies", "Shop / Closet", "rbxassetid://4444199310", false},
+	{"Hair", "College Fashion Student", "Shop / Closet", "rbxassetid://972938745", false},
+	{"Hair", "Na's Vintage Side Curl Bangs", "Shop / Closet", "rbxassetid://10729913043", false},
+	{"Hair", "guy31", "Shop / Closet", "rbxassetid://560180459", false},
+	{"Hair", "Kindhearted Piggies Bangs", "Shop / Closet", "rbxassetid://4568642116", false},
+	{"Hair", "Jada", "Shop / Closet", "rbxassetid://5280240511", false},
+	{"Hair", "OLDQueen Mermaid's Bubble Braids", "Shop / Closet", "rbxassetid://89587428785147", false},
+	{"Hair", "Summit Shredder X Baby Braids", "Shop / Closet", "rbxassetid://101126669669153", false},
+	{"Hair", "Coiled Buns", "Shop / Closet", "rbxassetid://6020642185", false},
+	{"Hair", "Merry Ciara", "Shop / Closet", "rbxassetid://6018802210", false},
+	{"Hair", "Beachside Lifeguard", "Shop / Closet", "rbxassetid://7026793607", false},
+	{"Hair", "Virtual Pop Star Bangs", "Shop / Closet", "rbxassetid://6348290198", false},
+	{"Hair", "Stubby Punk Bangs", "Shop / Closet", "rbxassetid://15071814985", false},
+	{"Heels", "Carol of the Elves Booties", "Shop / Closet", "rbxassetid://4244517908", true},
+	{"Hair", "Strawberry Sweetheart Bangs", "Shop / Closet", "rbxassetid://5818135299", false},
+	{"Hair", "80's Summer Camp", "Shop / Closet", "rbxassetid://7026929910", false},
+	{"Heels", "Goddess of TriumphHeels of Immortality", "1,500 Robux", "rbxassetid://10729420729", true},
+	{"Hair", "Stylish Fashionista", "Shop / Closet", "rbxassetid://3276122060", false},
+	{"Hair", "Curly High Dolly Extension", "Shop / Closet", "rbxassetid://13778447183", false},
+	{"Hair", "Carolina", "Shop / Closet", "rbxassetid://13599349122", false},
+	{"Hair", "LNS Ombre Bangs", "Shop / Closet", "rbxassetid://4677958644", false},
+	{"Hair", "Stellar Half-up Bun", "Shop / Closet", "rbxassetid://7675880780", false},
+	{"Hair", "Messy Bruh Hair", "Shop / Closet", "rbxassetid://319337852", true},
+	{"Hair", "Dream Gurl Curls", "Shop / Closet", "rbxassetid://4586427623", false},
+	{"Hair", "Starlight Fairy Front Twists", "Shop / Closet", "rbxassetid://16552670201", false},
+	{"Hair", "Princely Flow", "Shop / Closet", "rbxassetid://5490237050", false},
+	{"Accessories", "Medium Hot Cocoa", "4,500", "", false},
+	{"Hair", "Starlight Half-up Locs", "Shop / Closet", "rbxassetid://16562534082", false},
+	{"Accessories", "Summer Fantasy Goddess Veil", "8,000", "rbxassetid://6947535858", true},
+	{"Hair", "Romantic Tresses", "Shop / Closet", "rbxassetid://757678040", false},
+	{"Accessories", "BuilderSansBold", "Shop / Closet", "", false},
+	{"Hair", "Braided Goddess", "Shop / Closet", "rbxassetid://5312834970", false},
+	{"Hair", "Shoreline Bangs", "Shop / Closet", "rbxassetid://7674266817", false},
+	{"Hair", "Sky Goddess", "Shop / Closet", "rbxassetid://966156800", false},
+	{"Hair", "Starbound Slick", "Shop / Closet", "rbxassetid://96120889731678", false},
+	{"Hair", "Rose a la Franaise", "Shop / Closet", "rbxassetid://6561189284", false},
+	{"Hair", "Class President Bangs", "Shop / Closet", "rbxassetid://3280071296", false},
+	{"Hair", "Crystalwoven Hairpiece", "Shop / Closet", "rbxassetid://124715643874669", true},
+	{"Accessories", "Royale High Bus & Glam Closet", "Shop / Closet", "", false},
+	{"Skirts", "Shadow Empress Jeweled Skirt", "28,000", "rbxassetid://4081054279", true},
+	{"Hair", "Loveknit Frontal Braids", "Shop / Closet", "rbxassetid://18266967294", false},
+	{"Skirts", "Gothicutie Skirt", "12,000", "rbxassetid://7547689300", true},
+	{"Hair", "Mr Handsum", "Shop / Closet", "rbxassetid://4652866372", false},
+	{"Hair", "Mom Said It's My Turn on the Xbox", "Shop / Closet", "rbxassetid://1532314104", false},
+	{"Hair", "Guy3", "Shop / Closet", "rbxassetid://81504052", false},
+	{"Hair", "Na's Garden", "Shop / Closet", "rbxassetid://10729828339", false},
+	{"Accessories", "Lullaby Nikolai and Lauralai Fuzzy Gloves", "20,000", "rbxassetid://76995318987876", true},
+	{"Hair", "Supernova's Ponies", "Shop / Closet", "rbxassetid://12273317954", false},
+	{"Hair", "Twintails", "Shop / Closet", "rbxassetid://2321984626", false},
+	{"Hair", "French Braid Buns", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Accessories", "RobotoMono", "Shop / Closet", "", false},
+	{"Hair", "Small Goddess Braids", "Shop / Closet", "rbxassetid://11138977783", false},
+	{"Hair", "Mother Fairy", "Shop / Closet", "rbxassetid://2995140878", false},
+	{"Hair", "Updo1", "Shop / Closet", "rbxassetid://2116151927", false},
+	{"Hair", "Lolipop Bangs", "Shop / Closet", "rbxassetid://6348205341", false},
+	{"Hair", "Artemis", "Shop / Closet", "rbxassetid://8635368421", false},
+	{"Hair", "Izumi Bangs", "Shop / Closet", "rbxassetid://4753839924", false},
+	{"Hair", "Side Parted Goddess Locs Bangs", "Shop / Closet", "rbxassetid://17747546785", false},
+	{"Hair", "Undead Sapient Shag", "Shop / Closet", "rbxassetid://130922443217489", false},
+	{"Bodices", "top piece", "Shop / Closet", "rbxassetid://6112720260", false},
+	{"Hair", "Ombre Girl Medium", "Shop / Closet", "rbxassetid://1164734259", false},
+	{"Skirts", "Large Train Bow Skirt", "33,000", "rbxassetid://4757091401", true},
+	{"Hair", "Comet's Ponies", "Shop / Closet", "rbxassetid://12273318521", false},
+	{"Accessories", "DenkOne", "Shop / Closet", "", false},
+	{"Accessories", "24", "Shop / Closet", "rbxassetid://7199772858", false},
+	{"Hair", "Pageant Princess Medium", "Shop / Closet", "rbxassetid://4995038658", false},
+	{"Hair", "Spring Twist Bangs", "Shop / Closet", "rbxassetid://6315048204", false},
+	{"Hair", "BackStage Flapper", "Shop / Closet", "rbxassetid://11105052101", false},
+	{"Hair", "Volleyball Star Braids Bangs", "Shop / Closet", "rbxassetid://18283709329", false},
+	{"Accessories", "Royale High Campus 1", "Shop / Closet", "", false},
+	{"Accessories", "Ghostly", "1,000", "", false},
+	{"Hair", "Beeism's Long Waves", "Shop / Closet", "rbxassetid://4250784505", false},
+	{"Accessories", "Moonlight Square", "Shop / Closet", "", false},
+	{"Hair", "Scarlett", "Shop / Closet", "rbxassetid://7026145192", false},
+	{"Accessories", "Arrow", "Shop / Closet", "", false},
+	{"Hair", "Get em Gurl", "Shop / Closet", "rbxassetid://556675563", false},
+	{"Hair", "Death Hawk", "Shop / Closet", "rbxassetid://11079272172", false},
+	{"Hair", "90's Main Character Bangs", "Shop / Closet", "rbxassetid://7026918533", false},
+	{"Accessories", "Box", "Shop / Closet", "", false},
+	{"Hair", "Swept Middle Part", "Shop / Closet", "rbxassetid://16359669109", false},
+	{"Hair", "Slick Chick", "Shop / Closet", "rbxassetid://4321932132", false},
+	{"Hair", "Sweetness Folded Pony", "Shop / Closet", "rbxassetid://3823320776", false},
+	{"Hair", "Butterfly Softie", "Shop / Closet", "rbxassetid://5490419801", false},
+	{"Hair", "Trevor", "Shop / Closet", "rbxassetid://5366206550", false},
+	{"Hair", "Megan", "Shop / Closet", "rbxassetid://6366167652", false},
+	{"Hair", "Sora", "Shop / Closet", "rbxassetid://5165738326", false},
+	{"Hair", "Volleyball Star Braids", "Shop / Closet", "rbxassetid://15635724627", false},
+	{"Hair", "Beachy Beauty Braids", "Shop / Closet", "rbxassetid://15635724627", false},
+	{"Hair", "Summer Blossom", "Shop / Closet", "rbxassetid://5165651438", false},
+	{"Hair", "Nova", "Shop / Closet", "rbxassetid://12307919630", false},
+	{"Hair", "Summer Fantasy Locks", "Shop / Closet", "rbxassetid://6817859184", false},
+	{"Hair", "Starlight Chopped Cut", "Shop / Closet", "rbxassetid://16433551369", false},
+	{"Hair", "Crest Skull-Shaven Mullet", "Shop / Closet", "rbxassetid://109609805861370", false},
+	{"Hair", "Angel", "Shop / Closet", "rbxassetid://7632282151", false},
+	{"Accessories", "Powder Puff", "Shop / Closet", "", false},
+	{"Accessories", "Fuzzy Warm Snowflake Bow Hat", "6,500", "rbxassetid://6011493871", true},
+	{"Hair", "Sassy Ponies Bangs", "Shop / Closet", "rbxassetid://5818133399", false},
+	{"Hair", "Peonie Patch", "Shop / Closet", "rbxassetid://9190665893", false},
+	{"Hair", "Candy Braid BB", "Shop / Closet", "rbxassetid://4623118650", false},
+	{"Hair", "Wind Blown Waves Bangs", "Shop / Closet", "rbxassetid://17627760215", false},
+	{"Accessories", "searchicon2", "Shop / Closet", "rbxassetid://14346980537", false},
+	{"Accessories", "Elegant Parasol", "60,000", "rbxassetid://8705849627", true},
+	{"Hair", "Meeting Time", "Shop / Closet", "rbxassetid://843123153", false},
+	{"Hair", "Ready to Party", "Shop / Closet", "rbxassetid://2513593079", false},
+	{"Hair", "Fashion Apocolypse", "Shop / Closet", "rbxassetid://1022686667", false},
+	{"Hair", "Make the World Dance", "Shop / Closet", "rbxassetid://4381852204", false},
+	{"Hair", "Busy Missy", "Shop / Closet", "rbxassetid://5490016960", false},
+	{"Accessories", "Lullaby Nikolai and Lauralai Hat/Bow", "18,000", "rbxassetid://112713015552792", true},
+	{"Hair", "Braided Hair Test", "Shop / Closet", "rbxassetid://5366105839", true},
+	{"Accessories", "Elegance Butterfly Veil", "10,000", "rbxassetid://4643949185", true},
+	{"Hair", "Thick Glam", "Shop / Closet", "rbxassetid://2066523863", false},
+	{"Hair", "Young and Passionate", "Shop / Closet", "rbxassetid://2948746701", false},
+	{"Accessories", "Nunito", "Shop / Closet", "", false},
+	{"Accessories", "Princess Starfrost Figure Skates", "Shop / Closet", "rbxassetid://4244517908", false},
+	{"Hair", "Diamondwoven Hairpiece", "Shop / Closet", "rbxassetid://124715643874669", true},
+	{"Hair", "Mini Sona", "Shop / Closet", "rbxassetid://4686534219", false},
+	{"Hair", "Ready for Action", "Shop / Closet", "rbxassetid://3035148584", false},
+	{"Hair", "Chromae's Braid", "Shop / Closet", "rbxassetid://93468139201986", false},
+	{"Hair", "Priscilla", "Shop / Closet", "rbxassetid://6018654612", false},
+	{"Hair", "Saka", "Shop / Closet", "rbxassetid://5818157286", false},
+	{"Hair", "Astral Rat Tail", "Shop / Closet", "rbxassetid://18282994000", false},
+	{"Accessories", "Poppins", "Shop / Closet", "", false},
+	{"Hair", "Rapunzel", "Shop / Closet", "rbxassetid://4568549214", false},
+	{"Accessories", "Nocturnal Kitty Ears", "10,000", "rbxassetid://5768972485", true},
+	{"Hair", "Class President", "Shop / Closet", "rbxassetid://3280072975", false},
+	{"Hair", "Curly Low Dolly Extension", "Shop / Closet", "rbxassetid://13778447183", false},
+	{"Hair", "Pushed Back Floof", "Shop / Closet", "rbxassetid://112704829600728", false},
+	{"Accessories", "Conditioner", "Shop / Closet", "", false},
+	{"Hair", "Supernova's Right Pony", "Shop / Closet", "rbxassetid://12273317225", false},
+	{"Hair", "Cheer Captain Ponytail Addon Lower", "Shop / Closet", "rbxassetid://6185103180", false},
+	{"Hair", "Akari", "Shop / Closet", "rbxassetid://8026114406", false},
+	{"Heels", "Glittering Jelly Platforms", "Shop / Closet", "rbxassetid://4244517908", false},
+	{"Hair", "Locksmith's Top Bun", "Shop / Closet", "rbxassetid://104607009511456", false},
+	{"Hair", "Punk Branding", "Shop / Closet", "rbxassetid://3788841596", false},
+	{"Hair", "Pulled Back Locs Addon", "Shop / Closet", "rbxassetid://16573941236", false},
+	{"Hair", "High Rise Bangs", "Shop / Closet", "rbxassetid://8699745251", false},
+	{"Hair", "Princess Popstar", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Elegant Girl", "Shop / Closet", "rbxassetid://757687729", false},
+	{"Accessories", "Sailor Hat with Bow", "7,000", "rbxassetid://2804907770", true},
+	{"Hair", "Side Parted Goddess Locs", "Shop / Closet", "rbxassetid://16562534082", false},
+	{"Hair", "Carmen", "Shop / Closet", "rbxassetid://5708863910", false},
+	{"Accessories", "Dark Brown", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Accessories", "Caveat", "Shop / Closet", "", false},
+	{"Hair", "Distinguished Roller Curls", "Shop / Closet", "rbxassetid://74236627021485", false},
+	{"Hair", "Hippie", "Shop / Closet", "rbxassetid://5713115928", false},
+	{"Hair", "Posey's Etheral Flowing Locks NO MESH DEFORM", "Shop / Closet", "rbxassetid://19005316034", false},
+	{"Accessories", "29", "Shop / Closet", "rbxassetid://13119449049", false},
+	{"Hair", "Two Buns Hair Down", "Shop / Closet", "rbxassetid://82992952", true},
+	{"Hair", "Fierce Shy Bangs", "Shop / Closet", "rbxassetid://4627912763", false},
+	{"Hair", "Fallen Fae's Longing Braids Extensions", "Shop / Closet", "rbxassetid://136954778651324", false},
+	{"Hair", "Mermaid Pigtails", "Shop / Closet", "rbxassetid://6350823122", false},
+	{"Accessories", "LuckiestGuy", "Shop / Closet", "", false},
+	{"Accessories", "Ghostie Transformation", "1,200", "rbxassetid://7593487278", true},
+	{"Hair", "Folded Updo", "Shop / Closet", "rbxassetid://579306624", false},
+	{"Accessories", "Harvest Fairy", "6,500", "", false},
+	{"Hair", "The Coolest Guy You'll Ever Meet", "Shop / Closet", "rbxassetid://1211520088", false},
+	{"Hair", "Zane", "Shop / Closet", "rbxassetid://12307831408", false},
+	{"Hair", "Fashion Model", "Shop / Closet", "rbxassetid://2994377186", false},
+	{"Hair", "Seraphine's Right Pony", "Shop / Closet", "rbxassetid://12273317225", false},
+	{"Accessories", "DarkBlue", "Shop / Closet", "rbxassetid://2113398727", false},
+	{"Accessories", "Enchanting Christmas", "8,000", "", false},
+	{"Hair", "Personal Assistant", "Shop / Closet", "rbxassetid://5165787401", false},
+	{"Hair", "Popstar Pigtails", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Valkyrie Ponytail", "Shop / Closet", "rbxassetid://18417342942", false},
+	{"Hair", "Guy10", "Shop / Closet", "rbxassetid://898252449", false},
+	{"Accessories", "colorDark", "Shop / Closet", "", false},
+	{"Hair", "Dior", "Shop / Closet", "rbxassetid://5708826289", false},
+	{"Hair", "Outlaw Frontal Plaits", "Shop / Closet", "rbxassetid://18266975403", false},
+	{"Hair", "Candy", "Shop / Closet", "rbxassetid://12296559004", false},
+	{"Hair", "Opulent Curl Tail Extension", "Shop / Closet", "rbxassetid://123254396928923", false},
+	{"Hair", "guy20", "Shop / Closet", "rbxassetid://434612568", false},
+	{"Hair", "Exalted Elegance", "Shop / Closet", "rbxassetid://99930977481693", false},
+	{"Accessories", "Arachnofabulous", "100", "rbxassetid://5780659637", true},
+	{"Hair", "I Made This Bun Without Looking in the Mirror", "Shop / Closet", "rbxassetid://906744741", false},
+	{"Hair", "Prudence", "Shop / Closet", "rbxassetid://82992952", false},
+	{"Hair", "Dapper Side Part", "Shop / Closet", "rbxassetid://13169716036", false},
+	{"Hair", "Girl Stampede", "Shop / Closet", "rbxassetid://4753837242", false},
+	{"Hair", "Guy9", "Shop / Closet", "rbxassetid://643127591", false},
+	{"Hair", "Fruity Cutie", "Shop / Closet", "rbxassetid://5490082044", false},
+	{"Hair", "Sabrina Bangs", "Shop / Closet", "rbxassetid://13166359733", false},
+	{"Accessories", "Snowboard Mountain", "Shop / Closet", "", false},
+	{"Hair", "I Brought the Backup", "Shop / Closet", "rbxassetid://82347527", false},
+	{"Hair", "Envy Punk Pigtails", "Shop / Closet", "rbxassetid://13600105274", false},
+	{"Hair", "Avery Bangs", "Shop / Closet", "rbxassetid://7026164010", false},
+	{"Hair", "Updo7", "Shop / Closet", "rbxassetid://1347571818", false},
+	{"Hair", "Lullaby Pigtail Locs Addon", "Shop / Closet", "rbxassetid://15635724822", false},
+	{"Hair", "The Perfect Bob", "Shop / Closet", "rbxassetid://972940434", false},
+	{"Hair", "Fountain Girl's Blowing Hair", "Shop / Closet", "rbxassetid://12458830811", true},
+	{"Accessories", "balconydecormesh", "Shop / Closet", "rbxassetid://7478789946", false},
+	{"Hair", "Fallen Fae's Reminiscing Braids", "Shop / Closet", "rbxassetid://88418116415438", false},
+	{"Hair", "Lydia", "Shop / Closet", "rbxassetid://6020639724", false},
+	{"Bodices", "Fallen Fae Tattered Top & Rose Choker", "18,000", "rbxassetid://113771155649424", true},
+	{"Hair", "Fairytale Princess Braid's Bangs", "Shop / Closet", "rbxassetid://9511267775", false},
+	{"Hair", "Stellar Half-up Ponytail", "Shop / Closet", "rbxassetid://7674267711", false},
+	{"Hair", "Monika", "Shop / Closet", "rbxassetid://5218515741", false},
+	{"Hair", "Cottage Cutie", "Shop / Closet", "rbxassetid://5490384228", false},
+	{"Hair", "Majestic Savant Locks", "Shop / Closet", "rbxassetid://15635498063", false},
+	{"Hair", "Cold Air", "Shop / Closet", "rbxassetid://134324168050851", false},
+}
+
+for _, it in ipairs(masterCatalog) do
+	addItem(it[1], {
+		name     = it[2],
+		price    = it[3],
+		desc     = it[2] .. " (" .. it[1] .. ")",
+		image    = it[4],
+		rectOff  = Vector2.new(0, 0),
+		rectSize = Vector2.new(0, 0),
+		hasToggles = it[5],
+		cardRef  = nil,
+	})
+end
+
+-- ==========================================================
+-- 5. NATIVE DRESS-UP & INVENTORY EQUIPPING ENGINE
+-- ==========================================================
+local function equipNative(itemName, itemCat)
+	local char = lp.Character
+	if not char then return end
+
+	-- Manage single-slot swap for skirts/heels
+	if itemCat == "Skirts" or itemCat == "Heels" then
+		for name, data in pairs(savedWornLayers) do
+			if data.category == itemCat then
+				local lyr = char:FindFirstChild(name .. "_Layer") or char:FindFirstChild(name)
+				if lyr then
+					lyr:SetAttribute("CustomSavedLayer", nil)
+					pcall(function() lyr:Destroy() end)
+				end
+				savedWornLayers[name] = nil
+			end
+		end
+	end
+
+	-- 1. Try Native ReplicatedStorage Inventory.EquipItem RemoteFunction
+	local invFolder = ReplicatedStorage:FindFirstChild("Inventory")
+	if invFolder and invFolder:FindFirstChild("EquipItem") then
+		pcall(function()
+			invFolder.EquipItem:InvokeServer(itemName)
+		end)
+	end
+
+	-- 2. Try Native Accessory Equip RemoteEvent
+	pcall(function()
+		local netAccessory = ReplicatedStorage:FindFirstChild("Network") and ReplicatedStorage.Network.Events.Player.Accessory.Equip
+		if netAccessory then netAccessory:FireServer(itemName) end
+	end)
+
+	-- 3. Try CharacterCreation PromptEquip BindableEvent
+	pcall(function()
+		local cc = pg:FindFirstChild("CharacterCreation")
+		if cc and cc:FindFirstChild("Inventory") and cc.Inventory:FindFirstChild("PromptEquip") then
+			cc.Inventory.PromptEquip:Fire(itemName)
+		end
+	end)
+
+	-- 4. Try TogglesNetwork Equip
+	pcall(function()
+		local tog = ReplicatedStorage:FindFirstChild("TogglesNetwork") and ReplicatedStorage.TogglesNetwork:FindFirstChild("Equip")
+		if tog then tog:FireServer(itemName) end
+	end)
+
+	-- 5. Capture new character instance & protect as custom layer
+	task.spawn(function()
+		local newItem = nil
+		for step = 1, 20 do
+			task.wait(0.08)
+			for _, child in ipairs(char:GetChildren()) do
+				if (child:IsA("Accessory") or child:IsA("Model"))
+				   and not standardBodyParts[child.Name]
+				   and not child:GetAttribute("CustomSavedLayer") then
+					local lower = child.Name:lower()
+					if lower:find(itemName:lower(), 1, true) or itemName:lower():find(lower, 1, true) then
+						newItem = child
+						break
+					end
+				end
+			end
+			if newItem then break end
+		end
+
+		if newItem then
+			pcall(function()
+				newItem:SetAttribute("CustomSavedLayer", true)
+				local jointsList = {}
+				for _, w in ipairs(newItem:GetDescendants()) do
+					if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) and w.Part1 and w.Part1:IsDescendantOf(char) then
+						table.insert(jointsList, {
+							part0Name = w.Part0 and w.Part0.Name or "",
+							part1Name = w.Part1.Name,
+							c0        = (w:IsA("Motor6D") or w:IsA("Weld")) and w.C0 or nil,
+							c1        = (w:IsA("Motor6D") or w:IsA("Weld")) and w.C1 or nil,
+							className = w.ClassName,
+						})
+					end
+				end
+
+				local backupCopy = deepClone(newItem)
+				backupCopy:SetAttribute("CustomSavedLayer", true)
+
+				savedWornLayers[itemName] = {
+					backup     = backupCopy,
+					joints     = jointsList,
+					isAccessory = newItem:IsA("Accessory"),
+					isModel    = newItem:IsA("Model"),
+					category   = itemCat,
+				}
+			end)
+		end
+
+		restoreAllSavedLayers()
+		unfreezeControls()
+	end)
+end
+
+-- ==========================================================
+-- 6. MONOCHROME MOBILE GUI (Black & White, Zero Emojis)
+-- ==========================================================
+local container = getGuiContainer()
+for _, old in ipairs({"RH_Wardrobe_v16", "RH_Wardrobe_v17", "RH_Wardrobe_v18"}) do
+	local g = container:FindFirstChild(old)
+	if g then g:Destroy() end
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name               = "RH_Wardrobe_v18"
+ScreenGui.ResetOnSpawn       = false
+ScreenGui.IgnoreGuiInset     = true
+ScreenGui.ZIndexBehavior     = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent             = container
+
+local C = {
+	bg        = Color3.fromRGB(12, 12, 12),
+	card      = Color3.fromRGB(22, 22, 22),
+	border    = Color3.fromRGB(55, 55, 55),
+	borderHi  = Color3.fromRGB(180, 180, 180),
+	text      = Color3.fromRGB(255, 255, 255),
+	sub       = Color3.fromRGB(150, 150, 150),
+	muted     = Color3.fromRGB(90, 90, 90),
+	btn       = Color3.fromRGB(28, 28, 28),
+	btnHi     = Color3.fromRGB(240, 240, 240),
+	btnTextHi = Color3.fromRGB(10, 10, 10),
+}
+
+local function mk(cls, props, parent)
+	local o = Instance.new(cls)
+	for k, v in pairs(props) do o[k] = v end
+	if parent then o.Parent = parent end
+	return o
+end
+
+local function corner(r, parent)
+	return mk("UICorner", {CornerRadius = UDim.new(0, r)}, parent)
+end
+
+local function stroke(t, c, parent)
+	return mk("UIStroke", {Thickness = t, Color = c, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, parent)
+end
+
+local ToggleBtn = mk("TextButton", {
+	Size              = UDim2.new(0, 54, 0, 36),
+	Position          = UDim2.new(0, 10, 1, -54),
+	BackgroundColor3  = C.bg,
+	Text              = "MENU",
+	TextSize          = 10,
+	Font              = Enum.Font.GothamBold,
+	TextColor3        = C.text,
+	BorderSizePixel   = 0,
+	ZIndex            = 100,
+	AutoButtonColor   = false,
+}, ScreenGui)
+corner(6, ToggleBtn)
+stroke(1, C.borderHi, ToggleBtn)
+
+local cam = workspace.CurrentCamera
+local vpY = cam and cam.ViewportSize.Y or 600
+local W, H = 320, math.clamp(vpY * 0.88, 380, 520)
+
+local Main = mk("Frame", {
+	Size             = UDim2.new(0, W, 0, H),
+	Position         = UDim2.new(0.5, -W/2, 0.5, -H/2),
+	BackgroundColor3 = C.bg,
+	BorderSizePixel  = 0,
+	Visible          = false,
+	ZIndex           = 10,
+	ClipsDescendants = true,
+}, ScreenGui)
+corner(8, Main)
+stroke(1, C.border, Main)
+
+local TitleBar = mk("Frame", {
+	Size             = UDim2.new(1, 0, 0, 34),
+	BackgroundColor3 = C.card,
+	BorderSizePixel  = 0,
+	ZIndex           = 11,
+}, Main)
+corner(6, TitleBar)
+
+mk("TextLabel", {
+	Size               = UDim2.new(1, -74, 1, 0),
+	Position           = UDim2.new(0, 10, 0, 0),
+	BackgroundTransparency = 1,
+	Text               = "ROYALE HIGH WARDROBE v18",
+	TextColor3         = C.text,
+	Font               = Enum.Font.GothamBold,
+	TextSize           = 10,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	ZIndex             = 12,
+}, TitleBar)
+
+local MinBtn = mk("TextButton", {
+	Size            = UDim2.new(0, 24, 0, 24),
+	Position        = UDim2.new(1, -54, 0, 5),
+	BackgroundColor3= C.btn,
+	Text            = "_",
+	TextColor3      = C.text,
+	Font            = Enum.Font.GothamBold,
+	TextSize        = 11,
+	BorderSizePixel = 0,
+	ZIndex          = 12,
+	AutoButtonColor = false,
+}, TitleBar)
+corner(4, MinBtn)
+stroke(1, C.border, MinBtn)
+
+local CloseBtn = mk("TextButton", {
+	Size            = UDim2.new(0, 24, 0, 24),
+	Position        = UDim2.new(1, -26, 0, 5),
+	BackgroundColor3= C.btn,
+	Text            = "X",
+	TextColor3      = C.text,
+	Font            = Enum.Font.GothamBold,
+	TextSize        = 10,
+	BorderSizePixel = 0,
+	ZIndex          = 12,
+	AutoButtonColor = false,
+}, TitleBar)
+corner(4, CloseBtn)
+stroke(1, C.border, CloseBtn)
+
+local TabBar = mk("Frame", {
+	Size             = UDim2.new(1, 0, 0, 28),
+	Position         = UDim2.new(0, 0, 0, 34),
+	BackgroundColor3 = C.card,
+	BorderSizePixel  = 0,
+	ZIndex           = 11,
+}, Main)
+
+local tabCatalog = mk("TextButton", {
+	Size             = UDim2.new(0.5, -2, 1, -4),
+	Position         = UDim2.new(0, 2, 0, 2),
+	BackgroundColor3 = C.btnHi,
+	Text             = "CATALOG",
+	TextColor3       = C.btnTextHi,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 10,
+	BorderSizePixel  = 0,
+	ZIndex           = 12,
+	AutoButtonColor  = false,
+}, TabBar)
+corner(4, tabCatalog)
+
+local tabStats = mk("TextButton", {
+	Size             = UDim2.new(0.5, -2, 1, -4),
+	Position         = UDim2.new(0.5, 0, 0, 2),
+	BackgroundColor3 = C.btn,
+	Text             = "STATS SPOOFER",
+	TextColor3       = C.sub,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 10,
+	BorderSizePixel  = 0,
+	ZIndex           = 12,
+	AutoButtonColor  = false,
+}, TabBar)
+corner(4, tabStats)
+
+local ContentAreaPos  = UDim2.new(0, 0, 0, 62)
+local ContentAreaSize = UDim2.new(1, 0, 1, -62)
+
+local CatalogPanel = mk("Frame", {
+	Size               = ContentAreaSize,
+	Position           = ContentAreaPos,
+	BackgroundTransparency = 1,
+	ZIndex             = 11,
+}, Main)
+
+local SideScroll = mk("ScrollingFrame", {
+	Size               = UDim2.new(0, 88, 1, 0),
+	BackgroundColor3   = C.card,
+	BorderSizePixel    = 0,
+	ScrollBarThickness = 2,
+	CanvasSize         = UDim2.new(0, 0, 0, #catOrder * 42 + 8),
+	ZIndex             = 12,
+}, CatalogPanel)
+corner(6, SideScroll)
+stroke(1, C.border, SideScroll)
+mk("UIPadding", {PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3)}, SideScroll)
+mk("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 3)}, SideScroll)
+
+local SearchBoxFrame = mk("Frame", {
+	Size             = UDim2.new(1, -96, 0, 24),
+	Position         = UDim2.new(0, 92, 0, 2),
+	BackgroundColor3 = C.card,
+	BorderSizePixel  = 0,
+	ZIndex           = 13,
+}, CatalogPanel)
+corner(4, SearchBoxFrame)
+stroke(1, C.border, SearchBoxFrame)
+
+local SearchBox = mk("TextBox", {
+	Size               = UDim2.new(1, -12, 1, 0),
+	Position           = UDim2.new(0, 6, 0, 0),
+	BackgroundTransparency = 1,
+	PlaceholderText    = "Search items...",
+	Text               = "",
+	TextColor3         = C.text,
+	PlaceholderColor3  = C.muted,
+	Font               = Enum.Font.GothamBold,
+	TextSize           = 8.5,
+	ClearTextOnFocus   = false,
+	ZIndex             = 14,
+}, SearchBoxFrame)
+
+local GridScroll = mk("ScrollingFrame", {
+	Size               = UDim2.new(1, -92, 1, -30),
+	Position           = UDim2.new(0, 92, 0, 30),
+	BackgroundTransparency = 1,
+	BorderSizePixel    = 0,
+	ScrollBarThickness = 3,
+	CanvasSize         = UDim2.new(0, 0, 0, 0),
+	ZIndex             = 12,
+}, CatalogPanel)
+
+local GridLayout = mk("UIGridLayout", {
+	CellSize    = UDim2.new(0, 68, 0, 82),
+	CellPadding = UDim2.new(0, 4, 0, 4),
+	SortOrder   = Enum.SortOrder.LayoutOrder,
+}, GridScroll)
+mk("UIPadding", {PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4)}, GridScroll)
+
+local InspHeight = 224
+local Inspector = mk("Frame", {
+	Size             = UDim2.new(1, 0, 0, InspHeight),
+	Position         = UDim2.new(0, 0, 1, 0),
+	BackgroundColor3 = C.card,
+	BorderSizePixel  = 0,
+	ZIndex           = 25,
+	ClipsDescendants = true,
+}, Main)
+corner(8, Inspector)
+stroke(1, C.borderHi, Inspector)
+
+local inspClose = mk("TextButton", {
+	Size            = UDim2.new(0, 20, 0, 20),
+	Position        = UDim2.new(1, -24, 0, 4),
+	BackgroundColor3= C.btn,
+	Text            = "X",
+	TextColor3      = C.text,
+	Font            = Enum.Font.GothamBold,
+	TextSize        = 10,
+	BorderSizePixel = 0,
+	ZIndex          = 26,
+	AutoButtonColor = false,
+}, Inspector)
+corner(4, inspClose)
+stroke(1, C.border, inspClose)
+
+local inspImg = mk("ImageLabel", {
+	Size            = UDim2.new(0, 68, 0, 68),
+	Position        = UDim2.new(0, 8, 0, 8),
+	BackgroundColor3= C.btn,
+	BorderSizePixel = 0,
+	ZIndex          = 26,
+	ScaleType       = Enum.ScaleType.Fit,
+}, Inspector)
+corner(6, inspImg)
+stroke(1, C.border, inspImg)
+
+local inspPlaceholder = mk("TextLabel", {
+	Size               = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Text               = "NO\nIMAGE",
+	TextColor3         = C.muted,
+	Font               = Enum.Font.GothamBold,
+	TextSize           = 9,
+	Visible            = false,
+	ZIndex             = 27,
+}, inspImg)
+
+local inspName = mk("TextLabel", {
+	Size               = UDim2.new(1, -106, 0, 22),
+	Position           = UDim2.new(0, 82, 0, 6),
+	BackgroundTransparency = 1,
+	Text               = "ITEM NAME",
+	TextColor3         = C.text,
+	Font               = Enum.Font.GothamBold,
+	TextSize           = 10.5,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	TextWrapped        = true,
+	ZIndex             = 26,
+}, Inspector)
+
+local inspPrice = mk("TextLabel", {
+	Size               = UDim2.new(1, -106, 0, 16),
+	Position           = UDim2.new(0, 82, 0, 28),
+	BackgroundTransparency = 1,
+	Text               = "PRICE",
+	TextColor3         = C.sub,
+	Font               = Enum.Font.Gotham,
+	TextSize           = 10,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	ZIndex             = 26,
+}, Inspector)
+
+local inspToggleTag = mk("TextLabel", {
+	Size               = UDim2.new(1, -106, 0, 14),
+	Position           = UDim2.new(0, 82, 0, 46),
+	BackgroundTransparency = 1,
+	Text               = "[HAS TOGGLES]",
+	TextColor3         = C.sub,
+	Font               = Enum.Font.GothamBold,
+	TextSize           = 8.5,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	Visible            = false,
+	ZIndex             = 26,
+}, Inspector)
+
+local inspDesc = mk("TextLabel", {
+	Size               = UDim2.new(1, -16, 0, 44),
+	Position           = UDim2.new(0, 8, 0, 80),
+	BackgroundTransparency = 1,
+	Text               = "Description",
+	TextColor3         = C.muted,
+	Font               = Enum.Font.Gotham,
+	TextSize           = 8.5,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	TextYAlignment     = Enum.TextYAlignment.Top,
+	TextWrapped        = true,
+	ZIndex             = 26,
+}, Inspector)
+
+local equipBtn = mk("TextButton", {
+	Size             = UDim2.new(0.48, -4, 0, 28),
+	Position         = UDim2.new(0, 8, 0, 130),
+	BackgroundColor3 = C.btnHi,
+	Text             = "WEAR (MULTI-LAYER)",
+	TextColor3       = C.btnTextHi,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 8.5,
+	BorderSizePixel  = 0,
+	ZIndex           = 26,
+	AutoButtonColor  = false,
+}, Inspector)
+corner(4, equipBtn)
+
+local clearLayersBtn = mk("TextButton", {
+	Size             = UDim2.new(0.48, -4, 0, 28),
+	Position         = UDim2.new(0.5, 2, 0, 130),
+	BackgroundColor3 = C.btn,
+	Text             = "CLEAR LAYERS",
+	TextColor3       = C.text,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 8.5,
+	BorderSizePixel  = 0,
+	ZIndex           = 26,
+	AutoButtonColor  = false,
+}, Inspector)
+corner(4, clearLayersBtn)
+stroke(1, C.border, clearLayersBtn)
+
+local selectedItem     = nil
+local selectedCategory = "Heels"
+local catButtons       = {}
+
+local function openInspector(item, catName)
+	selectedItem     = item
+	selectedCategory = catName or "Accessories"
+	inspName.Text    = item.name:upper()
+	inspPrice.Text   = (item.price ~= "" and item.price or "Special / Event")
+	inspDesc.Text    = (item.desc  ~= "" and item.desc  or "No description.")
+	inspToggleTag.Visible = item.hasToggles
+
+	if item.hasRealImage then
+		inspImg.Image           = item.image
+		inspImg.ImageRectOffset = item.rectOff  or Vector2.new(0, 0)
+		inspImg.ImageRectSize   = item.rectSize or Vector2.new(0, 0)
+		inspPlaceholder.Visible = false
+	else
+		inspImg.Image           = ""
+		inspPlaceholder.Visible = true
+	end
+
+	Inspector:TweenPosition(UDim2.new(0, 0, 1, -InspHeight), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.2, true)
+end
+
+local function closeInspector()
+	Inspector:TweenPosition(UDim2.new(0, 0, 1, 0), Enum.EasingDirection.In, Enum.EasingStyle.Quad, 0.15, true)
+end
+
+inspClose.MouseButton1Click:Connect(closeInspector)
+
+equipBtn.MouseButton1Click:Connect(function()
+	if not selectedItem then return end
+	equipNative(selectedItem.name, selectedCategory)
+	equipBtn.Text = "WORN!"
+	task.delay(1.4, function() equipBtn.Text = "WEAR (MULTI-LAYER)" end)
+end)
+
+clearLayersBtn.MouseButton1Click:Connect(function()
+	clearAllWornLayers()
+	clearLayersBtn.Text = "CLEARED!"
+	task.delay(1.2, function() clearLayersBtn.Text = "CLEAR LAYERS" end)
+end)
+
+local function clearGrid()
+	for _, c in ipairs(GridScroll:GetChildren()) do
+		if c ~= GridLayout and not c:IsA("UIPadding") then c:Destroy() end
+	end
+end
+
+local function loadCategory(catName, filterText)
+	clearGrid()
+	closeInspector()
+
+	for name, btn in pairs(catButtons) do
+		local active = (name == catName)
+		btn.BackgroundColor3 = active and C.btnHi or C.btn
+		btn.TextColor3       = active and C.btnTextHi or C.sub
+	end
+
+	local rawItems = categories[catName] or {}
+	local items    = {}
+
+	local q = filterText and filterText:lower() or ""
+	for _, it in ipairs(rawItems) do
+		if q == "" or it.name:lower():find(q, 1, true) then
+			table.insert(items, it)
+		end
+	end
+
+	table.sort(items, function(a, b)
+		local aHas = (a.hasRealImage == true)
+		local bHas = (b.hasRealImage == true)
+		if aHas ~= bHas then return aHas end
+		return a.name < b.name
+	end)
+
+	for i, item in ipairs(items) do
+		local card = mk("TextButton", {
+			Size             = UDim2.new(0, 68, 0, 82),
+			BackgroundColor3 = C.card,
+			Text             = "",
+			BorderSizePixel  = 0,
+			ZIndex           = 13,
+			LayoutOrder      = i,
+			AutoButtonColor  = false,
+		}, GridScroll)
+		corner(4, card)
+		stroke(1, C.border, card)
+
+		local imgBox = mk("ImageLabel", {
+			Size               = UDim2.new(1, -6, 0, 48),
+			Position           = UDim2.new(0, 3, 0, 3),
+			BackgroundColor3   = C.btn,
+			BackgroundTransparency = 0.4,
+			BorderSizePixel    = 0,
+			ZIndex             = 14,
+			ScaleType          = Enum.ScaleType.Fit,
+		}, card)
+		corner(3, imgBox)
+
+		if item.hasRealImage then
+			imgBox.Image           = item.image
+			imgBox.ImageRectOffset = item.rectOff  or Vector2.new(0, 0)
+			imgBox.ImageRectSize   = item.rectSize or Vector2.new(0, 0)
+		else
+			imgBox.Image = ""
+			mk("TextLabel", {
+				Size               = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = 1,
+				Text               = "[NO IMAGE]",
+				TextColor3         = C.muted,
+				Font               = Enum.Font.GothamBold,
+				TextSize           = 6.5,
+				ZIndex             = 15,
+			}, imgBox)
+		end
+
+		if item.hasToggles then
+			local tBadge = mk("Frame", {
+				Size             = UDim2.new(0, 6, 0, 6),
+				Position         = UDim2.new(1, -8, 0, 2),
+				BackgroundColor3 = C.borderHi,
+				BorderSizePixel  = 0,
+				ZIndex           = 16,
+			}, card)
+			corner(3, tBadge)
+		end
+
+		mk("TextLabel", {
+			Size               = UDim2.new(1, -4, 0, 16),
+			Position           = UDim2.new(0, 2, 0, 52),
+			BackgroundTransparency = 1,
+			Text               = item.name,
+			TextColor3         = C.text,
+			Font               = Enum.Font.GothamBold,
+			TextSize           = 7,
+			TextWrapped        = true,
+			ZIndex             = 14,
+		}, card)
+
+		mk("TextLabel", {
+			Size               = UDim2.new(1, -4, 0, 12),
+			Position           = UDim2.new(0, 2, 0, 68),
+			BackgroundTransparency = 1,
+			Text               = (item.price ~= "" and item.price:sub(1, 14) or "Special"),
+			TextColor3         = C.sub,
+			Font               = Enum.Font.Gotham,
+			TextSize           = 6.5,
+			ZIndex             = 14,
+		}, card)
+
+		local capturedItem    = item
+		local capturedCatName = catName
+		card.MouseButton1Click:Connect(function()
+			openInspector(capturedItem, capturedCatName)
+		end)
+	end
+
+	local cols = 3
+	GridScroll.CanvasSize = UDim2.new(0, 0, 0, math.ceil(#items / cols) * 86 + 12)
+end
+
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	loadCategory(selectedCategory, SearchBox.Text)
+end)
+
+local function refreshCategoryTabs()
+	for i, catName in ipairs(catOrder) do
+		local count = #(categories[catName] or {})
+		local btn   = catButtons[catName]
+		if not btn then
+			btn = mk("TextButton", {
+				Size             = UDim2.new(1, 0, 0, 36),
+				BackgroundColor3 = C.btn,
+				Text             = catName .. "\n(" .. count .. ")",
+				TextColor3       = C.sub,
+				Font             = Enum.Font.GothamBold,
+				TextSize         = 8,
+				TextWrapped      = true,
+				BorderSizePixel  = 0,
+				ZIndex           = 13,
+				LayoutOrder      = i,
+				AutoButtonColor  = false,
+			}, SideScroll)
+			corner(4, btn)
+			stroke(1, C.border, btn)
+			catButtons[catName] = btn
+
+			local capturedCatName = catName
+			btn.MouseButton1Click:Connect(function()
+				selectedCategory = capturedCatName
+				loadCategory(capturedCatName, SearchBox.Text)
+			end)
+		else
+			btn.Text = catName .. "\n(" .. count .. ")"
+		end
+	end
+end
+
+refreshCategoryTabs()
+
+if #catOrder > 0 then
+	selectedCategory = catOrder[1]
+	loadCategory(catOrder[1], "")
+end
+
+-- ==========================================================
+-- 7. STATS SPOOFER (Monochrome, Real-Time)
+-- ==========================================================
+local StatsPanel = mk("Frame", {
+	Size               = ContentAreaSize,
+	Position           = ContentAreaPos,
+	BackgroundTransparency = 1,
+	Visible            = false,
+	ZIndex             = 11,
+}, Main)
+
+mk("TextLabel", {
+	Size               = UDim2.new(1, -16, 0, 20),
+	Position           = UDim2.new(0, 8, 0, 6),
+	BackgroundTransparency = 1,
+	Text               = "VISUAL STAT SPOOFER",
+	TextColor3         = C.text,
+	Font               = Enum.Font.GothamBold,
+	TextSize           = 11,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	ZIndex             = 12,
+}, StatsPanel)
+
+local StatsScroll = mk("ScrollingFrame", {
+	Size               = UDim2.new(1, -16, 1, -48),
+	Position           = UDim2.new(0, 8, 0, 44),
+	BackgroundColor3   = C.card,
+	BorderSizePixel    = 0,
+	ScrollBarThickness = 2,
+	CanvasSize         = UDim2.new(0, 0, 0, 270),
+	ZIndex             = 12,
+}, StatsPanel)
+corner(6, StatsScroll)
+stroke(1, C.border, StatsScroll)
+mk("UIPadding", {PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8)}, StatsScroll)
+mk("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6)}, StatsScroll)
+
+local function formatCommas(str)
+	local numStr = str:gsub("[^%d]", "")
+	if numStr == "" then return "" end
+	local k
+	while true do
+		numStr, k = string.gsub(numStr, "^(-?%d+)(%d%d%d)", '%1,%2')
+		if k == 0 then break end
+	end
+	return numStr
+end
+
+local activeSpoofs = {}
+
+local function createStatRow(labelText, defaultVal, callback)
+	local row = mk("Frame", {
+		Size             = UDim2.new(1, 0, 0, 48),
+		BackgroundColor3 = C.bg,
+		BorderSizePixel  = 0,
+		ZIndex           = 13,
+	}, StatsScroll)
+	corner(4, row)
+	stroke(1, C.border, row)
+
+	mk("TextLabel", {
+		Size               = UDim2.new(1, -10, 0, 16),
+		Position           = UDim2.new(0, 6, 0, 4),
+		BackgroundTransparency = 1,
+		Text               = labelText:upper(),
+		TextColor3         = C.sub,
+		Font               = Enum.Font.GothamBold,
+		TextSize           = 8.5,
+		TextXAlignment     = Enum.TextXAlignment.Left,
+		ZIndex             = 14,
+	}, row)
+
+	local box = mk("TextBox", {
+		Size            = UDim2.new(1, -12, 0, 22),
+		Position        = UDim2.new(0, 6, 0, 22),
+		BackgroundColor3= C.card,
+		Text            = defaultVal,
+		PlaceholderText = "Enter amount...",
+		TextColor3      = C.text,
+		PlaceholderColor3 = C.muted,
+		Font            = Enum.Font.GothamBold,
+		TextSize        = 10,
+		BorderSizePixel = 0,
+		ClearTextOnFocus= false,
+		ZIndex          = 14,
+	}, row)
+	corner(3, box)
+	stroke(1, C.border, box)
+
+	box:GetPropertyChangedSignal("Text"):Connect(function()
+		local raw       = box.Text
+		local formatted = formatCommas(raw)
+		if raw ~= formatted then box.Text = formatted end
+		activeSpoofs[labelText] = formatted
+		callback(formatted)
+	end)
+end
+
+local function updateDiamonds(val)
+	if val == "" then return end
+	pcall(function() pg.Shop.Header.diamondamount.Text = val end)
+	pcall(function() pg.HUD.Frame.Middle.DiamondsFrame.DiamondAmount.Text = val end)
+	pcall(function() pg.MermaidShopDiamondCount.Frame.DiamondAmount.Text = val end)
+	for _, d in ipairs(pg:GetDescendants()) do
+		if d:IsA("TextLabel") and (d.Name:lower():find("diamondamount") or d.Name:lower():find("diamondcount")) then
+			pcall(function() d.Text = val end)
+		end
+	end
+end
+
+local function updateLevel(val)
+	if val == "" then return end
+	for _, d in ipairs(pg:GetDescendants()) do
+		if d:IsA("TextLabel") and (d.Name:lower():find("levelnumber") or (d.Name:lower() == "level" and tonumber(d.Text:gsub("[^%d]", "")))) then
+			pcall(function() d.Text = val end)
+		end
+	end
+end
+
+local function updateCandy(val)
+	if val == "" then return end
+	pcall(function() pg.Shop.Header.candyamount.Text = val end)
+	pcall(function() pg.HUD.Frame.HalloweenCandy.CandyAmount.Text = val end)
+end
+
+local function updateCash(val)
+	if val == "" then return end
+	pcall(function() pg.HUD.Frame.Middle.CloudCashStuff.CloudCash.Text = val end)
+end
+
+createStatRow("Diamonds",   "1,000,000", updateDiamonds)
+createStatRow("Level",      "500",       updateLevel)
+createStatRow("Candy",      "50,000",    updateCandy)
+createStatRow("Cloud Cash", "10,000",    updateCash)
+
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		if activeSpoofs["Diamonds"]   then updateDiamonds(activeSpoofs["Diamonds"])   end
+		if activeSpoofs["Level"]      then updateLevel(activeSpoofs["Level"])          end
+		if activeSpoofs["Candy"]      then updateCandy(activeSpoofs["Candy"])          end
+		if activeSpoofs["Cloud Cash"] then updateCash(activeSpoofs["Cloud Cash"])      end
+	end
+end)
+
+-- ==========================================================
+-- 8. TAB SWITCHER, TOGGLE & DRAG
+-- ==========================================================
+tabCatalog.MouseButton1Click:Connect(function()
+	CatalogPanel.Visible = true
+	StatsPanel.Visible   = false
+	tabCatalog.BackgroundColor3 = C.btnHi
+	tabCatalog.TextColor3       = C.btnTextHi
+	tabStats.BackgroundColor3   = C.btn
+	tabStats.TextColor3         = C.sub
+end)
+
+tabStats.MouseButton1Click:Connect(function()
+	CatalogPanel.Visible = false
+	StatsPanel.Visible   = true
+	tabStats.BackgroundColor3   = C.btnHi
+	tabStats.TextColor3         = C.btnTextHi
+	tabCatalog.BackgroundColor3 = C.btn
+	tabCatalog.TextColor3       = C.sub
+end)
+
+local isOpen = false
+local function toggleUI()
+	isOpen = not isOpen
+	Main.Visible = isOpen
+	ToggleBtn.Text            = isOpen and "CLOSE" or "MENU"
+	ToggleBtn.BackgroundColor3= isOpen and C.btnHi or C.bg
+	ToggleBtn.TextColor3      = isOpen and C.btnTextHi or C.text
+	if isOpen then
+		refreshCategoryTabs()
+		loadCategory(selectedCategory, SearchBox.Text)
+	end
+end
+
+ToggleBtn.MouseButton1Click:Connect(toggleUI)
+CloseBtn.MouseButton1Click:Connect(function()
+	if isOpen then toggleUI() end
+end)
+
+local isMin = false
+MinBtn.MouseButton1Click:Connect(function()
+	isMin = not isMin
+	if isMin then
+		Main:TweenSize(UDim2.new(0, W, 0, 34), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.2, true)
+		TabBar.Visible       = false
+		CatalogPanel.Visible = false
+		StatsPanel.Visible   = false
+	else
+		Main:TweenSize(UDim2.new(0, W, 0, H), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.2, true)
+		task.delay(0.2, function()
+			TabBar.Visible = true
+			if tabCatalog.BackgroundColor3 == C.btnHi then
+				CatalogPanel.Visible = true
+			else
+				StatsPanel.Visible = true
+			end
+		end)
+	end
+end)
+
+local dragging, dragStart, startPos
+TitleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos  = Main.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+UIS.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStart
+		Main.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+print("[RH Wardrobe v18] Loaded with Native DressUp Equipping & Multi-Layer Engine.")
