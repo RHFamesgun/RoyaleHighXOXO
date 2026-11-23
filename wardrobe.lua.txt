@@ -1,10 +1,11 @@
 -- ==========================================================
--- ROYALE HIGH ENVIRONMENT DIAGNOSTIC (AUTO-CLIPBOARD)
--- Pure Monochrome (Black & White, zero emojis)
+-- ROYALE HIGH CONTROLLER & INPUT PROBER
 -- ==========================================================
 
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
+local VIM = pcall(function() return game:GetService("VirtualInputManager") end) and game:GetService("VirtualInputManager") or nil
+local VU = pcall(function() return game:GetService("VirtualUser") end) and game:GetService("VirtualUser") or nil
 local lp = Players.LocalPlayer
 local pg = lp:WaitForChild("PlayerGui")
 
@@ -19,94 +20,95 @@ local function notify(title, msg)
 end
 
 local function copyToClipboard(text)
-	if setclipboard then
-		setclipboard(text)
-		return true
-	elseif toclipboard then
-		toclipboard(text)
-		return true
-	end
+	if setclipboard then setclipboard(text) return true end
+	if toclipboard then toclipboard(text) return true end
 	return false
 end
 
-notify("SCANNER STARTED", "Collecting shop paths and button data...")
+notify("PROBING CONTROLLER", "Analyzing shop events and testing virtual click...")
 
 task.spawn(function()
-	task.wait(0.6)
+	task.wait(0.5)
 
-	local foundShops = {}
-	local tryonButtons = {}
-	local itemFrames = 0
-	local eventType = "Unknown"
-
-	-- 1. Identify shop and wardrobe screen GUIs
-	for _, gui in ipairs(pg:GetChildren()) do
-		if gui:IsA("ScreenGui") then
-			local gName = gui.Name:lower()
-			if gName:find("shop") or gName:find("dress") or gName:find("wardrobe") or gName:find("creation") or gName:find("inventory") then
-				table.insert(foundShops, gui.Name)
-			end
-		end
-	end
-
-	-- 2. Scan all try-on buttons and item cards
-	for _, d in ipairs(pg:GetDescendants()) do
-		if d:IsA("GuiButton") then
-			local n = d.Name:lower()
-			local t = (d:IsA("TextButton") and d.Text:lower()) or ""
-			if n:find("try") or n:find("preview") or t:find("try") or t:find("preview") then
-				table.insert(tryonButtons, d:GetFullName())
-			end
-		elseif d:IsA("Frame") and (d.Name:lower() == "item" or d:FindFirstChild("name") or d:FindFirstChild("Tryon")) then
-			itemFrames = itemFrames + 1
-		end
-	end
-
-	-- 3. Check event connection types
-	for _, d in ipairs(pg:GetDescendants()) do
-		if d:IsA("GuiButton") and d.Name:lower():find("try") then
-			pcall(function()
-				if getconnections then
-					local act = #getconnections(d.Activated) > 0
-					local m1c = #getconnections(d.MouseButton1Click) > 0
-					if act and m1c then
-						eventType = "Both (Activated & MouseButton1Click)"
-					elseif act then
-						eventType = "Activated"
-					elseif m1c then
-						eventType = "MouseButton1Click"
-					else
-						eventType = "No active script connections found"
-					end
-				end
-			end)
-			break
-		end
-	end
-
-	-- 4. Build clipboard text report
+	local shop = pg:FindFirstChild("Shop")
 	local lines = {}
-	table.insert(lines, "=== ROYALE HIGH DIAGNOSTIC REPORT ===")
-	table.insert(lines, "PlaceId: " .. tostring(game.PlaceId))
-	table.insert(lines, "Shop GUIs Found: " .. (#foundShops > 0 and table.concat(foundShops, ", ") or "None detected"))
-	table.insert(lines, "Total Item Frames: " .. tostring(itemFrames))
-	table.insert(lines, "Total Try-On Buttons: " .. tostring(#tryonButtons))
-	table.insert(lines, "Button Event Type: " .. eventType)
-	table.insert(lines, "\nSample Try-On Button Paths (Top 5):")
-	for i = 1, math.min(5, #tryonButtons) do
-		table.insert(lines, tostring(i) .. ". " .. tryonButtons[i])
+	table.insert(lines, "=== ROYALE HIGH CONTROLLER PROBE ===")
+
+	-- 1. Find all Scripts, Bindables, and Remotes inside Shop
+	local controllers = {}
+	local bindables = {}
+	local remotes = {}
+
+	if shop then
+		for _, d in ipairs(shop:GetDescendants()) do
+			if d:IsA("LocalScript") or d:IsA("Script") then
+				table.insert(controllers, d:GetFullName())
+			elseif d:IsA("BindableEvent") or d:IsA("BindableFunction") then
+				table.insert(bindables, d.ClassName .. ": " .. d:GetFullName())
+			elseif d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then
+				table.insert(remotes, d.ClassName .. ": " .. d:GetFullName())
+			end
+		end
 	end
-	table.insert(lines, "======================================")
 
-	local fullReport = table.concat(lines, "\n")
-	local copied = copyToClipboard(fullReport)
+	table.insert(lines, "Shop Controllers Found (" .. #controllers .. "):")
+	for i = 1, math.min(10, #controllers) do
+		table.insert(lines, " - " .. controllers[i])
+	end
 
-	-- 5. Notify user
-	if copied then
-		notify("DONE!", "Diagnostic report copied to your clipboard!")
+	table.insert(lines, "\nBindable Events / Functions (" .. #bindables .. "):")
+	for i = 1, math.min(10, #bindables) do
+		table.insert(lines, " - " .. bindables[i])
+	end
+
+	table.insert(lines, "\nRemote Events / Functions (" .. #remotes .. "):")
+	for i = 1, math.min(10, #remotes) do
+		table.insert(lines, " - " .. remotes[i])
+	end
+
+	-- 2. Test Engine-level Virtual Click on the first real Try-On button
+	local testBtn = nil
+	if shop then
+		for _, d in ipairs(shop:GetDescendants()) do
+			if d:IsA("GuiButton") and d.Name == "Tryon" and not d:GetFullName():find("Template") then
+				testBtn = d
+				break
+			end
+		end
+	end
+
+	if testBtn then
+		table.insert(lines, "\nTesting Virtual Click on: " .. testBtn:GetFullName())
+		local pos = testBtn.AbsolutePosition
+		local sz = testBtn.AbsoluteSize
+		local centerX = pos.X + sz.X / 2
+		local centerY = pos.Y + sz.Y / 2
+
+		local clickMethod = "None"
+		if VIM then
+			pcall(function()
+				VIM:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
+				task.wait(0.05)
+				VIM:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
+				clickMethod = "VirtualInputManager (Success)"
+			end)
+		elseif VU then
+			pcall(function()
+				VU:Button1Down(Vector2.new(centerX, centerY))
+				task.wait(0.05)
+				VU:Button1Up(Vector2.new(centerX, centerY))
+				clickMethod = "VirtualUser (Success)"
+			end)
+		end
+		table.insert(lines, "Virtual Click Invoked Via: " .. clickMethod)
 	else
-		notify("DONE!", "Scan finished. Check developer console (F9).")
+		table.insert(lines, "\nNo live non-template Try-On button found on screen.")
 	end
 
-	print(fullReport)
+	table.insert(lines, "====================================")
+
+	local report = table.concat(lines, "\n")
+	copyToClipboard(report)
+	notify("DONE!", "Controller report copied to clipboard!")
+	print(report)
 end)
