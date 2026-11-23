@@ -1,1 +1,22 @@
+local Players = game:GetService("Players")
+local lp = Players.LocalPlayer
+local pg = lp:WaitForChild("PlayerGui")
 
+task.spawn(function()
+	local dir = pg:FindFirstChild("Shop") and pg.Shop:FindFirstChild("Directory")
+	if not dir then return end
+
+	local skirts = dir.Skirts.GetAssetList:Invoke()
+	local firstItem = skirts and skirts[1] or {}
+
+	local lines = {}
+	table.insert(lines, "=== ITEM TABLE KEYS ===")
+	for k, v in pairs(firstItem) do
+		table.insert(lines, tostring(k) .. " = " .. tostring(v))
+	end
+	table.insert(lines, "=======================")
+
+	local report = table.concat(lines, "\n")
+	if setclipboard then setclipboard(report) elseif toclipboard then toclipboard(report) end
+	print(report)
+end)
