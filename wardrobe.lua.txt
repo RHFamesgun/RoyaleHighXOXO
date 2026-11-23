@@ -1,114 +1,52 @@
--- ==========================================================
--- ROYALE HIGH CONTROLLER & INPUT PROBER
--- ==========================================================
-
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
-local VIM = pcall(function() return game:GetService("VirtualInputManager") end) and game:GetService("VirtualInputManager") or nil
-local VU = pcall(function() return game:GetService("VirtualUser") end) and game:GetService("VirtualUser") or nil
 local lp = Players.LocalPlayer
 local pg = lp:WaitForChild("PlayerGui")
 
 local function notify(title, msg)
 	pcall(function()
-		StarterGui:SetCore("SendNotification", {
-			Title = title,
-			Text = msg,
-			Duration = 6,
-		})
+		StarterGui:SetCore("SendNotification", { Title = title, Text = msg, Duration = 5 })
 	end)
 end
 
-local function copyToClipboard(text)
-	if setclipboard then setclipboard(text) return true end
-	if toclipboard then toclipboard(text) return true end
-	return false
-end
-
-notify("PROBING CONTROLLER", "Analyzing shop events and testing virtual click...")
-
 task.spawn(function()
-	task.wait(0.5)
+	local dir = pg:FindFirstChild("Shop") and pg.Shop:FindFirstChild("Directory")
+	if not dir then
+		notify("ERROR", "Shop Directory not found. Open Shop first!")
+		return
+	end
 
-	local shop = pg:FindFirstChild("Shop")
 	local lines = {}
-	table.insert(lines, "=== ROYALE HIGH CONTROLLER PROBE ===")
+	table.insert(lines, "=== GETASSETLIST DATA DUMP ===")
 
-	-- 1. Find all Scripts, Bindables, and Remotes inside Shop
-	local controllers = {}
-	local bindables = {}
-	local remotes = {}
-
-	if shop then
-		for _, d in ipairs(shop:GetDescendants()) do
-			if d:IsA("LocalScript") or d:IsA("Script") then
-				table.insert(controllers, d:GetFullName())
-			elseif d:IsA("BindableEvent") or d:IsA("BindableFunction") then
-				table.insert(bindables, d.ClassName .. ": " .. d:GetFullName())
-			elseif d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then
-				table.insert(remotes, d.ClassName .. ": " .. d:GetFullName())
+	local cats = {"Skirts", "Shoes", "Accessories", "Wings"}
+	for _, catName in ipairs(cats) do
+		local catFolder = dir:FindFirstChild(catName)
+		local getList = catFolder and catFolder:FindFirstChild("GetAssetList")
+		if getList and getList:IsA("BindableFunction") then
+			local s, res = pcall(function() return getList:Invoke() end)
+			if s and type(res) == "table" then
+				local count = 0
+				for _ in pairs(res) do count = count + 1 end
+				table.insert(lines, catName .. " Asset Count: " .. tostring(count))
+				local sample = 0
+				for k, v in pairs(res) do
+					sample = sample + 1
+					if sample <= 2 then
+						table.insert(lines, "  Sample: Key=" .. tostring(k) .. ", Val=" .. tostring(v))
+					end
+				end
+			else
+				table.insert(lines, catName .. ": Invoke failed or returned non-table")
 			end
+		else
+			table.insert(lines, catName .. ": GetAssetList BindableFunction not found")
 		end
 	end
 
-	table.insert(lines, "Shop Controllers Found (" .. #controllers .. "):")
-	for i = 1, math.min(10, #controllers) do
-		table.insert(lines, " - " .. controllers[i])
-	end
-
-	table.insert(lines, "\nBindable Events / Functions (" .. #bindables .. "):")
-	for i = 1, math.min(10, #bindables) do
-		table.insert(lines, " - " .. bindables[i])
-	end
-
-	table.insert(lines, "\nRemote Events / Functions (" .. #remotes .. "):")
-	for i = 1, math.min(10, #remotes) do
-		table.insert(lines, " - " .. remotes[i])
-	end
-
-	-- 2. Test Engine-level Virtual Click on the first real Try-On button
-	local testBtn = nil
-	if shop then
-		for _, d in ipairs(shop:GetDescendants()) do
-			if d:IsA("GuiButton") and d.Name == "Tryon" and not d:GetFullName():find("Template") then
-				testBtn = d
-				break
-			end
-		end
-	end
-
-	if testBtn then
-		table.insert(lines, "\nTesting Virtual Click on: " .. testBtn:GetFullName())
-		local pos = testBtn.AbsolutePosition
-		local sz = testBtn.AbsoluteSize
-		local centerX = pos.X + sz.X / 2
-		local centerY = pos.Y + sz.Y / 2
-
-		local clickMethod = "None"
-		if VIM then
-			pcall(function()
-				VIM:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
-				task.wait(0.05)
-				VIM:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
-				clickMethod = "VirtualInputManager (Success)"
-			end)
-		elseif VU then
-			pcall(function()
-				VU:Button1Down(Vector2.new(centerX, centerY))
-				task.wait(0.05)
-				VU:Button1Up(Vector2.new(centerX, centerY))
-				clickMethod = "VirtualUser (Success)"
-			end)
-		end
-		table.insert(lines, "Virtual Click Invoked Via: " .. clickMethod)
-	else
-		table.insert(lines, "\nNo live non-template Try-On button found on screen.")
-	end
-
-	table.insert(lines, "====================================")
-
+	table.insert(lines, "==============================")
 	local report = table.concat(lines, "\n")
-	copyToClipboard(report)
-	notify("DONE!", "Controller report copied to clipboard!")
+	if setclipboard then setclipboard(report) elseif toclipboard then toclipboard(report) end
+	notify("DONE!", "Data dump copied to clipboard!")
 	print(report)
 end)
