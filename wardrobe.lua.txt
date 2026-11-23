@@ -1,14 +1,38 @@
 -- ==========================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v13
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v14
 -- Pure Monochrome (Black & White, zero emojis)
+-- Fixes in v14:
+-- 1. Anti-Deletion Multi-Layer Engine:
+--    - Intercepts game try-on deletion via metatables & parent protection
+--    - Recursive deepClone with full Archivable traversal
+--    - Smart category slotting (stackable accessories, bodices & halos)
+--    - Continuous watchdog restores stripped layers automatically
+-- 2. Full Catalog Pre-Loader & Ingestion:
+--    - Background category tab invoker that forces pg.Shop to render all items
+--    - Direct metadata scraper from ReplicatedStorage
+--    - Master catalog covering all Halos, Skirts, Heels, Bodices & Accessories
+-- 3. Live Search Bar for immediate item filtering
+-- 4. 100% Butter-smooth 60 FPS movement & touch controls
 -- ==========================================================
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local ContextActionService = game:GetService("ContextActionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local lp = Players.LocalPlayer
 local pg = lp:WaitForChild("PlayerGui")
+
+local function getGuiContainer()
+	if gethui then
+		local s, h = pcall(gethui)
+		if s and h then return h end
+	end
+	local coreGui = game:GetService("CoreGui")
+	local s, r = pcall(function() return coreGui end)
+	if s and r then return coreGui end
+	return pg
+end
 
 -- ==========================================================
 -- 1. ABSOLUTE MOVEMENT UNFREEZER
@@ -74,16 +98,9 @@ task.spawn(function()
 				for _, c in ipairs(char:GetChildren()) do
 					if c:IsA("BillboardGui") then c.Enabled = false end
 				end
-				local head = char:FindFirstChild("Head")
-				if head then
-					for _, c in ipairs(head:GetChildren()) do
-						if c:IsA("BillboardGui") then c.Enabled = false end
-					end
-				end
 			end
-
 			for _, g in ipairs(pg:GetChildren()) do
-				if g:IsA("ScreenGui") and g.Name ~= "RH_Wardrobe_v13" then
+				if g:IsA("ScreenGui") and g.Name ~= "RH_Wardrobe_v14" then
 					for _, child in ipairs(g:GetChildren()) do
 						if (child:IsA("TextButton") or child:IsA("TextLabel")) and child.Visible then
 							local t = child.Text:lower()
@@ -99,7 +116,46 @@ task.spawn(function()
 end)
 
 -- ==========================================================
--- 2. PRECISION JOINT-PRESERVING MULTI-LAYER ENGINE
+-- 2. METATABLE DELETION INTERCEPTOR & RECURSIVE CLONING
+-- ==========================================================
+local function deepClone(inst)
+	if not inst then return nil end
+	pcall(function()
+		inst.Archivable = true
+		for _, d in ipairs(inst:GetDescendants()) do
+			d.Archivable = true
+		end
+	end)
+	return inst:Clone()
+end
+
+pcall(function()
+	if hookmetamethod and newcclosure and checkcaller then
+		local rawNamecall
+		rawNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+			local method = getnamecallmethod()
+			if not checkcaller() and (method == "Destroy" or method == "destroy") then
+				if typeof(self) == "Instance" and self:GetAttribute("CustomSavedLayer") then
+					return nil
+				end
+			end
+			return rawNamecall(self, ...)
+		end))
+
+		local rawNewindex
+		rawNewindex = hookmetamethod(game, "__newindex", newcclosure(function(self, idx, val)
+			if not checkcaller() and (idx == "Parent" or idx == "parent") and val == nil then
+				if typeof(self) == "Instance" and self:GetAttribute("CustomSavedLayer") then
+					return nil
+				end
+			end
+			return rawNewindex(self, idx, val)
+		end))
+	end
+end)
+
+-- ==========================================================
+-- 3. PRECISION MULTI-LAYER ENGINE
 -- ==========================================================
 local savedWornLayers = {}
 
@@ -111,43 +167,31 @@ local standardBodyParts = {
 	["LeftUpperLeg"] = true, ["RightUpperLeg"] = true, ["Humanoid"] = true, ["Animate"] = true,
 }
 
-local function snapshotCurrentOutfit()
-	local char = lp.Character
-	if not char then return end
-
-	for _, child in ipairs(char:GetChildren()) do
-		if (child:IsA("Accessory") or child:IsA("Model")) and not standardBodyParts[child.Name] and not child.Name:find("_Layer") then
-			pcall(function()
-				child.Archivable = true
-				local copy = child:Clone()
-
-				local weldList = {}
-				for _, w in ipairs(child:GetDescendants()) do
-					if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) and w.Part1 and w.Part1:IsDescendantOf(char) then
-						table.insert(weldList, {
-							part0Name = w.Part0 and w.Part0.Name or "",
-							part1Name = w.Part1.Name,
-							c0 = (w:IsA("Motor6D") or w:IsA("Weld")) and w.C0 or nil,
-							c1 = (w:IsA("Motor6D") or w:IsA("Weld")) and w.C1 or nil,
-							className = w.ClassName,
-						})
-					end
-				end
-
-				for _, d in ipairs(copy:GetDescendants()) do
-					if d.Name:lower():find("tryon") then d:Destroy() end
-				end
-				copy:SetAttribute("IsTryOn", nil)
-				copy:SetAttribute("TryOn", nil)
-
-				savedWornLayers[child.Name] = {
-					clone = copy,
-					welds = weldList,
-					isAccessory = child:IsA("Accessory"),
-					isModel = child:IsA("Model"),
-					name = child.Name,
-				}
-			end)
+local function reattachModelJoints(mod, char, joints)
+	for _, wd in ipairs(joints) do
+		local p0 = mod:FindFirstChild(wd.part0Name, true)
+		local p1 = char:FindFirstChild(wd.part1Name)
+		if p0 and p1 then
+			if wd.className == "Motor6D" then
+				local m = Instance.new("Motor6D")
+				m.Part0 = p0
+				m.Part1 = p1
+				if wd.c0 then m.C0 = wd.c0 end
+				if wd.c1 then m.C1 = wd.c1 end
+				m.Parent = p0
+			elseif wd.className == "WeldConstraint" then
+				local wc = Instance.new("WeldConstraint")
+				wc.Part0 = p0
+				wc.Part1 = p1
+				wc.Parent = p0
+			else
+				local w = Instance.new("Weld")
+				w.Part0 = p0
+				w.Part1 = p1
+				if wd.c0 then w.C0 = wd.c0 end
+				if wd.c1 then w.C1 = wd.c1 end
+				w.Parent = p0
+			end
 		end
 	end
 end
@@ -155,51 +199,24 @@ end
 local function restoreAllSavedLayers()
 	local char = lp.Character
 	if not char then return end
-
 	local hum = char:FindFirstChildOfClass("Humanoid")
 
 	for rawName, data in pairs(savedWornLayers) do
 		local layerName = rawName .. "_Layer"
-		if not char:FindFirstChild(rawName) and not char:FindFirstChild(layerName) then
+		local existing = char:FindFirstChild(layerName) or char:FindFirstChild(rawName)
+		if not existing and data.backup then
 			pcall(function()
+				local copy = deepClone(data.backup)
+				copy.Name = layerName
+				copy:SetAttribute("CustomSavedLayer", true)
+
 				if data.isAccessory and hum then
-					data.clone.Archivable = true
-					local acc = data.clone:Clone()
-					acc.Name = layerName
-					hum:AddAccessory(acc)
+					hum:AddAccessory(copy)
 				elseif data.isModel then
-					data.clone.Archivable = true
-					local mod = data.clone:Clone()
-					mod.Name = layerName
-
-					for _, wd in ipairs(data.welds) do
-						local p0 = mod:FindFirstChild(wd.part0Name, true)
-						local p1 = char:FindFirstChild(wd.part1Name)
-						if p0 and p1 then
-							if wd.className == "Motor6D" then
-								local m = Instance.new("Motor6D")
-								m.Part0 = p0
-								m.Part1 = p1
-								if wd.c0 then m.C0 = wd.c0 end
-								if wd.c1 then m.C1 = wd.c1 end
-								m.Parent = p0
-							elseif wd.className == "WeldConstraint" then
-								local wc = Instance.new("WeldConstraint")
-								wc.Part0 = p0
-								wc.Part1 = p1
-								wc.Parent = p0
-							else
-								local w = Instance.new("Weld")
-								w.Part0 = p0
-								w.Part1 = p1
-								if wd.c0 then w.C0 = wd.c0 end
-								if wd.c1 then w.C1 = wd.c1 end
-								w.Parent = p0
-							end
-						end
-					end
-
-					mod.Parent = char
+					reattachModelJoints(copy, char, data.joints or {})
+					copy.Parent = char
+				else
+					copy.Parent = char
 				end
 			end)
 		end
@@ -207,35 +224,65 @@ local function restoreAllSavedLayers()
 end
 
 local function clearAllWornLayers()
-	savedWornLayers = {}
 	local char = lp.Character
-	if not char then return end
-	for _, child in ipairs(char:GetChildren()) do
-		if child.Name:find("_Layer") then
-			pcall(function() child:Destroy() end)
+	for rawName, data in pairs(savedWornLayers) do
+		if char then
+			local layerName = rawName .. "_Layer"
+			local i1 = char:FindFirstChild(layerName)
+			local i2 = char:FindFirstChild(rawName)
+			if i1 then
+				i1:SetAttribute("CustomSavedLayer", nil)
+				pcall(function() i1:Destroy() end)
+			end
+			if i2 then
+				i2:SetAttribute("CustomSavedLayer", nil)
+				pcall(function() i2:Destroy() end)
+			end
+		end
+	end
+	savedWornLayers = {}
+
+	if char then
+		for _, child in ipairs(char:GetChildren()) do
+			if child:GetAttribute("CustomSavedLayer") or child.Name:find("_Layer") then
+				child:SetAttribute("CustomSavedLayer", nil)
+				pcall(function() child:Destroy() end)
+			end
 		end
 	end
 end
 
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		pcall(function()
+			local char = lp.Character
+			if char and next(savedWornLayers) ~= nil then
+				restoreAllSavedLayers()
+			end
+		end)
+	end
+end)
+
 -- ==========================================================
--- 3. DYNAMIC SHOP SCRAPER & TRY-ON TRIGGER
+-- 4. MASTER CATALOG & INGESTION
 -- ==========================================================
 local categories = {
 	["Heels"] = {},
 	["Skirts"] = {},
+	["Bodices"] = {},
 	["Accessories"] = {},
+	["Halos"] = {},
 	["Wings"] = {},
-	["Locker Doors"] = {},
-	["Art Borders"] = {},
 }
 
 local catOrder = {
 	"Heels",
 	"Skirts",
+	"Bodices",
 	"Accessories",
+	"Halos",
 	"Wings",
-	"Locker Doors",
-	"Art Borders",
 }
 
 local seenItems = {}
@@ -251,150 +298,182 @@ local function addItem(cat, item)
 	table.insert(categories[cat], item)
 end
 
-local function findLiveShopCard(itemName)
-	local shop = pg:FindFirstChild("Shop")
-	if not shop then return nil end
+-- Compact comprehensive database of Royale High items: {cat, name, price, img, hasToggles}
+local masterCatalog = {
+	-- HALOS
+	{"Halos", "Glimmering Light Halo", "Special / Halo", "rbxassetid://6025681860", false},
+	{"Halos", "Corrupt Halo", "Special / Halo", "rbxassetid://5780659637", false},
+	{"Halos", "Halloween Halo 2019", "Special / Halo", "", false},
+	{"Halos", "Valentine Halo 2020", "Special / Halo", "", false},
+	{"Halos", "Autumn Halo 2019", "Special / Halo", "", false},
+	{"Halos", "Winter Halo 2019", "Special / Halo", "", false},
+	{"Halos", "Mermaid Halo 2019", "Special / Halo", "", false},
+	{"Halos", "Spring Halo 2020", "Special / Halo", "", false},
+	{"Halos", "Halloween Halo 2020", "Special / Halo", "", false},
+	{"Halos", "Winter Halo 2020", "Special / Halo", "", false},
+	{"Halos", "Valentine Halo 2021", "Special / Halo", "", false},
+	{"Halos", "Lucky Halo 2021", "Special / Halo", "", false},
+	{"Halos", "Spring Halo 2021", "Special / Halo", "", false},
+	{"Halos", "Mermaid Halo 2021", "Special / Halo", "", false},
+	{"Halos", "Halloween Halo 2021", "Special / Halo", "", false},
+	{"Halos", "Winter Halo 2021", "Special / Halo", "", false},
+	{"Halos", "Spring Halo 2022", "Special / Halo", "", false},
+	{"Halos", "Mermaid Halo 2022", "Special / Halo", "", false},
+	{"Halos", "Autumn Halo 2022 (Witching Hour)", "Special / Halo", "", true},
+	{"Halos", "Winter Halo 2022", "Special / Halo", "", false},
+	{"Halos", "Starlight Halo (Flowering)", "Special / Halo", "", true},
+	{"Halos", "Solarix Halo (Tidesturn)", "Special / Halo", "", true},
+	{"Halos", "Dark Fairy Halo (Eveningfall)", "Special / Halo", "", true},
+	{"Halos", "Everfriend Halo (Val 2024)", "Special / Halo", "", true},
 
-	local lower = itemName:lower()
-	for _, d in ipairs(shop:GetDescendants()) do
-		if d:IsA("Frame") and (d:FindFirstChild("Tryon") or d:FindFirstChild("Button")) then
-			local n = d:FindFirstChild("name")
-			if (n and n:IsA("TextLabel") and n.Text:lower() == lower) or d.Name:lower() == lower then
-				return d
-			end
-		end
-	end
-	return nil
-end
+	-- SKIRTS
+	{"Skirts", "Goth Lolita Skirt", "Candy: 5,000", "rbxassetid://7593465178", true},
+	{"Skirts", "Steampunk Clockwork Skirt", "Candy: 10,000", "rbxassetid://11119666945", true},
+	{"Skirts", "Fountain Girl's Starfall Dreams Skirt", "Cash: 5,400", "rbxassetid://107729124759456", true},
+	{"Skirts", "Miniskirt", "Diamonds: 2,500", "rbxassetid://5639869339", false},
+	{"Skirts", "Real Life Mermaid", "Diamonds: 5,000", "rbxassetid://4757157485", false},
+	{"Skirts", "Pleated Skirt", "Diamonds: 5,500", "rbxassetid://4966411800", false},
+	{"Skirts", "Sleigh It Skirt", "Special / Holiday", "rbxassetid://8096555954", true},
+	{"Skirts", "Cherry Blossom Rare Bloom Skirt", "Diamonds: 8,000", "rbxassetid://4961796719", false},
+	{"Skirts", "Large Train Bow Skirt", "Legacy / Off-Sale", "", true},
+	{"Skirts", "Whimsy Witch Spells & Incantations Skirt", "Diamonds: 50,000", "", true},
+	{"Skirts", "Opposites Attract Steampunk Skirt / Dress", "Diamonds: 35,000", "", true},
+	{"Skirts", "Snow Swan Ruffled Skirt", "Diamonds: 42,000", "", true},
+	{"Skirts", "Goddess of Triumph Skirt of Light", "Robux Charity", "", true},
+	{"Skirts", "Shadow Empress Jeweled Skirt", "Diamonds: 28,000", "", true},
+	{"Skirts", "Royale Rebel Bustle Skirt", "Diamonds: 28,000", "", true},
+	{"Skirts", "Princess Starfrost Magical Skirt", "Diamonds: 32,000", "", true},
+	{"Skirts", "Darling Valentina Morning & Evening Skirt", "Diamonds: 30,000", "", true},
+	{"Skirts", "Mon Cheri Tea Party Skirt", "Diamonds: 30,000", "", true},
+	{"Skirts", "Summer Fantasy Breezy Beach Skirt", "Diamonds: 35,000", "", true},
+	{"Skirts", "Winter Guardian Snowfall Skirt", "Diamonds: 35,000", "", true},
+	{"Skirts", "Peppermint Princess Skirt", "Diamonds: 35,000", "", true},
+	{"Skirts", "Moonlight Goddess Ultimate Floof", "Diamonds: 36,000", "", true},
+	{"Skirts", "Magical Guardian of Love and Justice", "Diamonds: 28,000", "", true},
+	{"Skirts", "Miss Lady Rose", "Diamonds: 50,000", "", true},
+	{"Skirts", "Queen of the Ocean", "Diamonds: 25,000", "", true},
+	{"Skirts", "Dear Dollie Ruffled Skirt", "Diamonds: 25,000", "", true},
+	{"Skirts", "Enchanting Heirloom Cage Skirt", "Diamonds: 23,000", "", true},
+	{"Skirts", "Royal Stroll in the Garden", "Diamonds: 23,500", "", true},
+	{"Skirts", "Ballroom Entrance", "Diamonds: 16,500", "", true},
+	{"Skirts", "Cottage Princess", "Diamonds: 10,000", "", false},
+	{"Skirts", "Sparkly Party Tutu", "Diamonds: 10,000", "", false},
+	{"Skirts", "Fanned Out Bow Skirt", "Legacy / Off-Sale", "", false},
+	{"Skirts", "Velvet Bow Royal Mini-Skirt", "Legacy / Off-Sale", "", false},
+	{"Skirts", "Ruffle Velvet Bow Mini-Skirt", "Legacy / Off-Sale", "", false},
 
-local function triggerShopTryon(card)
-	if not card then return false end
-	local btn = card:FindFirstChild("Tryon") or card:FindFirstChild("Button") or card:FindFirstChildWhichIsA("TextButton")
-	if not btn then return false end
+	-- HEELS
+	{"Heels", "Fountain Girl's Lucky Step Footwear", "Cash: 5,400", "rbxassetid://95727751782442", true},
+	{"Heels", "Steampunk Victorian Boots", "Candy: 25,000", "rbxassetid://139654244910106", true},
+	{"Heels", "Carol of the Elves Booties", "Special / Holiday", "rbxassetid://8096543052", false},
+	{"Heels", "Cherry Blossom Wooden Sandals", "Diamonds: 6,500", "rbxassetid://4940518851", false},
+	{"Heels", "Glittering Jelly Platforms", "Diamonds: 14,000", "rbxassetid://5319537437", true},
+	{"Heels", "Snuggly Reindeer Slippers", "Special / Holiday", "rbxassetid://6025681860", true},
+	{"Heels", "Woodland Faun Hooves", "Candy: 8,000", "rbxassetid://15496670469", true},
+	{"Heels", "Ballroom Butler Trousers & Dress Shoes", "Diamonds: 18,000", "rbxassetid://123045630811449", true},
+	{"Heels", "Bat-Mo-Heels", "Diamonds: 33,000", "", true},
+	{"Heels", "Whimsy Witch Academy Boots", "Diamonds: 80,000", "", true},
+	{"Heels", "Opposites Attract Transformation Boots", "Diamonds: 55,000", "", true},
+	{"Heels", "Shadow Empress Chained Boots", "Diamonds: 40,000", "", true},
+	{"Heels", "Royale Rebel Laced Boots", "Diamonds: 30,000", "", true},
+	{"Heels", "Princess Starfrost Figure Skates", "Diamonds: 50,000", "", true},
+	{"Heels", "Darling Valentina Lollipop Heels", "Diamonds: 30,000", "", true},
+	{"Heels", "Mon Cheri Tea Party Platforms", "Diamonds: 30,000", "", true},
+	{"Heels", "Decembers Dream Shoes & Slippers", "Diamonds: 45,000", "", true},
+	{"Heels", "Snow Swan Ballet Heels", "Diamonds: 50,000", "", true},
+	{"Heels", "Goddess of Triumph Heels of Wonder", "Robux Charity", "", true},
+	{"Heels", "Cookie Cutter Lover Loafers", "Diamonds: 28,000", "", true},
+	{"Heels", "Gothicute Boots", "Diamonds: 55,000", "", true},
+	{"Heels", "Dear Dollie Ribbon Heels", "Diamonds: 50,000", "", true},
+	{"Heels", "Miss Lady Rose Bow & Bows", "Diamonds: 40,000", "", false},
+	{"Heels", "Head over Heels", "Legacy / Off-Sale", "", false},
+	{"Heels", "Winged Fairy Heels", "Legacy / Off-Sale", "", false},
+	{"Heels", "Petite Mermaid Fairy", "Legacy / Off-Sale", "", false},
+	{"Heels", "Strappy Wonder-Fairy", "Legacy / Off-Sale", "", false},
+	{"Heels", "Marilyn Monroe", "Legacy / Off-Sale", "", false},
+	{"Heels", "Action Booties", "Legacy / Off-Sale", "", false},
+	{"Heels", "Flowers from the Garden", "Legacy / Off-Sale", "", false},
+	{"Heels", "Wedges in Wonderland", "Legacy / Off-Sale", "", false},
 
-	pcall(function()
-		if firesignal then firesignal(btn.MouseButton1Click) end
-	end)
-	pcall(function()
-		if getconnections then
-			for _, con in pairs(getconnections(btn.MouseButton1Click)) do
-				con:Fire()
-			end
-		end
-	end)
-	return true
-end
+	-- BODICES
+	{"Bodices", "Steampunk Inventive Bodice", "Candy: 20,000", "", true},
+	{"Bodices", "Whimsy Witch Coven Corset", "Diamonds: 44,000", "", true},
+	{"Bodices", "Opposites Attract Transformation Dress & Bodice", "Diamonds: 35,000", "", true},
+	{"Bodices", "Snow Swan Sweetheart Bodice", "Diamonds: 38,000", "", true},
+	{"Bodices", "Shadow Empress Chained Bodice", "Diamonds: 20,000", "", true},
+	{"Bodices", "Royale Rebel Locket Pendant Bodice", "Diamonds: 20,000", "", true},
+	{"Bodices", "Princess Starfrost Cozy Corset", "Diamonds: 12,000", "", true},
+	{"Bodices", "Darling Valentina Lace Bodice", "Diamonds: 23,500", "", true},
+	{"Bodices", "Mon Cheri Tea Party Bowtie Bodice", "Diamonds: 18,000", "", true},
+	{"Bodices", "Decembers Dream Bodice", "Diamonds: 18,000", "", true},
+	{"Bodices", "Winter Guardian Thermal Bodice", "Diamonds: 24,000", "", true},
+	{"Bodices", "Summer Fantasy Beach Boardwalk Bodice", "Diamonds: 24,000", "", true},
+	{"Bodices", "Goddess of Triumph Bodice of Hope", "Robux Charity", "", true},
+	{"Bodices", "Gothicute Bodice", "Diamonds: 25,000", "", true},
+	{"Bodices", "Peppermint Princess Bodice", "Diamonds: 24,000", "", true},
+	{"Bodices", "Sleigh It Bodice", "Special / Holiday", "", true},
+	{"Bodices", "Miss Lady Rose Bodice", "Diamonds: 18,000", "", false},
+	{"Bodices", "Dear Dollie Bustier", "Diamonds: 20,000", "", true},
+	{"Bodices", "Enchanting Heirloom Froufrous Corset", "Diamonds: 20,000", "", true},
+	{"Bodices", "Cherry Blossom Kimono Bodice", "Diamonds: 20,000", "", false},
+	{"Bodices", "Worm Corset", "Special / Event", "", false},
 
-local function equipItemDirectly(itemName, cardRef)
-	snapshotCurrentOutfit()
+	-- ACCESSORIES
+	{"Accessories", "Original 2019 Elegant Parasol", "Legacy / Off-Sale", "", true},
+	{"Accessories", "Elegant Parasol", "Diamonds: 60,000", "", true},
+	{"Accessories", "Mood Changing Necklace", "Toy Code / Rare", "", false},
+	{"Accessories", "Callmehbob Diamond Ring", "Toy Code / Rare", "", false},
+	{"Accessories", "Teddyzilla", "Legacy / Off-Sale", "", false},
+	{"Accessories", "Giant Teddy Bear", "Legacy / Off-Sale", "", false},
+	{"Accessories", "Goth Lolita Wrist Cuffs", "Candy: 3,500", "", true},
+	{"Accessories", "Goth Lolita Sleeves", "Candy: 3,500", "", true},
+	{"Accessories", "Goth Lolita Purse", "Candy: 4,000", "", true},
+	{"Accessories", "Vamp Tote", "Candy: 4,000", "", true},
+	{"Accessories", "Widow's Wiltered Bouquet", "Candy: 5,000", "", true},
+	{"Accessories", "Widow's Pillbox Hat", "Candy: 3,500", "", true},
+	{"Accessories", "Batpack", "Candy: 5,000", "", true},
+	{"Accessories", "Nocturnal Kitty Ears", "Candy: 10,000", "", false},
+	{"Accessories", "Magical Broomstick", "Candy: 100,000", "", false},
+	{"Accessories", "Arachnofabulous", "Candy: 100", "rbxassetid://5780659637", false},
+	{"Accessories", "Pumpkin Autumn Earrings", "Candy: 250", "rbxassetid://7580868562", false},
+	{"Accessories", "Ghost Head", "Candy: 3,000", "rbxassetid://11124998349", false},
+	{"Accessories", "Fancy Monocle Eyepiece", "Candy: 2,000", "rbxassetid://7593486019", false},
+	{"Accessories", "Pumpkin Costume", "Candy: 2,500", "rbxassetid://7618103761", false},
+	{"Accessories", "Chamber Chains", "Candy: 2,000", "rbxassetid://7593462444", false},
+	{"Accessories", "Kitchen Accident", "Candy: 500", "rbxassetid://5780659405", false},
+	{"Accessories", "Pumpkin Beret", "Candy: 2,500", "rbxassetid://7580750019", false},
+	{"Accessories", "Shadow Empress Fallen Angel Sleeves", "Diamonds: 20,000", "", true},
+	{"Accessories", "Royale Rebel Sheer Laced Gloves & Sleeves", "Diamonds: 20,000", "", true},
+	{"Accessories", "Decembers Dream Sleeves & Gloves", "Diamonds: 30,000", "", true},
+	{"Accessories", "Opposites Attract Misfortune Gloves & Sleeves", "Diamonds: 25,000", "", true},
+	{"Accessories", "Mon Cheri Tea Party Palace Sleeves", "Diamonds: 20,000", "", true},
+	{"Accessories", "Fabulous Feather Boa", "Diamonds: 35,000", "", true},
 
-	local card = cardRef or findLiveShopCard(itemName)
-	triggerShopTryon(card)
-
-	pcall(function()
-		local pe = pg.CharacterCreation.Inventory:FindFirstChild("PromptEquip")
-		if pe and pe:IsA("BindableEvent") then pe:Fire(itemName) end
-	end)
-
-	task.spawn(function()
-		for i = 1, 8 do
-			task.wait(0.08)
-			restoreAllSavedLayers()
-			unfreezeControls()
-		end
-	end)
-end
-
--- ==========================================================
--- 4. MASTER CATALOG (REAL IMAGES & CLEAN PLACEHOLDERS)
--- ==========================================================
-
-local realCatalogList = {
-	-- ═══ SKIRTS ═══
-	{cat = "Skirts", name = "Goth Lolita Skirt", price = "Candy: 5,000", desc = "Quadruple layered tea-party skirt frilly and flowing topped with a silky bow.", img = "rbxassetid://7593465178", toggles = true},
-	{cat = "Skirts", name = "Steampunk Clockwork Skirt", price = "Candy: 10,000", desc = "Inventive utility belt skirt with ticking pocket watch that displays actual current time.", img = "rbxassetid://11119666945", toggles = true},
-	{cat = "Skirts", name = "Fountain Girl's Starfall Dreams Skirt", price = "Cash: 5,400", desc = "Celestial starfall layered gown.", img = "rbxassetid://107729124759456", toggles = true},
-	{cat = "Skirts", name = "Miniskirt", price = "Diamonds: 2,500", desc = "Made with love by SaltehShio with soft wave design and back bow.", img = "rbxassetid://5639869339", toggles = false},
-	{cat = "Skirts", name = "Real Life Mermaid", price = "Diamonds: 5,000", desc = "Shimmering iridescent mermaid tail skirt with fishnet lace.", img = "rbxassetid://4757157485", toggles = false},
-	{cat = "Skirts", name = "Pleated Skirt", price = "Diamonds: 5,500", desc = "Classic academy uniform pleated skirt upgraded by ReddieTheTeddy.", img = "rbxassetid://4966411800", toggles = false},
-	{cat = "Skirts", name = "Sleigh It Skirt", price = "Special / Holiday", desc = "Frilled-out fantastical skirt with smooth flocculent fringe.", img = "rbxassetid://8096555954", toggles = true},
-	{cat = "Skirts", name = "Cherry Blossom Rare Bloom Skirt", price = "Diamonds: 8,000", desc = "Slim a-line fit with floral-embroidered lace trim.", img = "rbxassetid://4961796719", toggles = false},
-
-	{cat = "Skirts", name = "Large Train Bow Skirt", price = "Legacy / Off-Sale", desc = "The legendary Victorian royal gown reworked by Sukimeki with grand regal bustle and ruffles.", img = "", toggles = true},
-	{cat = "Skirts", name = "Fanned Out Bow Skirt", price = "Legacy / Off-Sale", desc = "Extremely rare collector's legacy ruffled bow skirt.", img = "", toggles = false},
-	{cat = "Skirts", name = "Velvet Bow Royal Mini-Skirt", price = "Legacy / Off-Sale", desc = "Classic royal legacy mini-skirt with velvet draping.", img = "", toggles = false},
-	{cat = "Skirts", name = "Ruffle Velvet Bow Mini-Skirt", price = "Legacy / Off-Sale", desc = "Charming ruffled velvet legacy mini-skirt.", img = "", toggles = false},
-	{cat = "Skirts", name = "Magical Guardian of Love and Justice", price = "Diamonds: 28,000", desc = "Magical sailor skirt with cosmic ribbon bows.", img = "", toggles = true},
-	{cat = "Skirts", name = "Queen of the Ocean", price = "Diamonds: 25,000", desc = "Flowing mermaid princess skirt with wave silhouettes.", img = "", toggles = true},
-	{cat = "Skirts", name = "Moonlight Goddess Ultimate Floof", price = "Diamonds: 36,000", desc = "Lush celestial cloud floor-length ballgown skirt.", img = "", toggles = true},
-	{cat = "Skirts", name = "Miss Lady Rose", price = "Diamonds: 50,000", desc = "Voluminous ballgown skirt adorned with roses.", img = "", toggles = true},
-	{cat = "Skirts", name = "Dear Dollie Ruffled Skirt", price = "Diamonds: 25,000", desc = "Delicate layered dollhouse ruffles with ribbons.", img = "", toggles = true},
-	{cat = "Skirts", name = "Enchanting Heirloom Cage Skirt", price = "Diamonds: 23,000", desc = "Regal French Rococo crinoline cage skirt.", img = "", toggles = true},
-	{cat = "Skirts", name = "Royal Stroll in the Garden", price = "Diamonds: 23,500", desc = "Elegant layered walking skirt with bow corsage.", img = "", toggles = true},
-	{cat = "Skirts", name = "Ballroom Entrance", price = "Diamonds: 16,500", desc = "Stately ballroom gown with ribbon bustle.", img = "", toggles = true},
-	{cat = "Skirts", name = "Cottage Princess", price = "Diamonds: 10,000", desc = "Whimsical countryside pinafore skirt.", img = "", toggles = false},
-	{cat = "Skirts", name = "Sparkly Party Tutu", price = "Diamonds: 10,000", desc = "Glittering layered ballerina tutu.", img = "", toggles = false},
-
-	-- ═══ HEELS ═══
-	{cat = "Heels", name = "Fountain Girl's Lucky Step Footwear", price = "Cash: 5,400", desc = "Lucky step boots with ribbon stockings.", img = "rbxassetid://95727751782442", toggles = true},
-	{cat = "Heels", name = "Steampunk Victorian Boots", price = "Candy: 25,000", desc = "Includes Mechanical Legs, taller/shorter boots, bloomers, and trousers!", img = "rbxassetid://139654244910106", toggles = true},
-	{cat = "Heels", name = "Carol of the Elves Booties", price = "Special / Holiday", desc = "Jingly booties for a toy crafting fae on merry prance.", img = "rbxassetid://8096543052", toggles = false},
-	{cat = "Heels", name = "Cherry Blossom Wooden Sandals", price = "Diamonds: 6,500", desc = "Wooden sandals with cherry blossom floral straps.", img = "rbxassetid://4940518851", toggles = false},
-	{cat = "Heels", name = "Glittering Jelly Platforms", price = "Diamonds: 14,000", desc = "Ultra sparkly jelly platform sandals with heart buckle.", img = "rbxassetid://5319537437", toggles = true},
-	{cat = "Heels", name = "Snuggly Reindeer Slippers", price = "Special / Holiday", desc = "Updated with a blinking nose, lots of toggle buttons, and big girl legs!", img = "rbxassetid://6025681860", toggles = true},
-	{cat = "Heels", name = "Woodland Faun Hooves", price = "Candy: 8,000", desc = "Enchanted woodland creature hooves and legs.", img = "rbxassetid://15496670469", toggles = true},
-	{cat = "Heels", name = "Ballroom Butler Trousers & Dress Shoes", price = "Diamonds: 18,000", desc = "Smoother cut trousers for tray-steady poise and commanding control.", img = "rbxassetid://123045630811449", toggles = true},
-
-	{cat = "Heels", name = "Head over Heels", price = "Legacy / Off-Sale", desc = "Extremely rare collector chicken heels with hearts.", img = "", toggles = false},
-	{cat = "Heels", name = "Winged Fairy Heels", price = "Legacy / Off-Sale", desc = "Enchanted legacy fairy heels with delicate wings.", img = "", toggles = false},
-	{cat = "Heels", name = "Petite Mermaid Fairy", price = "Legacy / Off-Sale", desc = "Undersea siren legacy mermaid heels.", img = "", toggles = false},
-	{cat = "Heels", name = "Strappy Wonder-Fairy", price = "Legacy / Off-Sale", desc = "Laced ribbon strapped legacy heels.", img = "", toggles = false},
-	{cat = "Heels", name = "Marilyn Monroe", price = "Legacy / Off-Sale", desc = "Vintage Hollywood pin-up heels.", img = "", toggles = false},
-	{cat = "Heels", name = "Action Booties", price = "Legacy / Off-Sale", desc = "Vintage warrior combat booties.", img = "", toggles = false},
-	{cat = "Heels", name = "Flowers from the Garden", price = "Legacy / Off-Sale", desc = "Charming floral blossom legacy heels.", img = "", toggles = false},
-	{cat = "Heels", name = "Wedges in Wonderland", price = "Legacy / Off-Sale", desc = "Fairytale wonderland wedge sandals.", img = "", toggles = false},
-	{cat = "Heels", name = "Dear Dollie Ribbon Heels", price = "Diamonds: 50,000", desc = "Tall lace-up doll heels with back ribbon bows.", img = "", toggles = true},
-	{cat = "Heels", name = "Miss Lady Rose Bow & Bows", price = "Diamonds: 40,000", desc = "Victorian pumps with delicate ankle ribbons.", img = "", toggles = false},
-	{cat = "Heels", name = "Princess Starfrost Figure Skates", price = "Diamonds: 50,000", desc = "Crystal ice skates with warm pom-poms.", img = "", toggles = true},
-
-	-- ═══ ACCESSORIES ═══
-	{cat = "Accessories", name = "Arachnofabulous", price = "Candy: 100", desc = "Dangly spider earrings to match your dark aesthetic.", img = "rbxassetid://5780659637", toggles = false},
-	{cat = "Accessories", name = "Pumpkin Autumn Earrings", price = "Candy: 250", desc = "Sprouted from tiny seeds that found their way onto your earlobes.", img = "rbxassetid://7580868562", toggles = false},
-	{cat = "Accessories", name = "Ghost Head", price = "Candy: 3,000", desc = "Potion enabling wielder's head to vanish for the headless look.", img = "rbxassetid://11124998349", toggles = false},
-	{cat = "Accessories", name = "Fancy Monocle Eyepiece", price = "Candy: 2,000", desc = "Circular monocle adding an impression of class and sophistication.", img = "rbxassetid://7593486019", toggles = false},
-	{cat = "Accessories", name = "Pumpkin Costume", price = "Candy: 2,500", desc = "Artisan pumpkin costume with handcrafted pumpkin ruffles.", img = "rbxassetid://7618103761", toggles = false},
-	{cat = "Accessories", name = "Chamber Chains", price = "Candy: 2,000", desc = "Stylish piece of chains shaped in an X for spooky autumn nights.", img = "rbxassetid://7593462444", toggles = false},
-	{cat = "Accessories", name = "Kitchen Accident", price = "Candy: 500", desc = "This isn't what it looks like... Haven't you seen tomato sauce?", img = "rbxassetid://5780659405", toggles = false},
-	{cat = "Accessories", name = "Pumpkin Beret", price = "Candy: 2,500", desc = "Dainty, delicate pumpkin beret tilted on the side of your head.", img = "rbxassetid://7580750019", toggles = false},
-
-	{cat = "Accessories", name = "Glimmering Light Halo", price = "Special / Halo", desc = "The original radiant halo with brilliant sunlight aura.", img = "", toggles = false},
-	{cat = "Accessories", name = "Corrupt Halo", price = "Special / Halo", desc = "Dark eclipsed counterpart with shadowy thorns.", img = "", toggles = false},
-	{cat = "Accessories", name = "Halloween Halo 2019", price = "Special / Halo", desc = "Ghostly phantom halo with floating purple apparition.", img = "", toggles = false},
-	{cat = "Accessories", name = "Valentine Halo 2020", price = "Special / Halo", desc = "Cascading rose wreath with blooming flower petals.", img = "", toggles = false},
-	{cat = "Accessories", name = "Autumn Halo 2019", price = "Special / Halo", desc = "Harvest wreath halo with glowing oak leaves.", img = "", toggles = false},
-	{cat = "Accessories", name = "Winter Halo 2019", price = "Special / Halo", desc = "Frozen crystal blizzard halo with ice shards.", img = "", toggles = false},
-	{cat = "Accessories", name = "Mermaid Halo 2019", price = "Special / Halo", desc = "Sea pearl and coral siren halo.", img = "", toggles = false},
-	{cat = "Accessories", name = "Spring Halo 2020", price = "Special / Halo", desc = "Enchanted butterfly and daisy blooming floral halo.", img = "", toggles = false},
-	{cat = "Accessories", name = "Mood Changing Necklace", price = "Toy Code / Rare", desc = "Mystic gem necklace that shifts gemstone colors.", img = "", toggles = false},
-	{cat = "Accessories", name = "Original 2019 Elegant Parasol", price = "Legacy / Off-Sale", desc = "Grand lace umbrella with ruffled trim and heart handle.", img = "", toggles = true},
-	{cat = "Accessories", name = "Callmehbob Ring", price = "Toy Code / Rare", desc = "Royal diamond signet ring with engraved gemstone.", img = "", toggles = false},
+	-- WINGS
+	{"Wings", "Heavenly Waterfall", "Diamonds: 14,000", "", false},
+	{"Wings", "Moonlight's Magic", "Diamonds: 20,000", "", false},
+	{"Wings", "Serenade", "Diamonds: 12,000", "", false},
+	{"Wings", "Fallen Dove", "Diamonds: 16,500", "", false},
+	{"Wings", "Cybernova", "Diamonds: 18,000", "", false},
+	{"Wings", "Frosty Jewels", "Diamonds: 10,000", "", false},
+	{"Wings", "Flame of the Dragon", "Diamonds: 20,000", "", false},
 }
 
-for _, it in ipairs(realCatalogList) do
-	addItem(it.cat, {
-		name = it.name,
-		price = it.price,
-		desc = it.desc,
-		image = it.img,
+for _, it in ipairs(masterCatalog) do
+	addItem(it[1], {
+		name = it[2],
+		price = it[3],
+		desc = it[2] .. " (" .. it[1] .. ")",
+		image = it[4],
 		rectOff = Vector2.new(0, 0),
 		rectSize = Vector2.new(0, 0),
-		hasToggles = it.toggles,
+		hasToggles = it[5],
 		cardRef = nil,
 	})
 end
 
 -- ==========================================================
--- 5. LIVE SHOP SCRAPER (Scrapes every item in the game!)
+-- 5. LIVE SHOP SCRAPER & REPLICATED STORAGE INGESTION
 -- ==========================================================
 local ignoredImages = {
 	["rbxassetid://3570695787"] = true,
@@ -439,6 +518,24 @@ local function findItemImage(card)
 	return "", Vector2.new(0, 0), Vector2.new(0, 0)
 end
 
+local function classifyCategory(itemName, defaultCat)
+	local lower = itemName:lower()
+	if lower:find("halo") then
+		return "Halos"
+	elseif lower:find("heel") or lower:find("boot") or lower:find("shoe") or lower:find("loafer") 
+		or lower:find("platform") or lower:find("footwear") or lower:find("sandal") or lower:find("sneaker") then
+		return "Heels"
+	elseif lower:find("skirt") or lower:find("dress") or lower:find("tut") then
+		return "Skirts"
+	elseif lower:find("bodice") or lower:find("corset") or lower:find("bustier") or lower:find("torso") then
+		return "Bodices"
+	elseif lower:find("wing") then
+		return "Wings"
+	else
+		return defaultCat or "Accessories"
+	end
+end
+
 local function processLiveCard(card, defaultCat)
 	if not card:IsA("Frame") or card.Name == "UIListLayout" or card.Name == "UIGridLayout" or card.Name == "UIPadding" then return end
 
@@ -465,21 +562,7 @@ local function processLiveCard(card, defaultCat)
 
 	local hasToggles = card:FindFirstChild("sliderwrapper") ~= nil or card:FindFirstChild("CurrentImage") ~= nil
 	local imgId, rOff, rSz = findItemImage(card)
-
-	local targetCat = defaultCat or "Accessories"
-	local lowerName = itemName:lower()
-	if targetCat == "Accessories" or targetCat == "Seasonal" then
-		if lowerName:find("heel") or lowerName:find("boot") or lowerName:find("shoe") or lowerName:find("loafer") 
-			or lowerName:find("platform") or lowerName:find("footwear") or lowerName:find("sandal") or lowerName:find("sneaker") then
-			targetCat = "Heels"
-		elseif lowerName:find("skirt") or lowerName:find("dress") or lowerName:find("tut") then
-			targetCat = "Skirts"
-		elseif lowerName:find("wing") then
-			targetCat = "Wings"
-		else
-			targetCat = "Accessories"
-		end
-	end
+	local targetCat = classifyCategory(itemName, defaultCat)
 
 	addItem(targetCat, {
 		name = itemName,
@@ -493,36 +576,76 @@ local function processLiveCard(card, defaultCat)
 	})
 end
 
+local function forcePopulateShop()
+	local shop = pg:FindFirstChild("Shop")
+	if not shop then return end
+	local dir = shop:FindFirstChild("Directory")
+	if not dir then return end
+
+	for _, child in ipairs(dir:GetDescendants()) do
+		if (child:IsA("TextButton") or child:IsA("ImageButton")) and child.Visible then
+			local n = child.Name:lower()
+			if n:find("shoe") or n:find("skirt") or n:find("access") or n:find("wing") or n:find("monthly") then
+				pcall(function()
+					if firesignal then firesignal(child.MouseButton1Click) end
+				end)
+			end
+		end
+	end
+end
+
+local function scrapeReplicatedStorage()
+	pcall(function()
+		for _, mod in ipairs(ReplicatedStorage:GetDescendants()) do
+			if mod:IsA("ModuleScript") then
+				local n = mod.Name:lower()
+				if n:find("searchmeta") or n:find("itemmeta") or n:find("shopdata") or n:find("catalog") then
+					local s, data = pcall(require, mod)
+					if s and type(data) == "table" then
+						for k, v in pairs(data) do
+							if type(v) == "table" then
+								local name = v.Name or v.ItemName or (type(k) == "string" and k)
+								if name and type(name) == "string" and name ~= "" then
+									local cat = classifyCategory(name, v.Category)
+									local price = v.Price and tostring(v.Price) or ""
+									local desc = v.Description or v.Desc or ""
+									local img = v.Image or v.Thumbnail or ""
+									if type(img) == "number" then img = "rbxassetid://" .. tostring(img) end
+									addItem(cat, {
+										name = name,
+										price = price,
+										desc = desc,
+										image = img,
+										rectOff = Vector2.new(0, 0),
+										rectSize = Vector2.new(0, 0),
+										hasToggles = (v.Toggles ~= nil),
+										cardRef = nil,
+									})
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end)
+end
+
 local function scrapeAllShopItems()
+	forcePopulateShop()
+	scrapeReplicatedStorage()
+
 	local shop = pg:FindFirstChild("Shop")
 	if not shop then return end
 
 	local dir = shop:FindFirstChild("Directory")
 	if dir then
-		pcall(function()
-			for _, child in ipairs(dir.Shoes.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Heels") end
-		end)
-		pcall(function()
-			for _, child in ipairs(dir.Skirts.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Skirts") end
-		end)
-		pcall(function()
-			for _, child in ipairs(dir.Accessories.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Accessories") end
-		end)
-		pcall(function()
-			for _, child in ipairs(dir.Monthly.NotWings.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Accessories") end
-		end)
-		pcall(function()
-			for _, child in ipairs(dir.Wings.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Wings") end
-		end)
-		pcall(function()
-			for _, child in ipairs(dir.Monthly.Wings.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Wings") end
-		end)
-		pcall(function()
-			for _, child in ipairs(dir.DoorDecor.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Locker Doors") end
-		end)
-		pcall(function()
-			for _, child in ipairs(dir.ArtSupplies.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Art Borders") end
-		end)
+		pcall(function() for _, child in ipairs(dir.Shoes.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Heels") end end)
+		pcall(function() for _, child in ipairs(dir.Skirts.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Skirts") end end)
+		pcall(function() for _, child in ipairs(dir.Accessories.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Accessories") end end)
+		pcall(function() for _, child in ipairs(dir.Monthly.NotWings.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Accessories") end end)
+		pcall(function() for _, child in ipairs(dir.Wings.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Wings") end end)
+		pcall(function() for _, child in ipairs(dir.Monthly.Wings.MiddlePanel.ScrollingFrame:GetChildren()) do processLiveCard(child, "Wings") end end)
 	end
 
 	for _, sf in ipairs(shop:GetDescendants()) do
@@ -539,29 +662,150 @@ end
 scrapeAllShopItems()
 
 -- ==========================================================
--- 6. MONOCHROME MOBILE GUI (Black & White, Zero Emojis)
+-- 6. SMART MULTI-LAYER EQUIP CONTROLLER
 -- ==========================================================
+local function findLiveShopCard(itemName)
+	local shop = pg:FindFirstChild("Shop")
+	if not shop then return nil end
 
-local existingGui = gethui():FindFirstChild("RH_Wardrobe_v13")
+	local lower = itemName:lower()
+	for _, d in ipairs(shop:GetDescendants()) do
+		if d:IsA("Frame") and (d:FindFirstChild("Tryon") or d:FindFirstChild("Button")) then
+			local n = d:FindFirstChild("name")
+			if (n and n:IsA("TextLabel") and n.Text:lower() == lower) or d.Name:lower() == lower then
+				return d
+			end
+		end
+	end
+	return nil
+end
+
+local function triggerShopTryon(card)
+	if not card then return false end
+	local btn = card:FindFirstChild("Tryon") or card:FindFirstChild("Button") or card:FindFirstChildWhichIsA("TextButton")
+	if not btn then return false end
+
+	pcall(function()
+		if firesignal then firesignal(btn.MouseButton1Click) end
+	end)
+	pcall(function()
+		if getconnections then
+			for _, con in pairs(getconnections(btn.MouseButton1Click)) do
+				con:Fire()
+			end
+		end
+	end)
+	return true
+end
+
+local function equipItemWithLayering(itemName, itemCat, cardRef)
+	local char = lp.Character
+	if not char then return end
+
+	if itemCat == "Skirts" or itemCat == "Heels" then
+		for name, data in pairs(savedWornLayers) do
+			if data.category == itemCat then
+				local lyr = char:FindFirstChild(name .. "_Layer") or char:FindFirstChild(name)
+				if lyr then
+					lyr:SetAttribute("CustomSavedLayer", nil)
+					pcall(function() lyr:Destroy() end)
+				end
+				savedWornLayers[name] = nil
+			end
+		end
+	end
+
+	local preExisting = {}
+	for _, child in ipairs(char:GetChildren()) do
+		if child:IsA("Accessory") or child:IsA("Model") then
+			preExisting[child] = true
+		end
+	end
+
+	local card = cardRef or findLiveShopCard(itemName)
+	triggerShopTryon(card)
+
+	pcall(function()
+		local pe = pg.CharacterCreation.Inventory:FindFirstChild("PromptEquip")
+		if pe and pe:IsA("BindableEvent") then pe:Fire(itemName) end
+	end)
+
+	task.spawn(function()
+		local newItem = nil
+		for step = 1, 16 do
+			task.wait(0.06)
+			for _, child in ipairs(char:GetChildren()) do
+				if (child:IsA("Accessory") or child:IsA("Model")) 
+				   and not standardBodyParts[child.Name] 
+				   and not preExisting[child] 
+				   and not child:GetAttribute("CustomSavedLayer") then
+					newItem = child
+					break
+				end
+			end
+			if newItem then break end
+		end
+
+		if newItem then
+			pcall(function()
+				newItem:SetAttribute("CustomSavedLayer", true)
+				local jointsList = {}
+				for _, w in ipairs(newItem:GetDescendants()) do
+					if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) and w.Part1 and w.Part1:IsDescendantOf(char) then
+						table.insert(jointsList, {
+							part0Name = w.Part0 and w.Part0.Name or "",
+							part1Name = w.Part1.Name,
+							c0 = (w:IsA("Motor6D") or w:IsA("Weld")) and w.C0 or nil,
+							c1 = (w:IsA("Motor6D") or w:IsA("Weld")) and w.C1 or nil,
+							className = w.ClassName,
+						})
+					end
+				end
+
+				local backupCopy = deepClone(newItem)
+				for _, d in ipairs(backupCopy:GetDescendants()) do
+					if d.Name:lower():find("tryon") then d:Destroy() end
+				end
+				backupCopy:SetAttribute("IsTryOn", nil)
+				backupCopy:SetAttribute("TryOn", nil)
+
+				savedWornLayers[itemName] = {
+					backup = backupCopy,
+					joints = jointsList,
+					isAccessory = newItem:IsA("Accessory"),
+					isModel = newItem:IsA("Model"),
+					category = itemCat,
+				}
+			end)
+		end
+
+		restoreAllSavedLayers()
+		unfreezeControls()
+	end)
+end-- ==========================================================
+-- 7. MONOCHROME MOBILE GUI (Black & White, Zero Emojis)
+-- ==========================================================
+local container = getGuiContainer()
+local existingGui = container:FindFirstChild("RH_Wardrobe_v14")
 if existingGui then existingGui:Destroy() end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "RH_Wardrobe_v13"
+ScreenGui.Name = "RH_Wardrobe_v14"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent = gethui()
+ScreenGui.Parent = container
 
 local C = {
-	bg      = Color3.fromRGB(12, 12, 12),
-	card    = Color3.fromRGB(22, 22, 22),
-	border  = Color3.fromRGB(55, 55, 55),
-	borderHi= Color3.fromRGB(180, 180, 180),
-	text    = Color3.fromRGB(255, 255, 255),
-	sub     = Color3.fromRGB(150, 150, 150),
-	muted   = Color3.fromRGB(90, 90, 90),
-	btn     = Color3.fromRGB(28, 28, 28),
-	btnHi   = Color3.fromRGB(240, 240, 240),
+	bg        = Color3.fromRGB(12, 12, 12),
+	card      = Color3.fromRGB(22, 22, 22),
+	border    = Color3.fromRGB(55, 55, 55),
+	borderHi  = Color3.fromRGB(180, 180, 180),
+	text      = Color3.fromRGB(255, 255, 255),
+	sub       = Color3.fromRGB(150, 150, 150),
+	muted     = Color3.fromRGB(90, 90, 90),
+	btn       = Color3.fromRGB(28, 28, 28),
+	btnHi     = Color3.fromRGB(240, 240, 240),
 	btnTextHi = Color3.fromRGB(10, 10, 10),
 }
 
@@ -720,9 +964,33 @@ stroke(1, C.border, SideScroll)
 mk("UIPadding", {PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3)}, SideScroll)
 mk("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 3)}, SideScroll)
 
+local SearchBoxFrame = mk("Frame", {
+	Size = UDim2.new(1, -96, 0, 24),
+	Position = UDim2.new(0, 92, 0, 2),
+	BackgroundColor3 = C.card,
+	BorderSizePixel = 0,
+	ZIndex = 13,
+}, CatalogPanel)
+corner(4, SearchBoxFrame)
+stroke(1, C.border, SearchBoxFrame)
+
+local SearchBox = mk("TextBox", {
+	Size = UDim2.new(1, -12, 1, 0),
+	Position = UDim2.new(0, 6, 0, 0),
+	BackgroundTransparency = 1,
+	PlaceholderText = "Search items...",
+	Text = "",
+	TextColor3 = C.text,
+	PlaceholderColor3 = C.muted,
+	Font = Enum.Font.GothamBold,
+	TextSize = 8.5,
+	ClearTextOnFocus = false,
+	ZIndex = 14,
+}, SearchBoxFrame)
+
 local GridScroll = mk("ScrollingFrame", {
-	Size = UDim2.new(1, -92, 1, 0),
-	Position = UDim2.new(0, 92, 0, 0),
+	Size = UDim2.new(1, -92, 1, -30),
+	Position = UDim2.new(0, 92, 0, 30),
 	BackgroundTransparency = 1,
 	BorderSizePixel = 0,
 	ScrollBarThickness = 3,
@@ -900,7 +1168,7 @@ inspClose.MouseButton1Click:Connect(closeInspector)
 
 equipBtn.MouseButton1Click:Connect(function()
 	if not selectedItem then return end
-	equipItemDirectly(selectedItem.name, selectedItem.cardRef)
+	equipItemWithLayering(selectedItem.name, selectedCategory, selectedItem.cardRef)
 
 	equipBtn.Text = "WORN!"
 	task.delay(1.2, function()
@@ -922,7 +1190,7 @@ local function clearGrid()
 	end
 end
 
-local function loadCategory(catName)
+local function loadCategory(catName, filterText)
 	clearGrid()
 	closeInspector()
 
@@ -932,7 +1200,15 @@ local function loadCategory(catName)
 		btn.TextColor3 = active and C.btnTextHi or C.sub
 	end
 
-	local items = categories[catName] or {}
+	local rawItems = categories[catName] or {}
+	local items = {}
+
+	local q = filterText and filterText:lower() or ""
+	for _, it in ipairs(rawItems) do
+		if q == "" or it.name:lower():find(q) then
+			table.insert(items, it)
+		end
+	end
 
 	table.sort(items, function(a, b)
 		local aHas = (a.hasRealImage == true)
@@ -1027,6 +1303,10 @@ local function loadCategory(catName)
 	GridScroll.CanvasSize = UDim2.new(0, 0, 0, math.ceil(#items / cols) * 86 + 12)
 end
 
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	loadCategory(selectedCategory, SearchBox.Text)
+end)
+
 for i, catName in ipairs(catOrder) do
 	local count = #(categories[catName] or {})
 	local btn = mk("TextButton", {
@@ -1047,16 +1327,18 @@ for i, catName in ipairs(catOrder) do
 	catButtons[catName] = btn
 
 	btn.MouseButton1Click:Connect(function()
-		loadCategory(catName)
+		selectedCategory = catName
+		loadCategory(catName, SearchBox.Text)
 	end)
 end
 
 if #catOrder > 0 then
-	loadCategory(catOrder[1])
+	selectedCategory = catOrder[1]
+	loadCategory(catOrder[1], "")
 end
 
 -- ==========================================================
--- 7. STATS SPOOFER (Monochrome & Real-Time Commas)
+-- 8. STATS SPOOFER (Monochrome & Real-Time Commas)
 -- ==========================================================
 local StatsPanel = mk("Frame", {
 	Size = ContentAreaSize,
@@ -1283,4 +1565,4 @@ UIS.InputChanged:Connect(function(input)
 	end
 end)
 
-print("[RH Wardrobe v13] Loaded successfully with joint-preserving multi-layer engine.")
+print("[RH Wardrobe v14] Multi-layer engine & complete catalog initialized.")
