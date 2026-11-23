@@ -1,0 +1,1274 @@
+-- ==========================================================
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v11
+-- Pure Monochrome (Black & White, zero emojis)
+-- ==========================================================
+
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local ContextActionService = game:GetService("ContextActionService")
+local lp = Players.LocalPlayer
+local pg = lp:WaitForChild("PlayerGui")
+
+-- ==========================================================
+-- 1. ULTRA-LIGHTWEIGHT MOVEMENT GUARDIAN (ZERO LAG)
+-- ==========================================================
+local function restoreFullMovement()
+	local char = lp.Character
+	if not char then return end
+
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+		if hum.JumpPower < 50 then hum.JumpPower = 50 end
+		if hum.PlatformStand then hum.PlatformStand = false end
+	end
+
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp.Anchored then hrp.Anchored = false end
+
+	local torso = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso")
+	if torso and torso.Anchored then torso.Anchored = false end
+
+	pcall(function()
+		ContextActionService:UnbindAction("FreezeMovement")
+		ContextActionService:UnbindAction("ShopFreeze")
+		ContextActionService:UnbindAction("TryOnFreeze")
+	end)
+end
+
+RunService.Heartbeat:Connect(function()
+	pcall(restoreFullMovement)
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(1.5)
+		pcall(function()
+			local char = lp.Character
+			if char then
+				for _, c in ipairs(char:GetChildren()) do
+					if c:IsA("BillboardGui") then c.Enabled = false end
+				end
+				local head = char:FindFirstChild("Head")
+				if head then
+					for _, c in ipairs(head:GetChildren()) do
+						if c:IsA("BillboardGui") then c.Enabled = false end
+					end
+				end
+			end
+
+			for _, g in ipairs(pg:GetChildren()) do
+				if g:IsA("ScreenGui") and g.Name ~= "RH_Wardrobe_v11" then
+					for _, child in ipairs(g:GetChildren()) do
+						if (child:IsA("TextButton") or child:IsA("TextLabel")) and child.Visible then
+							local t = child.Text:lower()
+							if t:find("exit try") or t:find("stop try") then
+								child.Visible = false
+							end
+						end
+					end
+				end
+			end
+		end)
+	end
+end)
+
+-- ==========================================================
+-- 2. MULTI-LAYER CLOTHING PRESERVER
+-- ==========================================================
+local wornLayersCache = {}
+
+local standardBodyParts = {
+	["Head"] = true, ["Torso"] = true, ["UpperTorso"] = true, ["LowerTorso"] = true,
+	["HumanoidRootPart"] = true, ["LeftHand"] = true, ["RightHand"] = true,
+	["LeftLowerArm"] = true, ["RightLowerArm"] = true, ["LeftUpperArm"] = true, ["RightUpperArm"] = true,
+	["LeftFoot"] = true, ["RightFoot"] = true, ["LeftLowerLeg"] = true, ["RightLowerLeg"] = true,
+	["LeftUpperLeg"] = true, ["RightUpperLeg"] = true, ["Humanoid"] = true, ["Animate"] = true,
+}
+
+local function captureWornLayers()
+	local char = lp.Character
+	if not char then return end
+
+	for _, child in ipairs(char:GetChildren()) do
+		if (child:IsA("Accessory") or child:IsA("Model")) and not standardBodyParts[child.Name] then
+			if not wornLayersCache[child.Name] then
+				pcall(function()
+					child.Archivable = true
+					wornLayersCache[child.Name] = child:Clone()
+				end)
+			end
+		end
+	end
+end
+
+local function restoreWornLayers()
+	local char = lp.Character
+	if not char then return end
+
+	for name, original in pairs(wornLayersCache) do
+		if not char:FindFirstChild(name) then
+			pcall(function()
+				original.Archivable = true
+				local restored = original:Clone()
+				restored.Parent = char
+			end)
+		end
+	end
+end
+
+-- ==========================================================
+-- 3. DRESS-UP INJECTION & SHOP TRIGGER
+-- ==========================================================
+local savedItems = {}
+
+local categoryMapping = {
+	["Heels"] = "HeelMorphs",
+	["Skirts"] = "Skirts",
+	["Accessories"] = "Accessories",
+	["Wings"] = "Wings",
+}
+
+local function findLiveShopCard(itemName)
+	local shop = pg:FindFirstChild("Shop")
+	if not shop then return nil end
+
+	local dir = shop:FindFirstChild("Directory")
+	if not dir then return nil end
+
+	local lower = itemName:lower()
+	for _, folder in ipairs(dir:GetChildren()) do
+		local mp = folder:FindFirstChild("MiddlePanel")
+		local sf = mp and mp:FindFirstChild("ScrollingFrame")
+		if sf then
+			for _, card in ipairs(sf:GetChildren()) do
+				if card:IsA("Frame") then
+					local n = card:FindFirstChild("name")
+					if (n and n:IsA("TextLabel") and n.Text:lower() == lower) or card.Name:lower() == lower then
+						return card
+					end
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function activateCardTryon(card)
+	if not card then return false end
+	local btn = card:FindFirstChild("Tryon") or card:FindFirstChild("Button") or card:FindFirstChildWhichIsA("TextButton")
+	if not btn then return false end
+
+	pcall(function()
+		if firesignal then firesignal(btn.MouseButton1Click) end
+	end)
+	pcall(function()
+		if getconnections then
+			for _, con in pairs(getconnections(btn.MouseButton1Click)) do
+				con:Fire()
+			end
+		end
+	end)
+	return true
+end
+
+local function equipItemDirectly(itemName, cardRef)
+	captureWornLayers()
+
+	local card = cardRef or findLiveShopCard(itemName)
+	local triggered = activateCardTryon(card)
+
+	pcall(function()
+		local pe = pg.CharacterCreation.Inventory:FindFirstChild("PromptEquip")
+		if pe and pe:IsA("BindableEvent") then
+			pe:Fire(itemName)
+		end
+	end)
+
+	task.spawn(function()
+		for i = 1, 6 do
+			task.wait(0.08)
+			restoreFullMovement()
+			restoreWornLayers()
+		end
+	end)
+end
+
+local function performCardInjection(data)
+	local cc = pg:FindFirstChild("CharacterCreation")
+	if not cc then return end
+	local inv = cc:FindFirstChild("Inventory")
+	if not inv then return end
+	local inner = inv:FindFirstChild("Inner")
+	if not inner or not inner:IsA("ScrollingFrame") then return end
+
+	local itemName = data.name
+	local itemImage = data.image
+	local gameCatName = categoryMapping[data.category] or data.category or "Accessories"
+
+	local existing = inner:FindFirstChild(itemName)
+	if existing then
+		local cVal = existing:FindFirstChild("Category")
+		if cVal and cVal:IsA("StringValue") then cVal.Value = gameCatName end
+		return existing
+	end
+
+	local template = inv:FindFirstChild("ItemTemplate")
+	local newCard
+	if template and template:IsA("TextButton") then
+		newCard = template:Clone()
+	else
+		newCard = Instance.new("TextButton")
+		newCard.Size = UDim2.new(0, 72, 0, 72)
+		newCard.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+		newCard.BorderSizePixel = 0
+	end
+
+	newCard.Name = itemName
+	newCard.Visible = true
+
+	local tip = newCard:FindFirstChild("Tooltip")
+	if tip and tip:IsA("TextLabel") then tip.Text = itemName end
+
+	local imgBtn = newCard:FindFirstChild("Image")
+	if imgBtn and (imgBtn:IsA("ImageLabel") or imgBtn:IsA("ImageButton")) then
+		if itemImage and itemImage ~= "" then imgBtn.Image = itemImage end
+	end
+
+	local q = newCard:FindFirstChild("QuantityLabel")
+	if q and q:IsA("TextLabel") then q.Text = "1" end
+
+	local catVal = newCard:FindFirstChild("Category") or Instance.new("StringValue", newCard)
+	catVal.Name = "Category"
+	catVal.Value = gameCatName
+
+	local idVal = newCard:FindFirstChild("Id") or Instance.new("StringValue", newCard)
+	idVal.Name = "Id"
+	idVal.Value = itemName
+
+	newCard.MouseButton1Click:Connect(function()
+		equipItemDirectly(itemName, data.cardRef)
+	end)
+
+	newCard.Parent = inner
+	return newCard
+end
+
+local function addToDressUp(itemName, itemImage, uiCatName, cardRef)
+	pcall(function()
+		savedItems[itemName] = {
+			name = itemName,
+			image = itemImage,
+			category = uiCatName,
+			cardRef = cardRef,
+		}
+		performCardInjection(savedItems[itemName])
+	end)
+end
+
+task.spawn(function()
+	while true do
+		task.wait(2.0)
+		pcall(function()
+			local cc = pg:FindFirstChild("CharacterCreation")
+			local inv = cc and cc:FindFirstChild("Inventory")
+			local inner = inv and inv:FindFirstChild("Inner")
+			if inner then
+				for name, data in pairs(savedItems) do
+					if not inner:FindFirstChild(name) then
+						performCardInjection(data)
+					end
+				end
+			end
+		end)
+	end
+end)
+
+-- ==========================================================
+-- 4. MASTER CATALOG (NO DUPLICATE IMAGES | VERIFIED REAL ONLY)
+-- ==========================================================
+
+local categories = {
+	["Heels"] = {},
+	["Skirts"] = {},
+	["Accessories"] = {},
+	["Wings"] = {},
+	["Locker Doors"] = {},
+	["Art Borders"] = {},
+}
+
+local catOrder = {
+	"Heels",
+	"Skirts",
+	"Accessories",
+	"Wings",
+	"Locker Doors",
+	"Art Borders",
+}
+
+local seenItems = {}
+
+local function addItem(cat, item)
+	if not item.name or item.name == "" or item.name == " " then return end
+	if seenItems[item.name] then return end
+	seenItems[item.name] = true
+
+	item.hasRealImage = (item.image ~= nil and item.image ~= "" and item.image:find("rbxassetid://") ~= nil)
+
+	if not categories[cat] then categories[cat] = {} end
+	table.insert(categories[cat], item)
+end
+
+local realCatalogList = {
+	-- ═══ SKIRTS ═══
+	-- Real In-Game Extracted Images (Top)
+	{cat = "Skirts", name = "Goth Lolita Skirt", price = "Candy: 5,000", desc = "Quadruple layered tea-party skirt frilly and flowing topped with a silky bow.", img = "rbxassetid://7593465178", toggles = true},
+	{cat = "Skirts", name = "Steampunk Clockwork Skirt", price = "Candy: 10,000", desc = "Inventive utility belt skirt with ticking pocket watch that displays actual current time.", img = "rbxassetid://11119666945", toggles = true},
+	{cat = "Skirts", name = "Fountain Girl's Starfall Dreams Skirt", price = "Cash: 5,400", desc = "Celestial starfall layered gown.", img = "rbxassetid://107729124759456", toggles = true},
+	{cat = "Skirts", name = "Miniskirt", price = "Diamonds: 2,500", desc = "Made with love by SaltehShio with soft wave design and back bow.", img = "rbxassetid://5639869339", toggles = false},
+	{cat = "Skirts", name = "Real Life Mermaid", price = "Diamonds: 5,000", desc = "Shimmering iridescent mermaid tail skirt with fishnet lace.", img = "rbxassetid://4757157485", toggles = false},
+	{cat = "Skirts", name = "Pleated Skirt", price = "Diamonds: 5,500", desc = "Classic academy uniform pleated skirt upgraded by ReddieTheTeddy.", img = "rbxassetid://4966411800", toggles = false},
+	{cat = "Skirts", name = "Sleigh It Skirt", price = "Special / Holiday", desc = "Frilled-out fantastical skirt with smooth flocculent fringe.", img = "rbxassetid://8096555954", toggles = true},
+	{cat = "Skirts", name = "Cherry Blossom Rare Bloom Skirt", price = "Diamonds: 8,000", desc = "Slim a-line fit with floral-embroidered lace trim.", img = "rbxassetid://4961796719", toggles = false},
+
+	-- Off-Sale / Legacy Items (Sorted to bottom with clean placeholder)
+	{cat = "Skirts", name = "Large Train Bow Skirt", price = "Legacy / Off-Sale", desc = "The legendary Victorian royal gown reworked by Sukimeki with grand regal bustle and ruffles.", img = "", toggles = true},
+	{cat = "Skirts", name = "Fanned Out Bow Skirt", price = "Legacy / Off-Sale", desc = "Extremely rare collector's legacy ruffled bow skirt.", img = "", toggles = false},
+	{cat = "Skirts", name = "Velvet Bow Royal Mini-Skirt", price = "Legacy / Off-Sale", desc = "Classic royal legacy mini-skirt with velvet draping.", img = "", toggles = false},
+	{cat = "Skirts", name = "Ruffle Velvet Bow Mini-Skirt", price = "Legacy / Off-Sale", desc = "Charming ruffled velvet legacy mini-skirt.", img = "", toggles = false},
+	{cat = "Skirts", name = "Magical Guardian of Love and Justice", price = "Diamonds: 28,000", desc = "Magical sailor skirt with cosmic ribbon bows.", img = "", toggles = true},
+	{cat = "Skirts", name = "Queen of the Ocean", price = "Diamonds: 25,000", desc = "Flowing mermaid princess skirt with wave silhouettes.", img = "", toggles = true},
+	{cat = "Skirts", name = "Moonlight Goddess Ultimate Floof", price = "Diamonds: 36,000", desc = "Lush celestial cloud floor-length ballgown skirt.", img = "", toggles = true},
+	{cat = "Skirts", name = "Miss Lady Rose", price = "Diamonds: 50,000", desc = "Voluminous ballgown skirt adorned with roses.", img = "", toggles = true},
+	{cat = "Skirts", name = "Dear Dollie Ruffled Skirt", price = "Diamonds: 25,000", desc = "Delicate layered dollhouse ruffles with ribbons.", img = "", toggles = true},
+	{cat = "Skirts", name = "Enchanting Heirloom Cage Skirt", price = "Diamonds: 23,000", desc = "Regal French Rococo crinoline cage skirt.", img = "", toggles = true},
+	{cat = "Skirts", name = "Royal Stroll in the Garden", price = "Diamonds: 23,500", desc = "Elegant layered walking skirt with bow corsage.", img = "", toggles = true},
+	{cat = "Skirts", name = "Ballroom Entrance", price = "Diamonds: 16,500", desc = "Stately ballroom gown with ribbon bustle.", img = "", toggles = true},
+	{cat = "Skirts", name = "Cottage Princess", price = "Diamonds: 10,000", desc = "Whimsical countryside pinafore skirt.", img = "", toggles = false},
+	{cat = "Skirts", name = "Sparkly Party Tutu", price = "Diamonds: 10,000", desc = "Glittering layered ballerina tutu.", img = "", toggles = false},
+
+	-- ═══ HEELS ═══
+	-- Real In-Game Extracted Images (Top)
+	{cat = "Heels", name = "Fountain Girl's Lucky Step Footwear", price = "Cash: 5,400", desc = "Lucky step boots with ribbon stockings.", img = "rbxassetid://95727751782442", toggles = true},
+	{cat = "Heels", name = "Steampunk Victorian Boots", price = "Candy: 25,000", desc = "Includes Mechanical Legs, taller/shorter boots, bloomers, and trousers!", img = "rbxassetid://139654244910106", toggles = true},
+	{cat = "Heels", name = "Carol of the Elves Booties", price = "Special / Holiday", desc = "Jingly booties for a toy crafting fae on merry prance.", img = "rbxassetid://8096543052", toggles = false},
+	{cat = "Heels", name = "Cherry Blossom Wooden Sandals", price = "Diamonds: 6,500", desc = "Wooden sandals with cherry blossom floral straps.", img = "rbxassetid://4940518851", toggles = false},
+	{cat = "Heels", name = "Glittering Jelly Platforms", price = "Diamonds: 14,000", desc = "Ultra sparkly jelly platform sandals with heart buckle.", img = "rbxassetid://5319537437", toggles = true},
+	{cat = "Heels", name = "Snuggly Reindeer Slippers", price = "Special / Holiday", desc = "Updated with a blinking nose, lots of toggle buttons, and big girl legs!", img = "rbxassetid://6025681860", toggles = true},
+	{cat = "Heels", name = "Woodland Faun Hooves", price = "Candy: 8,000", desc = "Enchanted woodland creature hooves and legs.", img = "rbxassetid://15496670469", toggles = true},
+	{cat = "Heels", name = "Ballroom Butler Trousers & Dress Shoes", price = "Diamonds: 18,000", desc = "Smoother cut trousers for tray-steady poise and commanding control.", img = "rbxassetid://123045630811449", toggles = true},
+
+	-- Legacy Chicken Heels / Off-Sale (Sorted to bottom with clean placeholder)
+	{cat = "Heels", name = "Head over Heels", price = "Legacy / Off-Sale", desc = "Extremely rare collector chicken heels with hearts.", img = "", toggles = false},
+	{cat = "Heels", name = "Winged Fairy Heels", price = "Legacy / Off-Sale", desc = "Enchanted legacy fairy heels with delicate wings.", img = "", toggles = false},
+	{cat = "Heels", name = "Petite Mermaid Fairy", price = "Legacy / Off-Sale", desc = "Undersea siren legacy mermaid heels.", img = "", toggles = false},
+	{cat = "Heels", name = "Strappy Wonder-Fairy", price = "Legacy / Off-Sale", desc = "Laced ribbon strapped legacy heels.", img = "", toggles = false},
+	{cat = "Heels", name = "Marilyn Monroe", price = "Legacy / Off-Sale", desc = "Vintage Hollywood pin-up heels.", img = "", toggles = false},
+	{cat = "Heels", name = "Action Booties", price = "Legacy / Off-Sale", desc = "Vintage warrior combat booties.", img = "", toggles = false},
+	{cat = "Heels", name = "Flowers from the Garden", price = "Legacy / Off-Sale", desc = "Charming floral blossom legacy heels.", img = "", toggles = false},
+	{cat = "Heels", name = "Wedges in Wonderland", price = "Legacy / Off-Sale", desc = "Fairytale wonderland wedge sandals.", img = "", toggles = false},
+	{cat = "Heels", name = "Dear Dollie Ribbon Heels", price = "Diamonds: 50,000", desc = "Tall lace-up doll heels with back ribbon bows.", img = "", toggles = true},
+	{cat = "Heels", name = "Miss Lady Rose Bow & Bows", price = "Diamonds: 40,000", desc = "Victorian pumps with delicate ankle ribbons.", img = "", toggles = false},
+	{cat = "Heels", name = "Princess Starfrost Figure Skates", price = "Diamonds: 50,000", desc = "Crystal ice skates with warm pom-poms.", img = "", toggles = true},
+
+	-- ═══ ACCESSORIES ═══
+	-- Real In-Game Extracted Images (Top)
+	{cat = "Accessories", name = "Arachnofabulous", price = "Candy: 100", desc = "Dangly spider earrings to match your dark aesthetic.", img = "rbxassetid://5780659637", toggles = false},
+	{cat = "Accessories", name = "Pumpkin Autumn Earrings", price = "Candy: 250", desc = "Sprouted from tiny seeds that found their way onto your earlobes.", img = "rbxassetid://7580868562", toggles = false},
+	{cat = "Accessories", name = "Ghost Head", price = "Candy: 3,000", desc = "Potion enabling wielder's head to vanish for the headless look.", img = "rbxassetid://11124998349", toggles = false},
+	{cat = "Accessories", name = "Fancy Monocle Eyepiece", price = "Candy: 2,000", desc = "Circular monocle adding an impression of class and sophistication.", img = "rbxassetid://7593486019", toggles = false},
+	{cat = "Accessories", name = "Pumpkin Costume", price = "Candy: 2,500", desc = "Artisan pumpkin costume with handcrafted pumpkin ruffles.", img = "rbxassetid://7618103761", toggles = false},
+	{cat = "Accessories", name = "Chamber Chains", price = "Candy: 2,000", desc = "Stylish piece of chains shaped in an X for spooky autumn nights.", img = "rbxassetid://7593462444", toggles = false},
+	{cat = "Accessories", name = "Kitchen Accident", price = "Candy: 500", desc = "This isn't what it looks like... Haven't you seen tomato sauce?", img = "rbxassetid://5780659405", toggles = false},
+	{cat = "Accessories", name = "Pumpkin Beret", price = "Candy: 2,500", desc = "Dainty, delicate pumpkin beret tilted on the side of your head.", img = "rbxassetid://7580750019", toggles = false},
+
+	-- Halos & Special Collectibles (Sorted to bottom with clean placeholder)
+	{cat = "Accessories", name = "Glimmering Light Halo", price = "Special / Halo", desc = "The original radiant halo with brilliant sunlight aura.", img = "", toggles = false},
+	{cat = "Accessories", name = "Corrupt Halo", price = "Special / Halo", desc = "Dark eclipsed counterpart with shadowy thorns.", img = "", toggles = false},
+	{cat = "Accessories", name = "Halloween Halo 2019", price = "Special / Halo", desc = "Ghostly phantom halo with floating purple apparition.", img = "", toggles = false},
+	{cat = "Accessories", name = "Valentine Halo 2020", price = "Special / Halo", desc = "Cascading rose wreath with blooming flower petals.", img = "", toggles = false},
+	{cat = "Accessories", name = "Autumn Halo 2019", price = "Special / Halo", desc = "Harvest wreath halo with glowing oak leaves.", img = "", toggles = false},
+	{cat = "Accessories", name = "Winter Halo 2019", price = "Special / Halo", desc = "Frozen crystal blizzard halo with ice shards.", img = "", toggles = false},
+	{cat = "Accessories", name = "Mermaid Halo 2019", price = "Special / Halo", desc = "Sea pearl and coral siren halo.", img = "", toggles = false},
+	{cat = "Accessories", name = "Spring Halo 2020", price = "Special / Halo", desc = "Enchanted butterfly and daisy blooming floral halo.", img = "", toggles = false},
+	{cat = "Accessories", name = "Mood Changing Necklace", price = "Toy Code / Rare", desc = "Mystic gem necklace that shifts gemstone colors.", img = "", toggles = false},
+	{cat = "Accessories", name = "Original 2019 Elegant Parasol", price = "Legacy / Off-Sale", desc = "Grand lace umbrella with ruffled trim and heart handle.", img = "", toggles = true},
+	{cat = "Accessories", name = "Callmehbob Ring", price = "Toy Code / Rare", desc = "Royal diamond signet ring with engraved gemstone.", img = "", toggles = false},
+}
+
+for _, it in ipairs(realCatalogList) do
+	addItem(it.cat, {
+		name = it.name,
+		price = it.price,
+		desc = it.desc,
+		image = it.img,
+		rectOff = Vector2.new(0, 0),
+		rectSize = Vector2.new(0, 0),
+		hasToggles = it.toggles,
+		cardRef = nil,
+	})
+end
+
+local ignoredImages = {
+	["rbxassetid://3570695787"] = true,
+	["http://www.roblox.com/asset/?id=4244517908"] = true,
+	["http://www.roblox.com/asset/?id=4243128679"] = true,
+	["http://www.roblox.com/asset/?id=6061462987"] = true,
+	["rbxassetid://1093257993"] = true,
+	["rbxassetid://1093257262"] = true,
+}
+
+local function findItemImage(card)
+	local cur = card:FindFirstChild("CurrentImage", true)
+	if cur and cur:IsA("ImageLabel") and cur.Image ~= "" and not ignoredImages[cur.Image] then
+		return cur.Image, cur.ImageRectOffset, cur.ImageRectSize
+	end
+
+	local img = card:FindFirstChild("Image")
+	if img and img:IsA("ImageLabel") and img.Image ~= "" and not ignoredImages[img.Image] then
+		return img.Image, img.ImageRectOffset, img.ImageRectSize
+	end
+
+	local prev = card:FindFirstChild("Preview")
+	if prev and prev:IsA("ImageLabel") and prev.Image ~= "" and not ignoredImages[prev.Image] then
+		return prev.Image, prev.ImageRectOffset, prev.ImageRectSize
+	end
+
+	for _, child in ipairs(card:GetDescendants()) do
+		if (child:IsA("ImageLabel") or child:IsA("ImageButton")) and child.Visible then
+			local id = tostring(child.Image)
+			if id ~= "" and not ignoredImages[id] 
+				and child.Name ~= "ButtonBackground" 
+				and child.Name ~= "Imagenon" 
+				and child.Name ~= "BackArrow" 
+				and child.Name ~= "NextArrow" 
+				and child.Name ~= "Left" 
+				and child.Name ~= "Right" then
+				return id, child.ImageRectOffset, child.ImageRectSize
+			end
+		end
+	end
+
+	return "", Vector2.new(0, 0), Vector2.new(0, 0)
+end
+
+local function processLiveCard(card, defaultCat)
+	if not card:IsA("Frame") or card.Name == "UIListLayout" or card.Name == "UIGridLayout" or card.Name == "UIPadding" then return end
+
+	local nameObj = card:FindFirstChild("name")
+	local itemName = (nameObj and nameObj:IsA("TextLabel") and nameObj.Text ~= "") and nameObj.Text or card.Name
+	if itemName == "" or itemName == " " then return end
+
+	local priceObj = card:FindFirstChild("price")
+	local itemPrice = (priceObj and priceObj:IsA("TextLabel")) and priceObj.Text or ""
+	itemPrice = itemPrice:gsub("ðŸ’Ž", "Diamonds: "):gsub("💎", "Diamonds: ")
+	itemPrice = itemPrice:gsub("ðŸ ¬", "Candy: "):gsub("🍬", "Candy: ")
+	itemPrice = itemPrice:gsub("ðŸ’µ", "Cash: "):gsub("💵", "Cash: ")
+
+	local descObj = card:FindFirstChild("smalldescription")
+	local itemDesc = ""
+	if descObj and descObj.Text ~= "" and descObj.Text ~= " " then
+		itemDesc = descObj.Text
+	else
+		local noteObj = card:FindFirstChild("note")
+		if noteObj and noteObj.Text ~= "" and noteObj.Text ~= "Sparkles!" then
+			itemDesc = noteObj.Text
+		end
+	end
+
+	local hasToggles = card:FindFirstChild("sliderwrapper") ~= nil or card:FindFirstChild("CurrentImage") ~= nil
+	local imgId, rOff, rSz = findItemImage(card)
+
+	local targetCat = defaultCat
+	local lowerName = itemName:lower()
+	if defaultCat == "Accessories" or defaultCat == "Seasonal" then
+		if lowerName:find("heel") or lowerName:find("boot") or lowerName:find("shoe") or lowerName:find("loafer") 
+			or lowerName:find("platform") or lowerName:find("footwear") or lowerName:find("sandal") or lowerName:find("sneaker") then
+			targetCat = "Heels"
+		elseif lowerName:find("skirt") or lowerName:find("dress") or lowerName:find("tut") then
+			targetCat = "Skirts"
+		elseif lowerName:find("wing") then
+			targetCat = "Wings"
+		else
+			targetCat = "Accessories"
+		end
+	end
+
+	addItem(targetCat, {
+		name = itemName,
+		price = itemPrice,
+		desc = itemDesc,
+		image = imgId,
+		rectOff = rOff,
+		rectSize = rSz,
+		hasToggles = hasToggles,
+		cardRef = card,
+	})
+end
+
+local function scrapeScrollFrame(sf, defaultCat)
+	if not sf then return end
+	for _, child in ipairs(sf:GetChildren()) do
+		processLiveCard(child, defaultCat)
+	end
+end
+
+local shopDir = pg:FindFirstChild("Shop") and pg.Shop:FindFirstChild("Directory")
+if shopDir then
+	pcall(function() scrapeScrollFrame(shopDir.Shoes.MiddlePanel.ScrollingFrame, "Heels") end)
+	pcall(function() scrapeScrollFrame(shopDir.Skirts.MiddlePanel.ScrollingFrame, "Skirts") end)
+	pcall(function() scrapeScrollFrame(shopDir.Accessories.MiddlePanel.ScrollingFrame, "Accessories") end)
+	pcall(function() scrapeScrollFrame(shopDir.Monthly.NotWings.MiddlePanel.ScrollingFrame, "Accessories") end)
+	pcall(function() scrapeScrollFrame(shopDir.Wings.MiddlePanel.ScrollingFrame, "Wings") end)
+	pcall(function() scrapeScrollFrame(shopDir.Monthly.Wings.MiddlePanel.ScrollingFrame, "Wings") end)
+	pcall(function() scrapeScrollFrame(shopDir.DoorDecor.MiddlePanel.ScrollingFrame, "Locker Doors") end)
+	pcall(function() scrapeScrollFrame(shopDir.ArtSupplies.MiddlePanel.ScrollingFrame, "Art Borders") end)
+end
+
+-- ==========================================================
+-- 5. MONOCHROME MOBILE GUI (Black & White, Zero Emojis)
+-- ==========================================================
+
+local existingGui = gethui():FindFirstChild("RH_Wardrobe_v11")
+if existingGui then existingGui:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "RH_Wardrobe_v11"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = gethui()
+
+local C = {
+	bg      = Color3.fromRGB(12, 12, 12),
+	card    = Color3.fromRGB(22, 22, 22),
+	border  = Color3.fromRGB(55, 55, 55),
+	borderHi= Color3.fromRGB(180, 180, 180),
+	text    = Color3.fromRGB(255, 255, 255),
+	sub     = Color3.fromRGB(150, 150, 150),
+	muted   = Color3.fromRGB(90, 90, 90),
+	btn     = Color3.fromRGB(28, 28, 28),
+	btnHi   = Color3.fromRGB(240, 240, 240),
+	btnTextHi = Color3.fromRGB(10, 10, 10),
+}
+
+local function mk(cls, props, parent)
+	local o = Instance.new(cls)
+	for k, v in pairs(props) do o[k] = v end
+	if parent then o.Parent = parent end
+	return o
+end
+
+local function corner(r, parent)
+	return mk("UICorner", {CornerRadius = UDim.new(0, r)}, parent)
+end
+
+local function stroke(t, c, parent)
+	return mk("UIStroke", {Thickness = t, Color = c, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, parent)
+end
+
+local ToggleBtn = mk("TextButton", {
+	Size = UDim2.new(0, 48, 0, 36),
+	Position = UDim2.new(0, 12, 1, -54),
+	BackgroundColor3 = C.bg,
+	Text = "MENU",
+	TextSize = 10,
+	Font = Enum.Font.GothamBold,
+	TextColor3 = C.text,
+	BorderSizePixel = 0,
+	ZIndex = 100,
+	AutoButtonColor = false,
+}, ScreenGui)
+corner(6, ToggleBtn)
+stroke(1, C.borderHi, ToggleBtn)
+
+local cam = workspace.CurrentCamera
+local vpY = cam and cam.ViewportSize.Y or 600
+local W, H = 320, math.clamp(vpY * 0.88, 380, 520)
+
+local Main = mk("Frame", {
+	Size = UDim2.new(0, W, 0, H),
+	Position = UDim2.new(0.5, -W/2, 0.5, -H/2),
+	BackgroundColor3 = C.bg,
+	BorderSizePixel = 0,
+	Visible = false,
+	ZIndex = 10,
+	ClipsDescendants = true,
+}, ScreenGui)
+corner(8, Main)
+stroke(1, C.border, Main)
+
+local TitleBar = mk("Frame", {
+	Size = UDim2.new(1, 0, 0, 34),
+	BackgroundColor3 = C.card,
+	BorderSizePixel = 0,
+	ZIndex = 11,
+}, Main)
+corner(6, TitleBar)
+
+mk("TextLabel", {
+	Size = UDim2.new(1, -74, 1, 0),
+	Position = UDim2.new(0, 10, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "ROYALE HIGH WARDROBE",
+	TextColor3 = C.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 12,
+}, TitleBar)
+
+local MinBtn = mk("TextButton", {
+	Size = UDim2.new(0, 24, 0, 24),
+	Position = UDim2.new(1, -54, 0, 5),
+	BackgroundColor3 = C.btn,
+	Text = "_",
+	TextColor3 = C.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	BorderSizePixel = 0,
+	ZIndex = 12,
+	AutoButtonColor = false,
+}, TitleBar)
+corner(4, MinBtn)
+stroke(1, C.border, MinBtn)
+
+local CloseBtn = mk("TextButton", {
+	Size = UDim2.new(0, 24, 0, 24),
+	Position = UDim2.new(1, -26, 0, 5),
+	BackgroundColor3 = C.btn,
+	Text = "X",
+	TextColor3 = C.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 10,
+	BorderSizePixel = 0,
+	ZIndex = 12,
+	AutoButtonColor = false,
+}, TitleBar)
+corner(4, CloseBtn)
+stroke(1, C.border, CloseBtn)
+
+local TabBar = mk("Frame", {
+	Size = UDim2.new(1, 0, 0, 28),
+	Position = UDim2.new(0, 0, 0, 34),
+	BackgroundColor3 = C.card,
+	BorderSizePixel = 0,
+	ZIndex = 11,
+}, Main)
+
+local tabCatalog = mk("TextButton", {
+	Size = UDim2.new(0.5, -2, 1, -4),
+	Position = UDim2.new(0, 2, 0, 2),
+	BackgroundColor3 = C.btnHi,
+	Text = "CATALOG",
+	TextColor3 = C.btnTextHi,
+	Font = Enum.Font.GothamBold,
+	TextSize = 10,
+	BorderSizePixel = 0,
+	ZIndex = 12,
+	AutoButtonColor = false,
+}, TabBar)
+corner(4, tabCatalog)
+
+local tabStats = mk("TextButton", {
+	Size = UDim2.new(0.5, -2, 1, -4),
+	Position = UDim2.new(0.5, 0, 0, 2),
+	BackgroundColor3 = C.btn,
+	Text = "STATS SPOOFER",
+	TextColor3 = C.sub,
+	Font = Enum.Font.GothamBold,
+	TextSize = 10,
+	BorderSizePixel = 0,
+	ZIndex = 12,
+	AutoButtonColor = false,
+}, TabBar)
+corner(4, tabStats)
+
+local ContentAreaPos = UDim2.new(0, 0, 0, 62)
+local ContentAreaSize = UDim2.new(1, 0, 1, -62)
+
+local CatalogPanel = mk("Frame", {
+	Size = ContentAreaSize,
+	Position = ContentAreaPos,
+	BackgroundTransparency = 1,
+	ZIndex = 11,
+}, Main)
+
+local SideScroll = mk("ScrollingFrame", {
+	Size = UDim2.new(0, 88, 1, 0),
+	BackgroundColor3 = C.card,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 2,
+	CanvasSize = UDim2.new(0, 0, 0, #catOrder * 42 + 8),
+	ZIndex = 12,
+}, CatalogPanel)
+corner(6, SideScroll)
+stroke(1, C.border, SideScroll)
+mk("UIPadding", {PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3)}, SideScroll)
+mk("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 3)}, SideScroll)
+
+local GridScroll = mk("ScrollingFrame", {
+	Size = UDim2.new(1, -92, 1, 0),
+	Position = UDim2.new(0, 92, 0, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 3,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	ZIndex = 12,
+}, CatalogPanel)
+
+local GridLayout = mk("UIGridLayout", {
+	CellSize = UDim2.new(0, 68, 0, 82),
+	CellPadding = UDim2.new(0, 4, 0, 4),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, GridScroll)
+mk("UIPadding", {PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4)}, GridScroll)
+
+local InspHeight = 224
+local Inspector = mk("Frame", {
+	Size = UDim2.new(1, 0, 0, InspHeight),
+	Position = UDim2.new(0, 0, 1, 0),
+	BackgroundColor3 = C.card,
+	BorderSizePixel = 0,
+	ZIndex = 25,
+	ClipsDescendants = true,
+}, Main)
+corner(8, Inspector)
+stroke(1, C.borderHi, Inspector)
+
+local inspClose = mk("TextButton", {
+	Size = UDim2.new(0, 20, 0, 20),
+	Position = UDim2.new(1, -24, 0, 4),
+	BackgroundColor3 = C.btn,
+	Text = "X",
+	TextColor3 = C.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 10,
+	BorderSizePixel = 0,
+	ZIndex = 26,
+	AutoButtonColor = false,
+}, Inspector)
+corner(4, inspClose)
+stroke(1, C.border, inspClose)
+
+local inspImg = mk("ImageLabel", {
+	Size = UDim2.new(0, 68, 0, 68),
+	Position = UDim2.new(0, 8, 0, 8),
+	BackgroundColor3 = C.btn,
+	BorderSizePixel = 0,
+	ZIndex = 26,
+	ScaleType = Enum.ScaleType.Fit,
+}, Inspector)
+corner(6, inspImg)
+stroke(1, C.border, inspImg)
+
+local inspPlaceholder = mk("TextLabel", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Text = "NO\nIMAGE",
+	TextColor3 = C.muted,
+	Font = Enum.Font.GothamBold,
+	TextSize = 9,
+	Visible = false,
+	ZIndex = 27,
+}, inspImg)
+
+local inspName = mk("TextLabel", {
+	Size = UDim2.new(1, -106, 0, 22),
+	Position = UDim2.new(0, 82, 0, 6),
+	BackgroundTransparency = 1,
+	Text = "ITEM NAME",
+	TextColor3 = C.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 10.5,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextWrapped = true,
+	ZIndex = 26,
+}, Inspector)
+
+local inspPrice = mk("TextLabel", {
+	Size = UDim2.new(1, -106, 0, 16),
+	Position = UDim2.new(0, 82, 0, 28),
+	BackgroundTransparency = 1,
+	Text = "PRICE",
+	TextColor3 = C.sub,
+	Font = Enum.Font.Gotham,
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 26,
+}, Inspector)
+
+local inspToggleTag = mk("TextLabel", {
+	Size = UDim2.new(1, -106, 0, 14),
+	Position = UDim2.new(0, 82, 0, 46),
+	BackgroundTransparency = 1,
+	Text = "[HAS TOGGLES]",
+	TextColor3 = C.sub,
+	Font = Enum.Font.GothamBold,
+	TextSize = 8.5,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Visible = false,
+	ZIndex = 26,
+}, Inspector)
+
+local inspDesc = mk("TextLabel", {
+	Size = UDim2.new(1, -16, 0, 44),
+	Position = UDim2.new(0, 8, 0, 80),
+	BackgroundTransparency = 1,
+	Text = "Description",
+	TextColor3 = C.muted,
+	Font = Enum.Font.Gotham,
+	TextSize = 8.5,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextWrapped = true,
+	ZIndex = 26,
+}, Inspector)
+
+local equipBtn = mk("TextButton", {
+	Size = UDim2.new(0.48, -4, 0, 28),
+	Position = UDim2.new(0, 8, 0, 130),
+	BackgroundColor3 = C.btnHi,
+	Text = "WEAR (MULTI-LAYER)",
+	TextColor3 = C.btnTextHi,
+	Font = Enum.Font.GothamBold,
+	TextSize = 8.5,
+	BorderSizePixel = 0,
+	ZIndex = 26,
+	AutoButtonColor = false,
+}, Inspector)
+corner(4, equipBtn)
+
+local saveBtn = mk("TextButton", {
+	Size = UDim2.new(0.48, -4, 0, 28),
+	Position = UDim2.new(0.5, 2, 0, 130),
+	BackgroundColor3 = C.btn,
+	Text = "ADD TO RH DRESS-UP",
+	TextColor3 = C.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 8.5,
+	BorderSizePixel = 0,
+	ZIndex = 26,
+	AutoButtonColor = false,
+}, Inspector)
+corner(4, saveBtn)
+stroke(1, C.border, saveBtn)
+
+local selectedItem = nil
+local selectedCategory = "Heels"
+local catButtons = {}
+
+local function openInspector(item, catName)
+	selectedItem = item
+	selectedCategory = catName or "Accessories"
+	inspName.Text = item.name:upper()
+	inspPrice.Text = (item.price ~= "" and item.price or "Special / Event")
+	inspDesc.Text = (item.desc ~= "" and item.desc or "No description provided.")
+	inspToggleTag.Visible = item.hasToggles
+
+	if item.hasRealImage then
+		inspImg.Image = item.image
+		inspImg.ImageRectOffset = item.rectOff or Vector2.new(0, 0)
+		inspImg.ImageRectSize = item.rectSize or Vector2.new(0, 0)
+		inspPlaceholder.Visible = false
+	else
+		inspImg.Image = ""
+		inspPlaceholder.Visible = true
+	end
+
+	Inspector:TweenPosition(UDim2.new(0, 0, 1, -InspHeight), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.2, true)
+end
+
+local function closeInspector()
+	Inspector:TweenPosition(UDim2.new(0, 0, 1, 0), Enum.EasingDirection.In, Enum.EasingStyle.Quad, 0.15, true)
+end
+
+inspClose.MouseButton1Click:Connect(closeInspector)
+
+equipBtn.MouseButton1Click:Connect(function()
+	if not selectedItem then return end
+	addToDressUp(selectedItem.name, selectedItem.image, selectedCategory, selectedItem.cardRef)
+	equipItemDirectly(selectedItem.name, selectedItem.cardRef)
+
+	equipBtn.Text = "WORN!"
+	task.delay(1.2, function()
+		equipBtn.Text = "WEAR (MULTI-LAYER)"
+	end)
+end)
+
+saveBtn.MouseButton1Click:Connect(function()
+	if not selectedItem then return end
+	addToDressUp(selectedItem.name, selectedItem.image, selectedCategory, selectedItem.cardRef)
+
+	saveBtn.Text = "PERMANENT IN DRESS-UP!"
+	task.delay(1.2, function()
+		saveBtn.Text = "ADD TO RH DRESS-UP"
+	end)
+end)
+
+local function clearGrid()
+	for _, c in ipairs(GridScroll:GetChildren()) do
+		if c ~= GridLayout and not c:IsA("UIPadding") then c:Destroy() end
+	end
+end
+
+local function loadCategory(catName)
+	clearGrid()
+	closeInspector()
+
+	for name, btn in pairs(catButtons) do
+		local active = (name == catName)
+		btn.BackgroundColor3 = active and C.btnHi or C.btn
+		btn.TextColor3 = active and C.btnTextHi or C.sub
+	end
+
+	local items = categories[catName] or {}
+
+	table.sort(items, function(a, b)
+		local aHas = (a.hasRealImage == true)
+		local bHas = (b.hasRealImage == true)
+		if aHas ~= bHas then
+			return aHas
+		end
+		return a.name < b.name
+	end)
+
+	for i, item in ipairs(items) do
+		local card = mk("TextButton", {
+			Size = UDim2.new(0, 68, 0, 82),
+			BackgroundColor3 = C.card,
+			Text = "",
+			BorderSizePixel = 0,
+			ZIndex = 13,
+			LayoutOrder = i,
+			AutoButtonColor = false,
+		}, GridScroll)
+		corner(4, card)
+		stroke(1, C.border, card)
+
+		local imgBox = mk("ImageLabel", {
+			Size = UDim2.new(1, -6, 0, 48),
+			Position = UDim2.new(0, 3, 0, 3),
+			BackgroundColor3 = C.btn,
+			BackgroundTransparency = 0.4,
+			BorderSizePixel = 0,
+			ZIndex = 14,
+			ScaleType = Enum.ScaleType.Fit,
+		}, card)
+		corner(3, imgBox)
+
+		if item.hasRealImage then
+			imgBox.Image = item.image
+			imgBox.ImageRectOffset = item.rectOff or Vector2.new(0, 0)
+			imgBox.ImageRectSize = item.rectSize or Vector2.new(0, 0)
+		else
+			imgBox.Image = ""
+			local ph = mk("TextLabel", {
+				Size = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = 1,
+				Text = "[NO IMAGE]",
+				TextColor3 = C.muted,
+				Font = Enum.Font.GothamBold,
+				TextSize = 6.5,
+				ZIndex = 15,
+			}, imgBox)
+		end
+
+		if item.hasToggles then
+			local tBadge = mk("Frame", {
+				Size = UDim2.new(0, 6, 0, 6),
+				Position = UDim2.new(1, -8, 0, 2),
+				BackgroundColor3 = C.borderHi,
+				BorderSizePixel = 0,
+				ZIndex = 16,
+			}, card)
+			corner(3, tBadge)
+		end
+
+		mk("TextLabel", {
+			Size = UDim2.new(1, -4, 0, 16),
+			Position = UDim2.new(0, 2, 0, 52),
+			BackgroundTransparency = 1,
+			Text = item.name,
+			TextColor3 = C.text,
+			Font = Enum.Font.GothamBold,
+			TextSize = 7,
+			TextWrapped = true,
+			ZIndex = 14,
+		}, card)
+
+		mk("TextLabel", {
+			Size = UDim2.new(1, -4, 0, 12),
+			Position = UDim2.new(0, 2, 0, 68),
+			BackgroundTransparency = 1,
+			Text = (item.price ~= "" and item.price:sub(1, 14) or "Special"),
+			TextColor3 = C.sub,
+			Font = Enum.Font.Gotham,
+			TextSize = 6.5,
+			ZIndex = 14,
+		}, card)
+
+		card.MouseButton1Click:Connect(function()
+			openInspector(item, catName)
+		end)
+	end
+
+	local cols = 3
+	GridScroll.CanvasSize = UDim2.new(0, 0, 0, math.ceil(#items / cols) * 86 + 12)
+end
+
+for i, catName in ipairs(catOrder) do
+	local count = #(categories[catName] or {})
+	local btn = mk("TextButton", {
+		Size = UDim2.new(1, 0, 0, 36),
+		BackgroundColor3 = C.btn,
+		Text = catName .. "\n(" .. count .. ")",
+		TextColor3 = C.sub,
+		Font = Enum.Font.GothamBold,
+		TextSize = 8,
+		TextWrapped = true,
+		BorderSizePixel = 0,
+		ZIndex = 13,
+		LayoutOrder = i,
+		AutoButtonColor = false,
+	}, SideScroll)
+	corner(4, btn)
+	stroke(1, C.border, btn)
+	catButtons[catName] = btn
+
+	btn.MouseButton1Click:Connect(function()
+		loadCategory(catName)
+	end)
+end
+
+if #catOrder > 0 then
+	loadCategory(catOrder[1])
+end
+
+-- ==========================================================
+-- 6. STATS SPOOFER (Monochrome & Real-Time Commas)
+-- ==========================================================
+local StatsPanel = mk("Frame", {
+	Size = ContentAreaSize,
+	Position = ContentAreaPos,
+	BackgroundTransparency = 1,
+	Visible = false,
+	ZIndex = 11,
+}, Main)
+
+mk("TextLabel", {
+	Size = UDim2.new(1, -16, 0, 20),
+	Position = UDim2.new(0, 8, 0, 6),
+	BackgroundTransparency = 1,
+	Text = "VISUAL STAT SPOOFER",
+	TextColor3 = C.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 12,
+}, StatsPanel)
+
+local StatsScroll = mk("ScrollingFrame", {
+	Size = UDim2.new(1, -16, 1, -48),
+	Position = UDim2.new(0, 8, 0, 44),
+	BackgroundColor3 = C.card,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 2,
+	CanvasSize = UDim2.new(0, 0, 0, 270),
+	ZIndex = 12,
+}, StatsPanel)
+corner(6, StatsScroll)
+stroke(1, C.border, StatsScroll)
+mk("UIPadding", {PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8)}, StatsScroll)
+mk("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6)}, StatsScroll)
+
+local function formatCommas(str)
+	local numStr = str:gsub("[^%d]", "")
+	if numStr == "" then return "" end
+	local k
+	while true do
+		numStr, k = string.gsub(numStr, "^(-?%d+)(%d%d%d)", '%1,%2')
+		if k == 0 then break end
+	end
+	return numStr
+end
+
+local activeSpoofs = {}
+
+local function createStatRow(labelText, defaultVal, callback)
+	local row = mk("Frame", {
+		Size = UDim2.new(1, 0, 0, 48),
+		BackgroundColor3 = C.bg,
+		BorderSizePixel = 0,
+		ZIndex = 13,
+	}, StatsScroll)
+	corner(4, row)
+	stroke(1, C.border, row)
+
+	mk("TextLabel", {
+		Size = UDim2.new(1, -10, 0, 16),
+		Position = UDim2.new(0, 6, 0, 4),
+		BackgroundTransparency = 1,
+		Text = labelText:upper(),
+		TextColor3 = C.sub,
+		Font = Enum.Font.GothamBold,
+		TextSize = 8.5,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 14,
+	}, row)
+
+	local box = mk("TextBox", {
+		Size = UDim2.new(1, -12, 0, 22),
+		Position = UDim2.new(0, 6, 0, 22),
+		BackgroundColor3 = C.card,
+		Text = defaultVal,
+		PlaceholderText = "Enter amount...",
+		TextColor3 = C.text,
+		PlaceholderColor3 = C.muted,
+		Font = Enum.Font.GothamBold,
+		TextSize = 10,
+		BorderSizePixel = 0,
+		ClearTextOnFocus = false,
+		ZIndex = 14,
+	}, row)
+	corner(3, box)
+	stroke(1, C.border, box)
+
+	box:GetPropertyChangedSignal("Text"):Connect(function()
+		local raw = box.Text
+		local formatted = formatCommas(raw)
+		if raw ~= formatted then box.Text = formatted end
+		activeSpoofs[labelText] = formatted
+		callback(formatted)
+	end)
+end
+
+local function updateDiamonds(val)
+	if val == "" then return end
+	pcall(function() pg.Shop.Header.diamondamount.Text = val end)
+	pcall(function() pg.HUD.Frame.Middle.DiamondsFrame.DiamondAmount.Text = val end)
+	pcall(function() pg.MermaidShopDiamondCount.Frame.DiamondAmount.Text = val end)
+	for _, d in ipairs(pg:GetDescendants()) do
+		if d:IsA("TextLabel") and (d.Name:lower():find("diamondamount") or d.Name:lower():find("diamondcount")) then
+			pcall(function() d.Text = val end)
+		end
+	end
+end
+
+local function updateLevel(val)
+	if val == "" then return end
+	pcall(function() pg.TopBar.Topbar.ButtonList["NOT IN USE"].LevelNumber.Text = val end)
+	for _, d in ipairs(pg:GetDescendants()) do
+		if d:IsA("TextLabel") and (d.Name:lower():find("levelnumber") or (d.Name:lower() == "level" and tonumber(d.Text:gsub("[^%d]", "")))) then
+			pcall(function() d.Text = val end)
+		end
+	end
+end
+
+local function updateCandy(val)
+	if val == "" then return end
+	pcall(function() pg.Shop.Header.candyamount.Text = val end)
+	pcall(function() pg.HUD.Frame.HalloweenCandy.CandyAmount.Text = val end)
+end
+
+local function updateCash(val)
+	if val == "" then return end
+	pcall(function() pg.HUD.Frame.Middle.CloudCashStuff.CloudCash.Text = val end)
+end
+
+createStatRow("Diamonds", "1,000,000", updateDiamonds)
+createStatRow("Level", "500", updateLevel)
+createStatRow("Candy", "50,000", updateCandy)
+createStatRow("Cloud Cash", "10,000", updateCash)
+
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		if activeSpoofs["Diamonds"] then updateDiamonds(activeSpoofs["Diamonds"]) end
+		if activeSpoofs["Level"] then updateLevel(activeSpoofs["Level"]) end
+		if activeSpoofs["Candy"] then updateCandy(activeSpoofs["Candy"]) end
+		if activeSpoofs["Cloud Cash"] then updateCash(activeSpoofs["Cloud Cash"]) end
+	end
+end)
+
+tabCatalog.MouseButton1Click:Connect(function()
+	CatalogPanel.Visible = true
+	StatsPanel.Visible = false
+	tabCatalog.BackgroundColor3 = C.btnHi
+	tabCatalog.TextColor3 = C.btnTextHi
+	tabStats.BackgroundColor3 = C.btn
+	tabStats.TextColor3 = C.sub
+end)
+
+tabStats.MouseButton1Click:Connect(function()
+	CatalogPanel.Visible = false
+	StatsPanel.Visible = true
+	tabStats.BackgroundColor3 = C.btnHi
+	tabStats.TextColor3 = C.btnTextHi
+	tabCatalog.BackgroundColor3 = C.btn
+	tabCatalog.TextColor3 = C.sub
+end)
+
+local isOpen = false
+local function toggleUI()
+	isOpen = not isOpen
+	Main.Visible = isOpen
+	ToggleBtn.Text = isOpen and "CLOSE" or "MENU"
+	ToggleBtn.BackgroundColor3 = isOpen and C.btnHi or C.bg
+	ToggleBtn.TextColor3 = isOpen and C.btnTextHi or C.text
+end
+
+ToggleBtn.MouseButton1Click:Connect(toggleUI)
+CloseBtn.MouseButton1Click:Connect(function()
+	if isOpen then toggleUI() end
+end)
+
+local isMin = false
+MinBtn.MouseButton1Click:Connect(function()
+	isMin = not isMin
+	if isMin then
+		Main:TweenSize(UDim2.new(0, W, 0, 34), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.2, true)
+		TabBar.Visible = false
+		CatalogPanel.Visible = false
+		StatsPanel.Visible = false
+	else
+		Main:TweenSize(UDim2.new(0, W, 0, H), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.2, true)
+		task.delay(0.2, function()
+			TabBar.Visible = true
+			if tabCatalog.BackgroundColor3 == C.btnHi then
+				CatalogPanel.Visible = true
+			else
+				StatsPanel.Visible = true
+			end
+		end)
+	end
+end)
+
+local dragging, dragStart, startPos
+TitleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = Main.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+UIS.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStart
+		Main.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+print("[RH Wardrobe v11] Loaded successfully with zero lag, no image duplicates, real shop try-on, and layer preserver.")
