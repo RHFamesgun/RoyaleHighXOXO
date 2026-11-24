@@ -1,29 +1,31 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v23
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v24
 --
--- FIXES IN v23:
--- 1. FIXED ALL IMAGES & SNOW GLOBE MISMATCH:
---    - Live server data from HeelMorphs.List, Skirts.List, Accessories.List,
---      and Wings.List now ALWAYS overrides hardcoded images with official
---      in-game icons (data.Icon / data.Icons).
---    - Removed incorrect asset IDs (e.g., snow globe on Merry Sparkly Dress).
---    - Real-time catalog refresh and tab count updates.
--- 2. FIXED OPEN & CLOSE BUTTON:
---    - Mobile-friendly debounced toggle on GuiButton.Activated.
---    - Draggable "CLOSET" / "CLOSE" floating button so it never blocks mobile controls.
---    - Title bar "X" button now cleanly hides the menu without destroying the script.
--- 3. REMOVED "TRY ON" / "EXIT TRY ON" GUI ON TOP OF PLAYER:
---    - Permanently hides and neutralizes ExitTryOn, ExitTryOnNonWings, and any
---      billboard or screen GUI overlay that says "Try On".
--- 4. ROYALE HIGH COLOR & TOGGLE SYSTEM SUPPORT:
---    - Selective freeze disabling: leaves TogglesLocalModule and PreviewTogglesFrame
---      listeners active while disabling only the character anchoring loop.
---    - Added dedicated "COLOR / TOGGLE" button in Inspector to open the official
---      Royale High 600-color palette (ColorsGui) and item style toggles.
--- 5. MULTI-LAYER PRESERVATION:
---    - Accessories and Halos stack infinitely.
---    - Humanoid:AddAccessory ensures restored layers maintain proper Roblox welds.
---    - Single-slot items (Heels, Skirts, Bodices, Wings) replace only their own category.
+-- NEW FEATURES IN v24:
+-- 1. FULL AUTO-STACKING MULTI-WEAR ENGINE:
+--    - Put on multiple items simultaneously to build complete outfits!
+--    - Category-based smart slot replacement:
+--      * Heels replace previous Heels.
+--      * Skirts replace previous Skirts.
+--      * Bodices replace previous Bodices.
+--      * Wings replace previous Wings.
+--      * Accessories & Halos STACK INFINITELY.
+--    - Persistent Weld Engine: Uses WeldConstraint and limb targeting
+--      (LowerTorso, UpperTorso, legs) so models move rigidly with your rig.
+--    - Native Accessory Attachment: Uses Humanoid:AddAccessory() for halos
+--      and accessories so they never detach or fall through the floor.
+-- 2. ADDED FLUTTERING BUTTERFLY & ENCHANTING HEIRLOOM SETS:
+--    - Fluttering Butterfly Fairy Heels & Sky High Ballet Butterfly Heels.
+--    - Fluttering Butterfly Skirt & Enchanting Heirloom Cage Skirt.
+--    - Fluttering Butterfly Bodice & Enchanting Heirloom Froufrous Bodice.
+--    - Fluttering Butterfly Sleeves & Enchanting Heirloom Bouffant Sleeves.
+-- 3. ENHANCED COLOR & TOGGLE ACCESS:
+--    - Dedicated "COLOR / TOGGLE" button in Inspector drawer.
+--    - Connects directly to CharacterCreation.TogglesLocalModule and ColorsGui.
+-- 4. CLEAN UI & TRY-ON OVERLAY SUPPRESSION:
+--    - Permanently hides "Exit Try On" / "Try On" overlays above the player.
+--    - Draggable mobile CLOSET button with touch debounce.
+--    - Authoritative live server icons overriding any fallbacks.
 -- ============================================================
 
 local Players              = game:GetService("Players")
@@ -53,7 +55,7 @@ end
 for _, name in ipairs({
     "RH_Wardrobe_v16","RH_Wardrobe_v17","RH_Wardrobe_v18","RH_Wardrobe_v19",
     "RH_Wardrobe_v20","RH_Wardrobe_v21","RH_Wardrobe_v22","RH_Wardrobe_v23",
-    "RH_Wardrobe_Definitive"
+    "RH_Wardrobe_v24","RH_Wardrobe_Definitive"
 }) do
     local old = getGuiParent():FindFirstChild(name)
     if old then pcall(function() old:Destroy() end) end
@@ -62,10 +64,8 @@ for _, name in ipairs({
 end
 
 -- ============================================================
--- 1. SELECTIVE FREEZE NEUTRALIZER & "TRY ON" GUI REMOVER
+-- 1. SELECTIVE FREEZE NEUTRALIZER & OVERLAY SUPPRESSOR
 -- ============================================================
--- We selectively disable ONLY the anchoring loop connection,
--- leaving TogglesLocalModule / PreviewTogglesFrame enabled for coloring!
 local function disableFreezeOnlyConnections()
     if getconnections and previewItemRemote then
         pcall(function()
@@ -90,7 +90,6 @@ local function disableFreezeOnlyConnections()
     end
 end
 
--- Permanently hide the "Try On" / "Exit Try On" button on top of the character
 local function hideTryOnOverlays()
     pcall(function()
         local hud = pg:FindFirstChild("HUD")
@@ -126,7 +125,7 @@ pg.DescendantAdded:Connect(function(desc)
     end
 end)
 
--- Triple-engine unanchoring: RenderStepped, Stepped, Heartbeat
+-- Continuous triple-engine unanchoring
 local standardBodyParts = {
     ["HumanoidRootPart"]=true,["Head"]=true,["Torso"]=true,
     ["UpperTorso"]=true,["LowerTorso"]=true,["Left Arm"]=true,
@@ -189,7 +188,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. MULTI-LAYER RESTORATION ENGINE
+-- 2. AUTO-STACKING MULTI-WEAR ENGINE
 -- ============================================================
 local savedWornLayers = {}
 
@@ -202,24 +201,79 @@ local function deepClone(inst)
     return ok and result or nil
 end
 
+local function attachModelToCharacter(char, model, cat)
+    if not char or not model then return end
+    model:SetAttribute("CustomSavedLayer", true)
+
+    local targetLimb = nil
+    if cat == "Skirts" then
+        targetLimb = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso")
+    elseif cat == "Bodices" then
+        targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+    elseif cat == "Heels" then
+        targetLimb = char:FindFirstChild("LowerTorso") or char:FindFirstChild("HumanoidRootPart")
+    elseif cat == "Wings" then
+        targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+    else
+        targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Head") or char.PrimaryPart
+    end
+
+    if not targetLimb then return end
+
+    local rootPart = model.PrimaryPart
+                  or model:FindFirstChild("Center")
+                  or model:FindFirstChild("Middle")
+                  or model:FindFirstChild("Handle")
+                  or model:FindFirstChildWhichIsA("BasePart")
+
+    if rootPart then
+        for _, p in ipairs(model:GetDescendants()) do
+            if p:IsA("BasePart") then
+                p.Anchored = false
+                p.CanCollide = false
+            end
+        end
+
+        local hasWeld = false
+        for _, w in ipairs(model:GetDescendants()) do
+            if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) then
+                if w.Part0 == targetLimb or w.Part1 == targetLimb then
+                    hasWeld = true
+                    break
+                end
+            end
+        end
+
+        if not hasWeld then
+            local wc = Instance.new("WeldConstraint")
+            wc.Name = "CustomAutoStackWeld"
+            wc.Part0 = targetLimb
+            wc.Part1 = rootPart
+            wc.Parent = rootPart
+        end
+    end
+
+    model.Parent = char
+end
+
 local function restoreAllSavedLayers()
     local char = lp.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
 
-    for name, data in pairs(savedWornLayers) do
-        local existing = char:FindFirstChild(name)
+    for slotKey, data in pairs(savedWornLayers) do
+        local existing = char:FindFirstChild(data.name)
         if not existing or not existing:GetAttribute("CustomSavedLayer") then
             if data.backup then
                 pcall(function()
                     local clone = deepClone(data.backup)
                     if clone then
-                        clone.Name = name
-                        clone:SetAttribute("CustomSavedLayer", true)
+                        clone.Name = data.name
                         if clone:IsA("Accessory") and hum then
                             hum:AddAccessory(clone)
+                            clone:SetAttribute("CustomSavedLayer", true)
                         else
-                            clone.Parent = char
+                            attachModelToCharacter(char, clone, data.category)
                         end
                     end
                 end)
@@ -237,24 +291,20 @@ end)
 local function clearAllWornLayers()
     local char = lp.Character
     if char then
-        for name, _ in pairs(savedWornLayers) do
-            local obj = char:FindFirstChild(name)
-            if obj then
-                obj:SetAttribute("CustomSavedLayer", nil)
-                pcall(function() obj:Destroy() end)
-            end
-        end
         for _, c in ipairs(char:GetChildren()) do
-            if c.Name == "Wings_TRYON" or c.Name:find("CustomWing") then
+            if c:GetAttribute("CustomSavedLayer") or c.Name == "Wings_TRYON" or c.Name:find("CustomWing") then
                 pcall(function() c:Destroy() end)
             end
         end
     end
     savedWornLayers = {}
+    if exitPreviewRemote then
+        pcall(function() exitPreviewRemote:FireServer() end)
+    end
 end
 
 -- ============================================================
--- 3. ITEM CATALOG WITH AUTHORITATIVE SERVER SYNC
+-- 3. ITEM CATALOG WITH DYNAMIC SERVER SYNCHRONIZATION
 -- ============================================================
 local categories = { Heels={}, Skirts={}, Bodices={}, Accessories={}, Wings={}, Halos={} }
 local catOrder   = {"Heels", "Skirts", "Bodices", "Accessories", "Wings", "Halos"}
@@ -293,7 +343,6 @@ local function addOrUpdateCatalogItem(cat, alias, assetName, price, img, isServe
     end
 
     if existing then
-        -- Live server data ALWAYS takes precedence over fallback data!
         if isServerData and imgStr ~= "" then
             existing.img = imgStr
             existing.isServerImg = true
@@ -320,15 +369,16 @@ local function addOrUpdateCatalogItem(cat, alias, assetName, price, img, isServe
     end
 end
 
--- Master Core Items (Names and verified prices)
+-- Curated Master Catalog (Includes Fluttering Butterfly & Enchanting Heirloom sets)
 local masterList = {
 	-- HEELS / SHOES
+	{"Heels", "Fluttering Butterfly Fairy Heels", "Fluttering Butterfly Fairy Heels", "38,000", ""},
+	{"Heels", "Sky High Ballet Butterfly Heels", "Sky High Ballet Butterfly Heels", "25,000", ""},
 	{"Heels", "High School Lacey Boots & Socks", "High School Lacey Boots & Socks", "18,000", ""},
 	{"Heels", "Rainbow High Tops", "Rainbow High Tops", "20,000", ""},
 	{"Heels", "Pastel High Tops", "Pastel High Tops", "20,000", ""},
 	{"Heels", "Adorable Lace-Up Doll Boots", "Adorable Lace-Up Doll Boots", "18,000", ""},
 	{"Heels", "Thigh High Ice Princess Boots", "Thigh High Ice Princess Boots", "20,000", ""},
-	{"Heels", "Sky High Ballet Butterfly Heels", "Sky High Ballet Butterfly Heels", "25,000", ""},
 	{"Heels", "Bat-Mo-Heels", "Bat-Mo-Heels", "70,000", ""},
 	{"Heels", "December's Dream Shoes", "December's Dream Shoes", "45,000", ""},
 	{"Heels", "Winter Guardian Glacier Boots", "Winter Guardian Glacier Boots", "30,000", ""},
@@ -357,6 +407,8 @@ local masterList = {
 	{"Heels", "Fountain Girl's Lucky Step Footwear", "Fountain Girl's Lucky Step Footwear", "Shop", ""},
 
 	-- SKIRTS
+	{"Skirts", "Fluttering Butterfly Skirt", "Fluttering Butterfly Skirt", "15,000", ""},
+	{"Skirts", "Enchanting Heirloom Cage Skirt", "Enchanting Heirloom Cage Skirt", "23,000", ""},
 	{"Skirts", "Large Train Bow Skirt", "Large Train Bow Skirt", "33,000", ""},
 	{"Skirts", "Magical Enchantress", "Magical Enchantress", "Special", ""},
 	{"Skirts", "Midnight Mademoiselle", "Midnight Mademoiselle", "Special", ""},
@@ -390,6 +442,8 @@ local masterList = {
 	{"Skirts", "North Pole Presents Skirt", "North Pole Presents Skirt", "13,500", ""},
 
 	-- BODICES
+	{"Bodices", "Fluttering Butterfly Bodice", "Fluttering Butterfly Bodice", "18,000", ""},
+	{"Bodices", "Enchanting Heirloom Froufrous Bodice", "Enchanting Heirloom Froufrous Bodice", "20,000", ""},
 	{"Bodices", "Darling Valentina Lace Bodice", "Darling Valentina Lace Bodice", "28,000", ""},
 	{"Bodices", "Mon Chéri Tea Party Bowtie Bodice", "Mon Chri Tea Party Bowtie Bodice", "18,000", ""},
 	{"Bodices", "Shadow Empress Chained Bodice", "Shadow Empress Chained Bodice", "20,000", ""},
@@ -420,7 +474,9 @@ local masterList = {
 	{"Bodices", "Versailles Snow Powder Coat", "Versailles Snow Powder Coat", "12,000", ""},
 	{"Bodices", "Sleigh It Bodice", "Sleigh It Bodice", "12,000", ""},
 
-	-- POPULAR ACCESSORIES
+	-- ACCESSORIES (Includes Fluttering Butterfly & Enchanting Heirloom Sleeves)
+	{"Accessories", "Fluttering Butterfly Sleeves", "Fluttering Butterfly Sleeves", "Free", ""},
+	{"Accessories", "Enchanting Heirloom Bouffant Sleeves", "Enchanting Heirloom Bouffant Sleeves", "6,500", ""},
 	{"Accessories", "Bahia's Pacifier", "Bahia's Pacifier", "Special", ""},
 	{"Accessories", "Rosies Rose", "Rosies Rose", "Special", ""},
 	{"Accessories", "Mood Changing Necklace", "Mood Changing Necklace", "Special", ""},
@@ -437,13 +493,75 @@ local masterList = {
 	{"Accessories", "Cristal's Tiara", "Cristal's Tiara", "Special", ""},
 	{"Accessories", "Anzu's Mindwings", "Anzu's Mindwings", "Special", ""},
 	{"Accessories", "Lizzy Winkle's Crown", "Lizzy Winkle's Crown of Roses", "Special", ""},
+
+	-- HALOS
+	{"Halos", "Corrupt Halo", "Corrupt Halo", "Special", ""},
+	{"Halos", "Glimmering Light Halo", "Glimmering Light Halo", "Special", ""},
+	{"Halos", "Halloween Halo 2019", "Halloween Halo 2019", "Special", ""},
+	{"Halos", "Halloween Halo 2020", "Halloween Halo 2020", "Special", ""},
+	{"Halos", "Halloween Halo 2021", "Halloween Halo 2021", "Special", ""},
+	{"Halos", "Halloween Halo 2022", "Halloween Halo 2022", "Special", ""},
+	{"Halos", "Halloween Halo 2023", "Halloween Halo 2023", "Special", ""},
+	{"Halos", "Spring Halo 2020", "Spring Halo 2020", "Special", ""},
+	{"Halos", "Spring Halo 2021", "Spring Halo 2021", "Special", ""},
+	{"Halos", "Spring Halo 2022", "Spring Halo 2022", "Special", ""},
+	{"Halos", "Winter Halo 2019", "Winter Halo 2019", "Special", ""},
+	{"Halos", "Winter Halo 2020", "Winter Halo 2020", "Special", ""},
+	{"Halos", "Winter Halo 2021", "Winter Halo 2021", "Special", ""},
+	{"Halos", "Winter Halo 2022", "Winter Halo 2022", "Special", ""},
+	{"Halos", "Mermaid Halo 2019", "Mermaid Halo 2019", "Special", ""},
+	{"Halos", "Mermaid Halo 2020", "Mermaid Halo 2020", "Special", ""},
+	{"Halos", "Mermaid Halo 2021", "Mermaid Halo 2021", "Special", ""},
+	{"Halos", "Mermaid Halo 2022", "Mermaid Halo 2022", "Special", ""},
+	{"Halos", "Lucky Halo 2019", "Lucky Halo 2019", "Special", ""},
+	{"Halos", "Lucky Halo 2020", "Lucky Halo 2020", "Special", ""},
+	{"Halos", "Lucky Halo 2021", "Lucky Halo 2021", "Special", ""},
+	{"Halos", "Val Halo 2019", "Val Halo 2019", "Special", ""},
+	{"Halos", "Val Halo 2020", "Val Halo 2020", "Special", ""},
+	{"Halos", "Val Halo 2021", "Val Halo 2021", "Special", ""},
+	{"Halos", "Easter Halo 2019", "Easter Halo 2019", "Special", ""},
+	{"Halos", "Autumn Halo 2019", "Autumn Halo 2019", "Special", ""},
+	{"Halos", "Starlight Halo 2023", "Starlight Halo 2023", "Special", ""},
+	{"Halos", "Solarix Halo 2023", "Solarix Halo 2023", "Special", ""},
+	{"Halos", "Dark Fairy Halo 2023", "Dark Fairy Halo 2023", "Special", ""},
+
+	-- WINGS
+	{"Wings", "Fallen Fae Mistwoven Wings", "Fallen Fae Mistwoven Wings", "40,000", ""},
+	{"Wings", "Steampunk Aerotechnic Wings", "Steampunk Aerotechnic Wings", "13,000", ""},
+	{"Wings", "Cherry Blossom Billowing Sleeves", "Cherry Blossom Billowing Sleeves", "20,000", ""},
+	{"Wings", "Bad Luck Wings", "Bad Luck Wings", "6,000", ""},
+	{"Wings", "Valentines Cake Wings", "Valentines Cake Wings", "5,500", ""},
+	{"Wings", "Warm JamJamnamon Roll Wings", "Warm JamJamnamon Roll Wings", "2,500", ""},
+	{"Wings", "Cozy Flannel Bow Wings", "Cozy Flannel Bow Wings", "3,000", ""},
+	{"Wings", "Candy Cane Sugar Wings", "Candy Cane Sugar Wings", "4,000", ""},
+	{"Wings", "Chocolate Truffle Love", "Chocolate Truffle Love", "6,500", ""},
+	{"Wings", "Love Dragon", "Love Dragon", "8,500", ""},
+	{"Wings", "Baby Dragon's Wings", "Baby Dragon's Wings", "2,750", ""},
+	{"Wings", "Heart Chocolate Donuts", "Heart Chocolate Donuts", "4,500", ""},
+	{"Wings", "Blossoming Admirer", "Blossoming Admirer", "4,000", ""},
+	{"Wings", "Heavenly Love", "Heavenly Love", "11,000", ""},
+	{"Wings", "Social Love Butterfly", "Social Love Butterfly", "5,000", ""},
+	{"Wings", "Teddy 4 My Valentine Cookies", "Teddy 4 My Valentine Cookies", "7,000", ""},
+	{"Wings", "Mini Roses are Red Valentines", "Mini Roses are Red Valentines", "3,750", ""},
+	{"Wings", "Falling into Fate", "Falling into Fate", "8,000", ""},
+	{"Wings", "Scarf Wings", "Scarf Wings", "4,500", ""},
+	{"Wings", "Rainbow Shamrock Butterfly Wings", "Rainbow Shamrock Butterfly Wings", "7,000", ""},
+	{"Wings", "Song of the Lovebird", "Song of the Lovebird", "11,000", ""},
+	{"Wings", "Mini Social Love Butterfly", "Mini Social Love Butterfly", "1,000", ""},
+	{"Wings", "Ragged Prince", "Ragged Prince", "4,000", ""},
+	{"Wings", "Arachnophobia SpiderLeg Wings", "Arachnophobia SpiderLeg Wings", "10,000", ""},
+	{"Wings", "Glowing Fairy of Luck", "Glowing Fairy of Luck", "7,500", ""},
+	{"Wings", "Gobble Gobble Wings", "Gobble Gobble Wings", "5,500", ""},
+	{"Wings", "Mini Gingerbread Wings", "Mini Gingerbread Wings", "2,750", ""},
+	{"Wings", "Heart Container", "Heart Container", "10,000", ""},
+	{"Wings", "Sparkling Valentine", "Sparkling Valentine", "5,500", ""},
 }
 
 for _, it in ipairs(masterList) do
     addOrUpdateCatalogItem(it[1], it[2], it[3], it[4], it[5], false)
 end
 
--- Live Server Synchronizer: fetches genuine in-game icons directly
+-- Live Server Synchronizer
 local function syncWithLiveServer()
     local net = ReplicatedStorage:FindFirstChild("Network")
     local fn  = net and net:FindFirstChild("Functions") and net.Functions:FindFirstChild("Gui")
@@ -539,7 +657,7 @@ end
 task.spawn(syncWithLiveServer)
 
 -- ============================================================
--- 4. EQUIP & COLOR ENGINE
+-- 4. EQUIP & AUTO-STACKING ENGINE
 -- ============================================================
 local function findShopTryonButton(itemName)
     local shop = pg:FindFirstChild("Shop")
@@ -592,7 +710,6 @@ local function clickButtonVIM(btn)
     return ok
 end
 
--- Open official Royale High color palette and toggle system
 local function openItemColorAndToggles(assetName)
     local opened = false
 
@@ -658,15 +775,18 @@ local function equipWings(item)
                             p.CanCollide = false
                         end
                     end
-                    local weld = Instance.new("Weld")
+                    local weld = Instance.new("WeldConstraint")
                     weld.Name = "CustomWingWeld"
                     weld.Part0 = torso
                     weld.Part1 = center
-                    weld.C0 = CFrame.new(0, 0.2, 0.6)
                     weld.Parent = torso
                     chest.Parent = char
                     chest:SetAttribute("CustomSavedLayer", true)
-                    savedWornLayers["Wings_TRYON"] = { category = "Wings", backup = deepClone(chest) }
+                    savedWornLayers["Wings"] = {
+                        name     = "Wings_TRYON",
+                        category = "Wings",
+                        backup   = deepClone(chest)
+                    }
                     hideTryOnOverlays()
                     return "OK"
                 end
@@ -695,24 +815,24 @@ local function equipItem(item)
         return equipWings(item)
     end
 
-    -- Single-slot clearing: replacing Heels only replaces Heels
-    if itemCat == "Heels" or itemCat == "Skirts" or itemCat == "Bodices" then
-        for savedName, data in pairs(savedWornLayers) do
-            if data.category == itemCat then
-                local existing = char:FindFirstChild(savedName)
-                if existing then
-                    existing:SetAttribute("CustomSavedLayer", nil)
-                    pcall(function() existing:Destroy() end)
-                end
-                savedWornLayers[savedName] = nil
-            end
+    -- Slot replacement: single-slot items replace their own slot, accessories stack
+    local slotKey = (itemCat == "Heels" or itemCat == "Skirts" or itemCat == "Bodices") and itemCat or ("Acc_" .. itemName)
+
+    if savedWornLayers[slotKey] then
+        local oldName = savedWornLayers[slotKey].name
+        local oldInst = char:FindFirstChild(oldName)
+        if oldInst then
+            oldInst:SetAttribute("CustomSavedLayer", nil)
+            pcall(function() oldInst:Destroy() end)
         end
+        savedWornLayers[slotKey] = nil
     end
 
-    local snapshot = {}
-    for _, child in ipairs(char:GetChildren()) do
-        if child:GetAttribute("CustomSavedLayer") then
-            snapshot[child.Name] = deepClone(child)
+    -- Snapshot all other active layers to keep them preserved
+    local otherLayers = {}
+    for sk, data in pairs(savedWornLayers) do
+        if sk ~= slotKey and data.backup then
+            otherLayers[sk] = data
         end
     end
 
@@ -747,8 +867,7 @@ local function equipItem(item)
             if not char then break end
             for _, child in ipairs(char:GetChildren()) do
                 if not standardBodyParts[child.Name]
-                   and not child:GetAttribute("CustomSavedLayer")
-                   and not snapshot[child.Name] then
+                   and not child:GetAttribute("CustomSavedLayer") then
                     local cln = child.Name:lower()
                     if cln:find(targetLower, 1, true) or targetLower:find(cln, 1, true)
                        or cln:find(assetLower, 1, true) or assetLower:find(cln, 1, true)
@@ -764,29 +883,31 @@ local function equipItem(item)
         if newItem then
             pcall(function()
                 newItem:SetAttribute("CustomSavedLayer", true)
-                savedWornLayers[item.name] = {
-                    backup   = deepClone(newItem),
-                    category = itemCat
+                savedWornLayers[slotKey] = {
+                    name     = newItem.Name,
+                    category = itemCat,
+                    backup   = deepClone(newItem)
                 }
             end)
         end
 
-        -- Restore other layers with proper welding
+        -- Auto-stack all other preserved layers onto the character!
         char = lp.Character
         if char then
             local hum = char:FindFirstChildOfClass("Humanoid")
-            for snapName, snapClone in pairs(snapshot) do
-                if not char:FindFirstChild(snapName) or not char:FindFirstChild(snapName):GetAttribute("CustomSavedLayer") then
-                    if snapClone then
+            for sk, data in pairs(otherLayers) do
+                local existing = char:FindFirstChild(data.name)
+                if not existing or not existing:GetAttribute("CustomSavedLayer") then
+                    if data.backup then
                         pcall(function()
-                            local fresh = deepClone(snapClone)
+                            local fresh = deepClone(data.backup)
                             if fresh then
-                                fresh.Name = snapName
-                                fresh:SetAttribute("CustomSavedLayer", true)
+                                fresh.Name = data.name
                                 if fresh:IsA("Accessory") and hum then
                                     hum:AddAccessory(fresh)
+                                    fresh:SetAttribute("CustomSavedLayer", true)
                                 else
-                                    fresh.Parent = char
+                                    attachModelToCharacter(char, fresh, data.category)
                                 end
                             end
                         end)
@@ -824,7 +945,7 @@ local C = {
 }
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name           = "RH_Wardrobe_v23"
+ScreenGui.Name           = "RH_Wardrobe_v24"
 ScreenGui.ResetOnSpawn   = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.DisplayOrder   = 999
@@ -861,7 +982,7 @@ local ToggleBtn = mk("TextButton", {
 corner(6, ToggleBtn)
 stroke(1, C.borderHi, ToggleBtn)
 
--- Draggable Toggle Button
+-- Draggable Toggle Button on mobile
 local btnDragging, btnDragStart, btnStartPos
 ToggleBtn.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -996,7 +1117,6 @@ local CloseBtn = mk("TextButton", {
 corner(4, CloseBtn)
 stroke(1, C.border, CloseBtn)
 
--- "X" closes/hides the main window cleanly without destroying the script
 local function closeMain()
     Main.Visible = false
     updateToggleBtnState()
@@ -1178,15 +1298,15 @@ local function setStatus(msg, col)
 	end)
 end
 
--- Row 1: WEAR (left) and COLOR / TOGGLE (right)
+-- Row 1: WEAR / STACK (left) and COLOR / TOGGLE (right)
 local equipBtn = mk("TextButton", {
 	Size             = UDim2.new(0.48, -4, 0, 23),
 	Position         = UDim2.new(0, 6, 0, 84),
 	BackgroundColor3 = C.btnHi,
-	Text             = "WEAR",
+	Text             = "WEAR / STACK",
 	TextColor3       = C.btnTextHi,
 	Font             = Enum.Font.GothamBold,
-	TextSize         = 8,
+	TextSize         = 7.5,
 	BorderSizePixel  = 0,
 	ZIndex           = 26,
 	AutoButtonColor  = false,
@@ -1249,10 +1369,10 @@ end
 
 local function handleWear()
 	if not selectedItem then return end
-	setStatus("Equipping...", C.sub)
+	setStatus("Stacking...", C.sub)
 	local res = equipItem(selectedItem)
 	if res == "OK" then
-		setStatus("Equipped!", C.text)
+		setStatus("Layer Stacked!", C.text)
 	else
 		setStatus("Failed", C.muted)
 	end
@@ -1273,7 +1393,7 @@ colorBtn.Activated:Connect(handleColor)
 
 clearLayersBtn.Activated:Connect(function()
 	clearAllWornLayers()
-	setStatus("Cleared layers.", C.sub)
+	setStatus("Cleared all layers.", C.sub)
 end)
 
 -- ============================================================
@@ -1408,4 +1528,4 @@ setActiveCategory("Heels")
 Main.Visible = true
 updateToggleBtnState()
 
-print("[RH Wardrobe v23] Loaded successfully. Color system active, Try-On overlay removed, live icons syncing.")
+print("[RH Wardrobe v24] Auto-Stacking multi-wear engine active. Fluttering Butterfly & Enchanting Heirloom sets loaded.")
