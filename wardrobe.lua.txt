@@ -1,5 +1,5 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v32
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v33
 --
 -- NEW FIXES & FEATURES IN v28:
 -- 1. PRECISION CLOTHING SCANNER (ZERO HAIR CLONING):
@@ -35,6 +35,22 @@ pcall(function() VU = game:GetService("VirtualUser") end)
 local itemPreviewNetwork = ReplicatedStorage:WaitForChild("ItemPreviewNetwork", 8)
 local previewItemRemote  = itemPreviewNetwork and itemPreviewNetwork:FindFirstChild("PreviewItem")
 local exitPreviewRemote  = itemPreviewNetwork and itemPreviewNetwork:FindFirstChild("ExitPreview")
+
+-- Anti-Anchor Metatable Hook: Blocks Royale High's internal try-on script from ever anchoring the player
+pcall(function()
+    if hookmetamethod and checkcaller then
+        local oldNewIndex
+        oldNewIndex = hookmetamethod(game, "__newindex", function(self, key, value)
+            if not checkcaller() and key == "Anchored" and value == true then
+                local char = lp.Character
+                if char and (self == char or self:IsDescendantOf(char)) then
+                    return
+                end
+            end
+            return oldNewIndex(self, key, value)
+        end)
+    end
+end)
 
 local function getGuiParent()
     if gethui then return gethui() end
@@ -186,9 +202,18 @@ local function releasePlayerMovement()
         end
     end)
 
-    -- 5. Terminate Royale High's internal try-on anchoring while-loop by firing ExitPreview
+    -- 5. Terminate Royale High's CLIENT-SIDE try-on anchoring loop locally WITHOUT firing ExitPreview:FireServer()
     if exitPreviewRemote then
-        pcall(function() exitPreviewRemote:FireServer() end)
+        if firesignal then
+            pcall(function() firesignal(exitPreviewRemote.OnClientEvent) end)
+        end
+        if getconnections then
+            pcall(function()
+                for _, conn in ipairs(getconnections(exitPreviewRemote.OnClientEvent)) do
+                    pcall(function() conn:Fire() end)
+                end
+            end)
+        end
     end
 
     -- 6. Hide all TryOn billboard HUD elements
@@ -250,7 +275,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v32)
+-- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v33)
 -- ============================================================
 local bakedLayersBackup = {}
 local defaultAvatarInstances = {}
@@ -286,14 +311,19 @@ local function getEquippedFolders()
     local list = {}
     local es = workspace:FindFirstChild("EquippedStorage")
     local char = lp.Character
-    local categoriesList = {"Heels", "Skirts", "Accessories", "Wings", "Bodices", "Halos"}
+    local categoryMap = {
+        Heels = "Heels", HeelMorphs = "Heels",
+        Skirts = "Skirts", Skirt = "Skirts",
+        Bodices = "Bodices", Corsets = "Bodices", Torso = "Bodices",
+        Accessories = "Accessories", Wings = "Wings", Halos = "Halos"
+    }
 
     if es then
-        for _, cat in ipairs(categoriesList) do
-            local cf = es:FindFirstChild(cat)
+        for folderName, normCat in pairs(categoryMap) do
+            local cf = es:FindFirstChild(folderName)
             local pf = cf and (cf:FindFirstChild(lp.Name) or cf:FindFirstChild(tostring(lp.UserId)))
             if pf then
-                table.insert(list, {folder = pf, category = cat})
+                table.insert(list, {folder = pf, category = normCat})
             end
         end
     end
@@ -301,11 +331,11 @@ local function getEquippedFolders()
     if char then
         local wi = char:FindFirstChild("WornItems")
         if wi then
-            for _, cat in ipairs(categoriesList) do
-                local cf = wi:FindFirstChild(cat)
+            for folderName, normCat in pairs(categoryMap) do
+                local cf = wi:FindFirstChild(folderName)
                 local pf = cf and (cf:FindFirstChild(lp.Name) or cf:FindFirstChild(tostring(lp.UserId)))
                 if pf then
-                    table.insert(list, {folder = pf, category = cat})
+                    table.insert(list, {folder = pf, category = normCat})
                 end
             end
         end
@@ -416,6 +446,68 @@ local function findRoyaleHighItemsOnAvatar()
     return itemsFound
 end
 
+-- Find a specific newly spawned Royale High item on the avatar or in EquippedStorage
+local function findSpecificItemOnAvatar(itemName, cat, beforeSet)
+    local char = lp.Character
+    if not char then return nil, nil end
+    local cleanTarget = (itemName or ""):lower():gsub("[^%w]", "")
+
+    local function matchesName(inst)
+        if not inst then return false end
+        local n = inst.Name:lower():gsub("[^%w]", "")
+        if cleanTarget ~= "" and (n == cleanTarget or n:find(cleanTarget, 1, true) or cleanTarget:find(n, 1, true)) then
+            return true
+        end
+        for _, vName in ipairs({"HeelName", "ItemName", "AssetName", "SkirtName", "BodiceName"}) do
+            local sv = inst:FindFirstChild(vName, true)
+            if sv and sv:IsA("StringValue") then
+                local vn = sv.Value:lower():gsub("[^%w]", "")
+                if cleanTarget ~= "" and (vn == cleanTarget or vn:find(cleanTarget, 1, true) or cleanTarget:find(vn, 1, true)) then
+                    return true
+                end
+            end
+        end
+        local attr = inst:GetAttribute("RH_ItemName")
+        if type(attr) == "string" then
+            local an = attr:lower():gsub("[^%w]", "")
+            if cleanTarget ~= "" and (an == cleanTarget or an:find(cleanTarget, 1, true) or cleanTarget:find(an, 1, true)) then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- 1. Check EquippedStorage & WornItems first
+    for _, info in ipairs(getEquippedFolders()) do
+        for _, child in ipairs(info.folder:GetChildren()) do
+            if not isBaseAvatarObject(child) then
+                if matchesName(child) then
+                    return child, info.category
+                end
+                if beforeSet and not beforeSet[child] and (not cat or info.category == cat) then
+                    return child, info.category
+                end
+            end
+        end
+    end
+
+    -- 2. Check Character direct children (excluding RH_BakedWardrobe)
+    for _, d in ipairs(char:GetChildren()) do
+        if not isBaseAvatarObject(d) and d.Name ~= "RH_BakedWardrobe" then
+            if d:IsA("Model") or d:IsA("Folder") or d:IsA("Accessory") or d:IsA("MeshPart") then
+                if matchesName(d) then
+                    return d, cat
+                end
+                if beforeSet and not beforeSet[d] then
+                    return d, cat
+                end
+            end
+        end
+    end
+
+    return nil, nil
+end
+
 -- 1:1 Single-Clone Layer Baker Engine: Clones exactly 1 instance per slot, matching relative CFrames & welds 1:1
 local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
     if not sourceItem then return nil end
@@ -506,11 +598,11 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
         local rightParts = {}
 
         if clone:IsA("BasePart") then
-            if clone.Position.X < hrp.Position.X then table.insert(leftParts, clone) else table.insert(rightParts, clone) end
+            if hrp.CFrame:PointToObjectSpace(clone.Position).X < 0 then table.insert(leftParts, clone) else table.insert(rightParts, clone) end
         else
             for _, p in ipairs(clone:GetDescendants()) do
                 if p:IsA("BasePart") then
-                    if p.Position.X < hrp.Position.X then table.insert(leftParts, p) else table.insert(rightParts, p) end
+                    if hrp.CFrame:PointToObjectSpace(p.Position).X < 0 then table.insert(leftParts, p) else table.insert(rightParts, p) end
                 end
             end
         end
@@ -565,8 +657,29 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
         elseif cat == "Halos" then
             targetLimb = char:FindFirstChild("Head") or hrp
         else
-            -- Accessories: find nearest or attached limb
-            targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Head") or char:FindFirstChild("LowerTorso") or hrp
+            -- Accessories: resolve target limb from Attachment inside accessory, or fallback to UpperTorso/Head
+            local att = clone:FindFirstChildWhichIsA("Attachment", true)
+            if att then
+                local an = att.Name:lower()
+                if an:find("hat") or an:find("face") or an:find("hair") or an:find("head") then
+                    targetLimb = char:FindFirstChild("Head")
+                elseif an:find("waist") then
+                    targetLimb = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso")
+                elseif an:find("rightgrip") or an:find("righthand") then
+                    targetLimb = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
+                elseif an:find("leftgrip") or an:find("lefthand") then
+                    targetLimb = char:FindFirstChild("LeftHand") or char:FindFirstChild("Left Arm")
+                elseif an:find("rightshoulder") then
+                    targetLimb = char:FindFirstChild("RightUpperArm") or char:FindFirstChild("Right Arm")
+                elseif an:find("leftshoulder") then
+                    targetLimb = char:FindFirstChild("LeftUpperArm") or char:FindFirstChild("Left Arm")
+                else
+                    targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+                end
+            end
+            if not targetLimb then
+                targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Head") or char:FindFirstChild("LowerTorso") or hrp
+            end
         end
 
         local allParts = {}
@@ -609,12 +722,8 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
         end
     end
 
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if clone:IsA("Accessory") and hum then
-        hum:AddAccessory(clone)
-    else
-        clone.Parent = bakedFolder
-    end
+    -- Keep ALL baked clones strictly inside RH_BakedWardrobe so multi-accessory stacking & unequipping always work 1:1
+    clone.Parent = bakedFolder
 
     if cat == "Heels" then
         for _, lName in ipairs(legPartNames) do
@@ -926,6 +1035,11 @@ local function addOrUpdateCatalogItem(cat, alias, assetName, price, img, isServe
     elseif type(img) == "number" and img > 0 then
         imgStr = "rbxassetid://" .. tostring(img)
     end
+    if imgStr == "" and rhImageLookup then
+        local c1 = (alias or ""):lower():gsub("[^%w]", "")
+        local c2 = (assetName or ""):lower():gsub("[^%w]", "")
+        imgStr = rhImageLookup[c1] or rhImageLookup[c2] or ""
+    end
 
     if existing then
         if isServerData and imgStr ~= "" then
@@ -962,10 +1076,1364 @@ local function addOrUpdateCatalogItem(cat, alias, assetName, price, img, isServe
     end
 end
 
+local rhImageLookup = {
+    ["10"] = "rbxassetid://13119449049",
+    ["11"] = "rbxassetid://13119449049",
+    ["16"] = "rbxassetid://7199772873",
+    ["17"] = "rbxassetid://5673202279",
+    ["1ktriscolumn"] = "rbxassetid://9022273675",
+    ["20sfingerwavebangs"] = "rbxassetid://10729968366",
+    ["22"] = "rbxassetid://7199772858",
+    ["23"] = "rbxassetid://7199772858",
+    ["24"] = "rbxassetid://7199772858",
+    ["25"] = "rbxassetid://7199772858",
+    ["27"] = "rbxassetid://13119449049",
+    ["28"] = "rbxassetid://13119449049",
+    ["29"] = "rbxassetid://13119449049",
+    ["2cool4school"] = "rbxassetid://2689751470",
+    ["30"] = "rbxassetid://7199772871",
+    ["31"] = "rbxassetid://5673172057",
+    ["33"] = "rbxassetid://7199772851",
+    ["34"] = "rbxassetid://13119449049",
+    ["60scurledbangs"] = "rbxassetid://7026182716",
+    ["80smessybangs"] = "rbxassetid://7026943056",
+    ["80ssummercamp"] = "rbxassetid://7026929910",
+    ["90smaincharacterbangs"] = "rbxassetid://7026918533",
+    ["adorableidol"] = "rbxassetid://3260522900",
+    ["aestheticlowbun"] = "rbxassetid://13166358230",
+    ["aestheticlowtiedponytail"] = "rbxassetid://13166358600",
+    ["afroflapperfingerwaves"] = "rbxassetid://11105052101",
+    ["ahobowhere"] = "rbxassetid://1492198449",
+    ["akari"] = "rbxassetid://8026114406",
+    ["akarisbangs"] = "rbxassetid://8026105531",
+    ["allisson"] = "rbxassetid://7662424147",
+    ["alteregoplatformboots"] = "rbxassetid://4244517908",
+    ["altwolfcut"] = "rbxassetid://8699745475",
+    ["ambabycurls"] = "rbxassetid://4618886905",
+    ["amiamagicalgirlyet"] = "rbxassetid://3823105578",
+    ["angel"] = "rbxassetid://7632282151",
+    ["angelbangs"] = "rbxassetid://7632179927",
+    ["anna"] = "rbxassetid://82992952",
+    ["annoyingstrand"] = "rbxassetid://7026889668",
+    ["anto"] = "rbxassetid://8326665413",
+    ["aphrodite"] = "rbxassetid://82992952",
+    ["aphroditepony"] = "rbxassetid://6185156839",
+    ["aphroditesshoulderbag"] = "rbxassetid://2804900854",
+    ["arachnofabulous"] = "rbxassetid://5780659637",
+    ["arch"] = "rbxassetid://7478789946",
+    ["archerykitforlovefairies"] = "rbxassetid://2804901110",
+    ["ariana"] = "rbxassetid://2066489431",
+    ["aripunzel"] = "rbxassetid://5490163877",
+    ["arrowlabel"] = "rbxassetid://7791468974",
+    ["artemis"] = "rbxassetid://8635368421",
+    ["astralrattail"] = "rbxassetid://18282994000",
+    ["astroidqt"] = "rbxassetid://5218480479",
+    ["asuna"] = "rbxassetid://5163345742",
+    ["attheball"] = "rbxassetid://972979511",
+    ["aurorasbattleaxe"] = "rbxassetid://8121752268",
+    ["auroraslongsword"] = "rbxassetid://8121750656",
+    ["avery"] = "rbxassetid://7026142006",
+    ["averybangs"] = "rbxassetid://7026164010",
+    ["avrillasbluntbang"] = "rbxassetid://81581982470606",
+    ["avrillasbuns"] = "rbxassetid://103892948674149",
+    ["avrillaschainedtails"] = "rbxassetid://103892948674149",
+    ["babydolladorabledress"] = "rbxassetid://5332502061",
+    ["babydolladorablesleeves"] = "rbxassetid://5332534268",
+    ["babystarbear"] = "rbxassetid://15496813004",
+    ["babystarpenguin"] = "rbxassetid://8116118294",
+    ["background"] = "rbxassetid://2391516273",
+    ["backstageflapper"] = "rbxassetid://11105052101",
+    ["backtails"] = "rbxassetid://100702506248808",
+    ["backwardonlyvisual"] = "rbxassetid://5941121032",
+    ["bailey"] = "rbxassetid://13166361468",
+    ["balconydecormesh"] = "rbxassetid://7478789946",
+    ["balconyprincess"] = "rbxassetid://4327933081",
+    ["balconyprincessshort"] = "rbxassetid://4327933081",
+    ["ballroombutlertrousersdressshoes"] = "rbxassetid://123045630811449",
+    ["bangs"] = "rbxassetid://134101719023478",
+    ["bangs001"] = "rbxassetid://12458847266",
+    ["banisters"] = "rbxassetid://7885260409",
+    ["barbiessignature"] = "rbxassetid://2326148828",
+    ["base"] = "rbxassetid://6986788039",
+    ["basicbowl01"] = "rbxassetid://7478790723",
+    ["batmoheels"] = "rbxassetid://139654244910106",
+    ["batpack"] = "rbxassetid://7588478248",
+    ["beachboy"] = "rbxassetid://6328177401",
+    ["beachcomber"] = "rbxassetid://863919484",
+    ["beachsidelifeguard"] = "rbxassetid://7026793607",
+    ["beachybeautybraids"] = "rbxassetid://15635724627",
+    ["beachybeautybraidsbangs"] = "rbxassetid://18283919917",
+    ["beachybeautylocs"] = "rbxassetid://15635724627",
+    ["beachybeautylocsbangs"] = "rbxassetid://18283919917",
+    ["beautifularch"] = "rbxassetid://7018729261",
+    ["becky"] = "rbxassetid://4603934061",
+    ["beckybangs"] = "rbxassetid://4603930781",
+    ["beeismslongwaves"] = "rbxassetid://4250784505",
+    ["beth"] = "rbxassetid://13747251756",
+    ["bgbehindinventory"] = "rbxassetid://1454133912",
+    ["bgheart"] = "rbxassetid://12156357522",
+    ["bigbabyroof"] = "rbxassetid://9171979200",
+    ["bigbangpony"] = "rbxassetid://4330791239",
+    ["bigbossbabe"] = "rbxassetid://6348186093",
+    ["black"] = "rbxassetid://2113398727",
+    ["blazingbraids"] = "rbxassetid://83589025028182",
+    ["blazingbraidsfull"] = "rbxassetid://83589025028182",
+    ["blazingsoul"] = "rbxassetid://2776651073",
+    ["blazingsoulbangs"] = "rbxassetid://2952866367",
+    ["blazingtresses"] = "rbxassetid://133040905923621",
+    ["blitzycurls"] = "rbxassetid://2066336199",
+    ["blonde"] = "rbxassetid://2113398727",
+    ["blossomprincess"] = "rbxassetid://5490288699",
+    ["blue"] = "rbxassetid://2113398727",
+    ["blueberrybackground"] = "rbxassetid://933761772",
+    ["bluntwaterfallbangs"] = "rbxassetid://15071819930",
+    ["bluntwaterfallbangslarge"] = "rbxassetid://15071819930",
+    ["bluntwaterfallwaves"] = "rbxassetid://15071819610",
+    ["body"] = "rbxassetid://12559084185",
+    ["bohohalfbraided"] = "rbxassetid://8699745588",
+    ["bookworm"] = "rbxassetid://5490375479",
+    ["bora"] = "rbxassetid://8143906862",
+    ["bossbabe"] = "rbxassetid://6332524758",
+    ["bottomdecor"] = "rbxassetid://7018837423",
+    ["bowobsessionpigtails"] = "rbxassetid://13778440533",
+    ["boybandidol"] = "rbxassetid://2757715813",
+    ["braidedbunbeauty"] = "rbxassetid://4461584272",
+    ["braideddoublebuns"] = "rbxassetid://5312834970",
+    ["braidedgoddess"] = "rbxassetid://5312834970",
+    ["braidedhairtest"] = "rbxassetid://5366105839",
+    ["braidextensions"] = "rbxassetid://5361835126",
+    ["brainfreeze"] = "rbxassetid://11079731882",
+    ["brianna"] = "rbxassetid://5280112991",
+    ["brielle"] = "rbxassetid://7236613786",
+    ["brown"] = "rbxassetid://2113398727",
+    ["bruh"] = "rbxassetid://1115861904",
+    ["bunhead"] = "rbxassetid://82992952",
+    ["bunsandbangs"] = "rbxassetid://2071475257",
+    ["bunsfordays"] = "rbxassetid://3014369412",
+    ["bush"] = "rbxassetid://9098991338",
+    ["busymissy"] = "rbxassetid://5490016960",
+    ["buttercup"] = "rbxassetid://5490141298",
+    ["butterflysoftie"] = "rbxassetid://5490419801",
+    ["buzzybunz"] = "rbxassetid://132218908249112",
+    ["bziercurve275"] = "rbxassetid://114883140468470",
+    ["bziercurve278"] = "rbxassetid://76111343507093",
+    ["bziercurve281"] = "rbxassetid://100702506248808",
+    ["bziercurve286"] = "rbxassetid://76521476651930",
+    ["camila"] = "rbxassetid://6020721934",
+    ["camilasbangs"] = "rbxassetid://6020642027",
+    ["candy"] = "rbxassetid://12296559004",
+    ["candybraidbb"] = "rbxassetid://4623118650",
+    ["candybraidbbbangs"] = "rbxassetid://4623117755",
+    ["candydreams"] = "rbxassetid://9192352893",
+    ["candysbangs"] = "rbxassetid://12296565878",
+    ["carameltocremelongwaves"] = "rbxassetid://4250784505",
+    ["carmen"] = "rbxassetid://5708863910",
+    ["carolina"] = "rbxassetid://13599349122",
+    ["caroloftheelvesbooties"] = "rbxassetid://4244517908",
+    ["cartoonlady"] = "rbxassetid://570653196",
+    ["casualbun"] = "rbxassetid://3276169390",
+    ["casualbunbangs"] = "rbxassetid://3276122060",
+    ["casualsidepart"] = "rbxassetid://7674267982",
+    ["cattyglasses"] = "rbxassetid://15932396131",
+    ["celebrationsombrero"] = "rbxassetid://114907566839210",
+    ["celestialcathedralveil"] = "rbxassetid://8692995862",
+    ["celestialflowerbouquet"] = "rbxassetid://8692996045",
+    ["chamberchains"] = "rbxassetid://7593462444",
+    ["chanel"] = "rbxassetid://6018279145",
+    ["charles"] = "rbxassetid://13169198509",
+    ["charly"] = "rbxassetid://5774756929",
+    ["charlyslayeredmullet"] = "rbxassetid://13166366290",
+    ["charlysmulletaddon"] = "rbxassetid://13169021583",
+    ["charminggentleman"] = "rbxassetid://2757699409",
+    ["checkmark"] = "rbxassetid://7092210601",
+    ["checkmark2"] = "rbxassetid://12156357522",
+    ["cheercaptain"] = "rbxassetid://6185103180",
+    ["cheercaptainbangs"] = "rbxassetid://6185121761",
+    ["cheercaptainponytailaddon"] = "rbxassetid://6185103180",
+    ["cheercaptainponytailaddonlower"] = "rbxassetid://6185103180",
+    ["cheerleadercurls"] = "rbxassetid://4339540776",
+    ["cheersquad"] = "rbxassetid://6185284006",
+    ["chemtrails"] = "rbxassetid://5783002068",
+    ["cherryblossombackbow"] = "rbxassetid://4940600691",
+    ["cherryblossombillowingsleeves"] = "rbxassetid://4961936910",
+    ["cherryblossombuddingbodice"] = "rbxassetid://4961936060",
+    ["cherryblossomhairpins"] = "rbxassetid://4940534712",
+    ["cherryblossomhandfan"] = "rbxassetid://4940581713",
+    ["cherryblossomrarebloomskirt"] = "rbxassetid://4961796719",
+    ["cherryblossomwoodensandals"] = "rbxassetid://4244517908",
+    ["cherubdestiny"] = "rbxassetid://16534670508",
+    ["chibimoon"] = "rbxassetid://2757303952",
+    ["chicnhealthy"] = "rbxassetid://82992952",
+    ["chicponytailfrontlocs"] = "rbxassetid://17513806690",
+    ["chicponytaillocs"] = "rbxassetid://16562534082",
+    ["chloe"] = "rbxassetid://5218498110",
+    ["christmasqueenpageantskirt"] = "rbxassetid://7969720914",
+    ["christmaswindowshoppingtophat"] = "rbxassetid://7969718150",
+    ["chromaesbraid"] = "rbxassetid://93468139201986",
+    ["chromaessidesweptbang"] = "rbxassetid://87709174449885",
+    ["clara"] = "rbxassetid://7610228685",
+    ["classangel"] = "rbxassetid://3280448678",
+    ["classangellong"] = "rbxassetid://3260635902",
+    ["classpresident"] = "rbxassetid://3280072975",
+    ["classpresidentbangs"] = "rbxassetid://3280071296",
+    ["clearinventorypopup"] = "rbxassetid://933761772",
+    ["close"] = "rbxassetid://935455855",
+    ["closeandsave"] = "rbxassetid://4957796872",
+    ["cloud"] = "rbxassetid://6328544904",
+    ["cloudybraids"] = "rbxassetid://8699790068",
+    ["cloudybraidsbangs"] = "rbxassetid://8699789578",
+    ["cloudydreamsafroextensions"] = "rbxassetid://16534722707",
+    ["cloudydreamsbantuknots"] = "rbxassetid://16535289940",
+    ["coco"] = "rbxassetid://5313124673",
+    ["coiledbuns"] = "rbxassetid://6020642185",
+    ["coldair"] = "rbxassetid://134324168050851",
+    ["collegefashionstudent"] = "rbxassetid://972938745",
+    ["color1"] = "rbxassetid://7478790613",
+    ["colorableshaved"] = "rbxassetid://16433551229",
+    ["colorgeist"] = "rbxassetid://122328767534973",
+    ["column1"] = "rbxassetid://9024919795",
+    ["comet"] = "rbxassetid://12273331001",
+    ["cometsbangs"] = "rbxassetid://12273317617",
+    ["cometsleftpony"] = "rbxassetid://12273318521",
+    ["cometsponies"] = "rbxassetid://12273318521",
+    ["cometsrightpony"] = "rbxassetid://12273319407",
+    ["cookiecutterloverloafers"] = "rbxassetid://8010121056",
+    ["coronationceremony"] = "rbxassetid://542278998",
+    ["cosmicprincess"] = "rbxassetid://8073686629",
+    ["cosplayqueen"] = "rbxassetid://2995229846",
+    ["cosplayqueenbangs"] = "rbxassetid://2995284640",
+    ["cottagecutie"] = "rbxassetid://5490384228",
+    ["cottagemaid"] = "rbxassetid://5490399613",
+    ["cottagemaiden"] = "rbxassetid://13554016058",
+    ["cottagemaidenbangs"] = "rbxassetid://13599057865",
+    ["countess"] = "rbxassetid://7632179143",
+    ["couturecoffinnails"] = "rbxassetid://129599085337775",
+    ["covenssupreme"] = "rbxassetid://7614994521",
+    ["covenstudent"] = "rbxassetid://11079268903",
+    ["covenstudentbangs"] = "rbxassetid://11079270803",
+    ["crazyinloveglasses"] = "rbxassetid://2804901380",
+    ["crescentmooncloak"] = "rbxassetid://7595136625",
+    ["crestpointedmane"] = "rbxassetid://127505953291859",
+    ["crestskullshavenmullet"] = "rbxassetid://109609805861370",
+    ["criminalmind"] = "rbxassetid://11079836632",
+    ["crispairpuffyjacket"] = "rbxassetid://6026062237",
+    ["crownedelegance"] = "rbxassetid://6185182461",
+    ["crownedelegancebangs"] = "rbxassetid://6185189358",
+    ["crownmolding"] = "rbxassetid://9021333191",
+    ["crystal"] = "rbxassetid://12048441559",
+    ["crystalwovenhairpiece"] = "rbxassetid://124715643874669",
+    ["cupidstouchbantuknots"] = "rbxassetid://16535309031",
+    ["cupidstouchextensions"] = "rbxassetid://16535575461",
+    ["curlbangs"] = "rbxassetid://972874829",
+    ["curlsnbuns"] = "rbxassetid://715163525",
+    ["curlyflapperfingerwaves"] = "rbxassetid://11105113033",
+    ["curlyfringebangs"] = "rbxassetid://5280195280",
+    ["curlyhighdollyextension"] = "rbxassetid://13778447183",
+    ["curlyladronabigtails"] = "rbxassetid://13775359758",
+    ["curlyladronapigtails"] = "rbxassetid://13775352661",
+    ["curlylowdollyextension"] = "rbxassetid://13778447183",
+    ["curlzdelight"] = "rbxassetid://2066517266",
+    ["curlztwirlz"] = "rbxassetid://4907709957",
+    ["curtain"] = "rbxassetid://7696029167",
+    ["curtaininthewindow1"] = "rbxassetid://7696029167",
+    ["customskintone"] = "rbxassetid://1454183175",
+    ["cutecarrotnose"] = "rbxassetid://8120763722",
+    ["cuteshortandwavy"] = "rbxassetid://82992952",
+    ["cutesybangs"] = "rbxassetid://3820890446",
+    ["cutesybuns"] = "rbxassetid://3820887670",
+    ["cutesybunspulledback"] = "rbxassetid://3820887670",
+    ["cutiecupid"] = "rbxassetid://6348177781",
+    ["cutiecupidbangs"] = "rbxassetid://6348178155",
+    ["cuttingedgeclawnails"] = "rbxassetid://88397039737720",
+    ["daehyun"] = "rbxassetid://8143896327",
+    ["dahlia"] = "rbxassetid://7632178215",
+    ["daintydoll"] = "rbxassetid://13552290462",
+    ["daintydollbangs"] = "rbxassetid://13552346179",
+    ["dalila"] = "rbxassetid://5366081757",
+    ["damon"] = "rbxassetid://7631578999",
+    ["dappersidepart"] = "rbxassetid://13169716036",
+    ["darkbackground"] = "rbxassetid://1454133912",
+    ["darkblue"] = "rbxassetid://2113398727",
+    ["darkbrown"] = "rbxassetid://2113398727",
+    ["darkpixie"] = "rbxassetid://5490222361",
+    ["darla"] = "rbxassetid://7588324731",
+    ["darlingacademiauniformjacketandskirt"] = "rbxassetid://15496834534",
+    ["darlingvalentinalacebodice"] = "rbxassetid://11111531725",
+    ["darlingvalentinalacecuffs"] = "rbxassetid://4665355394",
+    ["darlingvalentinalollipopheels"] = "rbxassetid://4244517908",
+    ["darlingvalentinamorningeveningskirt"] = "rbxassetid://4665955657",
+    ["dashingbangs"] = "rbxassetid://5490250671",
+    ["dashingthroughthesnowscarf"] = "rbxassetid://7969717797",
+    ["davinki"] = "rbxassetid://5312834970",
+    ["daydreamspigtails"] = "rbxassetid://5218464618",
+    ["deathhawk"] = "rbxassetid://11079272172",
+    ["decembersdream"] = "rbxassetid://82992952",
+    ["decembersdreambodice"] = "rbxassetid://8309592942",
+    ["decembersdreamcoatjacket"] = "rbxassetid://8309598477",
+    ["decembersdreamcossackhat"] = "rbxassetid://8309588314",
+    ["decembersdreamdancerskirt"] = "rbxassetid://8309593608",
+    ["decembersdreamearrings"] = "rbxassetid://8309593144",
+    ["decembersdreamfurmuff"] = "rbxassetid://8309592780",
+    ["decembersdreamshoes"] = "rbxassetid://8312013005",
+    ["decembersdreamsleevesgloves"] = "rbxassetid://8309586738",
+    ["deepsearadiantpuffs"] = "rbxassetid://115805250440418",
+    ["delicateempress"] = "rbxassetid://3714753718",
+    ["delicateframingcurls"] = "rbxassetid://133474866702280",
+    ["despairtwintails"] = "rbxassetid://4557003218",
+    ["despairtwintailsbangs"] = "rbxassetid://4557014753",
+    ["destiny"] = "rbxassetid://5280014244",
+    ["devilhairextensionslong"] = "rbxassetid://15071818397",
+    ["devilhairextensionslonger"] = "rbxassetid://15071818397",
+    ["devilhornbuns"] = "rbxassetid://15071818397",
+    ["devilhornbunsaddon"] = "rbxassetid://15085413822",
+    ["devilhornbunsscalpaddon"] = "rbxassetid://15071819108",
+    ["devilpulledbackbangs"] = "rbxassetid://15071818736",
+    ["devon"] = "rbxassetid://5312839862",
+    ["devorah"] = "rbxassetid://8300966804",
+    ["devorahsbangs"] = "rbxassetid://5312834970",
+    ["diamond"] = "rbxassetid://13119449049",
+    ["diamondwovenhairpiece"] = "rbxassetid://124715643874669",
+    ["dior"] = "rbxassetid://5708826289",
+    ["discogoddess"] = "rbxassetid://5312834970",
+    ["discoqueen"] = "rbxassetid://82992952",
+    ["discoqueenbangs"] = "rbxassetid://82992952",
+    ["distinguisheddoctorhat"] = "rbxassetid://102924085367188",
+    ["distinguisheddoctormask"] = "rbxassetid://130325638012778",
+    ["distinguishedrollercurls"] = "rbxassetid://74236627021485",
+    ["divinediamondsheartearrings"] = "rbxassetid://8692996254",
+    ["divinediamondsheartringbracelet"] = "rbxassetid://8692996168",
+    ["divinehaven"] = "rbxassetid://9190518962",
+    ["dollbob"] = "rbxassetid://94943349116552",
+    ["dominique"] = "rbxassetid://5312839862",
+    ["dontcolor"] = "rbxassetid://7478790678",
+    ["dotdancestorscelebrationskull"] = "rbxassetid://84828488637315",
+    ["dotdaromaticchestflowers"] = "rbxassetid://101315025526338",
+    ["dotdaromaticflowercrown"] = "rbxassetid://91893418760922",
+    ["dotdaromaticheadflowers"] = "rbxassetid://90197212222680",
+    ["doublebraidedloops"] = "rbxassetid://13167779809",
+    ["doublebuns"] = "rbxassetid://82992952",
+    ["doubleponytail"] = "rbxassetid://2507076539",
+    ["doubleponytailbangs"] = "rbxassetid://2513713816",
+    ["dragonheiress"] = "rbxassetid://6020735506",
+    ["dragonheiressbangs"] = "rbxassetid://6020735876",
+    ["dreamgirl"] = "rbxassetid://13747002239",
+    ["dreamgurlbangs"] = "rbxassetid://4586632941",
+    ["dreamgurlcurls"] = "rbxassetid://4586427623",
+    ["dreamingprincess"] = "rbxassetid://880932680",
+    ["dressupcameratoggle"] = "rbxassetid://16357517832",
+    ["drillthrills"] = "rbxassetid://4621366811",
+    ["dropdownbuttonforlooks"] = "rbxassetid://5941121032",
+    ["duchessspireveilhat"] = "rbxassetid://132330579005333",
+    ["dudstud"] = "rbxassetid://15730710",
+    ["duri"] = "rbxassetid://8143892778",
+    ["dutchbraids"] = "rbxassetid://5000431627",
+    ["dutchbraidsbangs"] = "rbxassetid://5000431627",
+    ["edges"] = "rbxassetid://74726757759487",
+    ["effortlessycoolbangs"] = "rbxassetid://13777812621",
+    ["effortlessycoolbun"] = "rbxassetid://13778669046",
+    ["eleanor"] = "rbxassetid://7026861716",
+    ["elegancebutterflyveil"] = "rbxassetid://4643949185",
+    ["eleganceroseboutineer"] = "rbxassetid://4643990755",
+    ["elegancerosecorsage"] = "rbxassetid://4643956412",
+    ["elegantgirl"] = "rbxassetid://757687729",
+    ["elegantparasol"] = "rbxassetid://8705849627",
+    ["elegantroyalty"] = "rbxassetid://2507563024",
+    ["elegantroyaltybangs"] = "rbxassetid://2507563024",
+    ["elegantwaterfall"] = "rbxassetid://6020642933",
+    ["elegantwaterfallbangs"] = "rbxassetid://6020643121",
+    ["elfhelperhat"] = "rbxassetid://7969718774",
+    ["elite"] = "rbxassetid://736015315",
+    ["ellanie"] = "rbxassetid://7610216329",
+    ["emma"] = "rbxassetid://4686544373",
+    ["emmabangs"] = "rbxassetid://4753833035",
+    ["envypunkpigtails"] = "rbxassetid://13600105274",
+    ["epicbraids"] = "rbxassetid://2101069090",
+    ["erik"] = "rbxassetid://5312834970",
+    ["erika"] = "rbxassetid://6020639395",
+    ["estrella"] = "rbxassetid://5365606084",
+    ["estrellasbluntbangs"] = "rbxassetid://5365606537",
+    ["ethan"] = "rbxassetid://8026653981",
+    ["etherealcurls"] = "rbxassetid://17525585336",
+    ["etherealcurlsbangs"] = "rbxassetid://17525382531",
+    ["everfriendsbangs"] = "rbxassetid://13166363009",
+    ["everfriendshalfupheartbuns"] = "rbxassetid://13166362630",
+    ["everfriendshalfupheartbunsaddon"] = "rbxassetid://13166362804",
+    ["everybodysdreamgirl"] = "rbxassetid://13747104232",
+    ["exaltedelegance"] = "rbxassetid://99930977481693",
+    ["exaltedelegancefull"] = "rbxassetid://87541450948270",
+    ["exaltedelegancetresses"] = "rbxassetid://87541450948270",
+    ["experiment1235"] = "rbxassetid://118608049481226",
+    ["experiment1238"] = "rbxassetid://127157908658013",
+    ["experimentalmulletaddon"] = "rbxassetid://85614806092398",
+    ["fabulousfurboa"] = "rbxassetid://8009685411",
+    ["fairytaleprincessbraid"] = "rbxassetid://8635368421",
+    ["fairytaleprincessbraidsbangs"] = "rbxassetid://9511267775",
+    ["fallenfaemistwovenwings"] = "rbxassetid://83872288940809",
+    ["fallenfaeschoppedbangs"] = "rbxassetid://110528828687393",
+    ["fallenfaeschoppedbraids"] = "rbxassetid://121809791580972",
+    ["fallenfaeschoppedbraidsextensions"] = "rbxassetid://121809791580972",
+    ["fallenfaeslongingbraids"] = "rbxassetid://88418116415438",
+    ["fallenfaeslongingbraidsextensions"] = "rbxassetid://136954778651324",
+    ["fallenfaesmessybob"] = "rbxassetid://88418116415438",
+    ["fallenfaesreminiscingbraids"] = "rbxassetid://88418116415438",
+    ["fallenfaesreminiscingbraidsextensions"] = "rbxassetid://92974560232828",
+    ["fallenfaetatteredtoprosechoker"] = "rbxassetid://113771155649424",
+    ["fallenfaetornadornedsleeves"] = "rbxassetid://132242371259852",
+    ["fallenfaetwistedtiara"] = "rbxassetid://129823584781837",
+    ["fallenfaewickedroseskirt"] = "rbxassetid://84633162449325",
+    ["famousbangs"] = "rbxassetid://6018667464",
+    ["fanciestupdo"] = "rbxassetid://843223600",
+    ["fancymonocleeyepiece"] = "rbxassetid://7593486019",
+    ["fashionapocolypse"] = "rbxassetid://1022686667",
+    ["fashionmodel"] = "rbxassetid://2994377186",
+    ["fatherchristmaspresentbag"] = "rbxassetid://7969720753",
+    ["featheredgoddess"] = "rbxassetid://13598841070",
+    ["featheredhair"] = "rbxassetid://13598561511",
+    ["festivalday"] = "rbxassetid://6348215041",
+    ["festivaldaybangs"] = "rbxassetid://6348216083",
+    ["fiendishears"] = "rbxassetid://120250878985771",
+    ["fiercebangs"] = "rbxassetid://4627912763",
+    ["fiercecurls"] = "rbxassetid://4627908280",
+    ["fierceshybangs"] = "rbxassetid://4627912763",
+    ["fireflames"] = "rbxassetid://4753830926",
+    ["flagpole"] = "rbxassetid://4830731540",
+    ["flapperfingerwaves"] = "rbxassetid://11105052101",
+    ["flapperstylefingerwavebangs"] = "rbxassetid://11105229673",
+    ["flawless"] = "rbxassetid://1347571818",
+    ["flawlessboy"] = "rbxassetid://6018980015",
+    ["flowerbed"] = "rbxassetid://6018893590",
+    ["flowergal"] = "rbxassetid://13749049887",
+    ["flowerqueen"] = "rbxassetid://13749073798",
+    ["flowinginthewind"] = "rbxassetid://2753438193",
+    ["flowinginthewindbangs"] = "rbxassetid://2778468286",
+    ["fluffycatears"] = "rbxassetid://91763373955555",
+    ["fluffyclippedponytail"] = "rbxassetid://15071813896",
+    ["fluffyclippedponytailaddon"] = "rbxassetid://15071814077",
+    ["flutteryfrozenfan"] = "rbxassetid://8011917112",
+    ["flynn"] = "rbxassetid://7636601167",
+    ["flynnsbangs"] = "rbxassetid://7636599337",
+    ["foldedupdo"] = "rbxassetid://579306624",
+    ["forwardonlyvisual"] = "rbxassetid://5941121032",
+    ["fountaingirlsbangs"] = "rbxassetid://12458847266",
+    ["fountaingirlsblowinghair"] = "rbxassetid://12458830811",
+    ["fountaingirlsdiamondbangs"] = "rbxassetid://12458847266",
+    ["fountaingirlsdiamondblowinghair"] = "rbxassetid://12458830811",
+    ["fountaingirlsdiamondhair"] = "rbxassetid://12458830811",
+    ["fountaingirlshair"] = "rbxassetid://12458830811",
+    ["fountaingirlsluckystepfootwear"] = "rbxassetid://4244517908",
+    ["foxtrot"] = "rbxassetid://95702835920635",
+    ["foxtrotbangs"] = "rbxassetid://134101719023478",
+    ["foxybangs"] = "rbxassetid://9204784480",
+    ["foxylowtiedponytail"] = "rbxassetid://9204783248",
+    ["frame"] = "rbxassetid://7478789946",
+    ["frenchbraidbeautybuns"] = "rbxassetid://4647504617",
+    ["frenchbraidbeautyponies"] = "rbxassetid://4647502694",
+    ["frenchbraidbuns"] = "rbxassetid://82992952",
+    ["frenchbraids"] = "rbxassetid://966201193",
+    ["freshcut"] = "rbxassetid://6357495553",
+    ["fringebb"] = "rbxassetid://972864188",
+    ["fronttails"] = "rbxassetid://76111343507093",
+    ["frozenluggage"] = "rbxassetid://8097395651",
+    ["frozenroyaltycrown"] = "rbxassetid://8097468251",
+    ["fruitycutie"] = "rbxassetid://5490082044",
+    ["fuzzyearmuffs"] = "rbxassetid://8219761306",
+    ["fuzzywarmsnowflakebowhat"] = "rbxassetid://6011493871",
+    ["gardenleisurecasualcurledupdo"] = "rbxassetid://73656181513691",
+    ["gardenleisurecurledupdo"] = "rbxassetid://73656181513691",
+    ["gate"] = "rbxassetid://7478790101",
+    ["gelledupneedlespikes"] = "rbxassetid://131256758687297",
+    ["gelleduprazorspikes"] = "rbxassetid://74756165298911",
+    ["genieinabottle"] = "rbxassetid://2325443459",
+    ["getemgurl"] = "rbxassetid://556675563",
+    ["ghosthead"] = "rbxassetid://11124998349",
+    ["ghostietransformation"] = "rbxassetid://7593487278",
+    ["giantteddybear"] = "rbxassetid://6358739502",
+    ["girlnextdoor"] = "rbxassetid://2688730430",
+    ["girlstampede"] = "rbxassetid://4753837242",
+    ["glamorousdiva"] = "rbxassetid://2506946750",
+    ["glamourqueen"] = "rbxassetid://844546880",
+    ["glamourrockstar"] = "rbxassetid://643128901",
+    ["glamourxo"] = "rbxassetid://4466600862",
+    ["glamourxobangs"] = "rbxassetid://4466600862",
+    ["glisteningstarfro"] = "rbxassetid://105252481463669",
+    ["glitterfrostcelebrationpearlpartyshawl"] = "rbxassetid://15496974533",
+    ["glitteringjellyplatforms"] = "rbxassetid://4244517908",
+    ["glitteringnoelbows"] = "rbxassetid://6026190385",
+    ["glow"] = "rbxassetid://3336093090",
+    ["goddessoftriumphbodiceofhope"] = "rbxassetid://10729348560",
+    ["goddessoftriumphfearlessgloves"] = "rbxassetid://10750492683",
+    ["goddessoftriumphfemmefleurfascinator"] = "rbxassetid://10758265593",
+    ["goddessoftriumphheelsofimmortality"] = "rbxassetid://10729420729",
+    ["goddessoftriumphribbonparasol"] = "rbxassetid://10758264344",
+    ["goddessoftriumphrosetterhinestoneearrings"] = "rbxassetid://10758263657",
+    ["goddessoftriumphvictoriousskirt"] = "rbxassetid://10747530752",
+    ["godisasinger"] = "rbxassetid://4347400875",
+    ["gold"] = "rbxassetid://2113398727",
+    ["goldenbantuknots"] = "rbxassetid://11138976094",
+    ["goldenbantuknotsedges"] = "rbxassetid://11138976707",
+    ["goldendefault"] = "rbxassetid://2113398727",
+    ["gonewiththewindbowheadband"] = "rbxassetid://6025736756",
+    ["goodgirlbangs"] = "rbxassetid://6018639099",
+    ["goodtidingsshawlcape"] = "rbxassetid://7969720148",
+    ["gothichimecut"] = "rbxassetid://15635405507",
+    ["gothichimemessybangs"] = "rbxassetid://15635405718",
+    ["gothicshoulderstrands"] = "rbxassetid://15635405826",
+    ["gothicswancut"] = "rbxassetid://15635405507",
+    ["gothicutiebodicejacket"] = "rbxassetid://7547725606",
+    ["gothicutieboots"] = "rbxassetid://7546862517",
+    ["gothicutieearrings"] = "rbxassetid://7542251722",
+    ["gothicutieskirt"] = "rbxassetid://7547689300",
+    ["gothlolitapurse"] = "rbxassetid://7593473355",
+    ["gothlolitaskirt"] = "rbxassetid://7593465178",
+    ["gothlolitasleeves"] = "rbxassetid://5774712034",
+    ["gothlolitawristcuffs"] = "rbxassetid://7593491733",
+    ["gracefulfairy"] = "rbxassetid://3260588288",
+    ["granddadscosplayingsantaclaus"] = "rbxassetid://15856449",
+    ["green"] = "rbxassetid://2113398727",
+    ["grundgebangs"] = "rbxassetid://5816999466",
+    ["grungygasglaringgoggles"] = "rbxassetid://140264295106252",
+    ["grungygasmuffsandmask"] = "rbxassetid://125068042471821",
+    ["guy10"] = "rbxassetid://898252449",
+    ["guy11"] = "rbxassetid://667528488",
+    ["guy12"] = "rbxassetid://19999424",
+    ["guy13"] = "rbxassetid://212966179",
+    ["guy14"] = "rbxassetid://1147479531",
+    ["guy15"] = "rbxassetid://12259117",
+    ["guy16"] = "rbxassetid://208526917",
+    ["guy17"] = "rbxassetid://346578029",
+    ["guy18"] = "rbxassetid://212348733",
+    ["guy19"] = "rbxassetid://62246019",
+    ["guy2"] = "rbxassetid://643138159",
+    ["guy20"] = "rbxassetid://434612568",
+    ["guy21"] = "rbxassetid://13199950",
+    ["guy22"] = "rbxassetid://538172339",
+    ["guy23"] = "rbxassetid://248341525",
+    ["guy24"] = "rbxassetid://433031789",
+    ["guy25"] = "rbxassetid://74878559",
+    ["guy26"] = "rbxassetid://169445595",
+    ["guy27"] = "rbxassetid://522538570",
+    ["guy28"] = "rbxassetid://983426733",
+    ["guy29"] = "rbxassetid://2164880354",
+    ["guy3"] = "rbxassetid://81504052",
+    ["guy30"] = "rbxassetid://145283773",
+    ["guy31"] = "rbxassetid://560180459",
+    ["guy32"] = "rbxassetid://23594638",
+    ["guy33"] = "rbxassetid://375815502",
+    ["guy34"] = "rbxassetid://19326912",
+    ["guy35"] = "rbxassetid://83515687",
+    ["guy4"] = "rbxassetid://643128213",
+    ["guy5"] = "rbxassetid://643130465",
+    ["guy6"] = "rbxassetid://1125231485",
+    ["guy7"] = "rbxassetid://643138828",
+    ["guy8"] = "rbxassetid://643138828",
+    ["guy9"] = "rbxassetid://643127591",
+    ["hair"] = "rbxassetid://128917781421404",
+    ["halfupspikedpigtails"] = "rbxassetid://13166360246",
+    ["halfupspikedpigtailsaddon"] = "rbxassetid://13167212443",
+    ["hannah"] = "rbxassetid://5365810935",
+    ["haru"] = "rbxassetid://5163238230",
+    ["heartbreaker"] = "rbxassetid://2757754085",
+    ["heartlinkbacksidebraids"] = "rbxassetid://18267655940",
+    ["heartlinkfrontalbraids"] = "rbxassetid://18267649930",
+    ["heavenlyharp"] = "rbxassetid://8692937003",
+    ["heavylayeredfringe"] = "rbxassetid://13600252825",
+    ["hellionhorns"] = "rbxassetid://14944124640",
+    ["hibiscuscurls"] = "rbxassetid://101381884605992",
+    ["hibiscusdensebangs"] = "rbxassetid://100772347741481",
+    ["hibiscusshortdensebangs"] = "rbxassetid://100772347741481",
+    ["hibiscussideburncurls"] = "rbxassetid://97886396188510",
+    ["hibiscussparsebangs"] = "rbxassetid://101199796182966",
+    ["hibiscuswaves"] = "rbxassetid://138208473589276",
+    ["hibiscuswavybangs"] = "rbxassetid://105475283565287",
+    ["hibiscuswavybangsleft"] = "rbxassetid://105475283565287",
+    ["hibiscuswavybangsright"] = "rbxassetid://86846295573087",
+    ["hideplayers"] = "rbxassetid://13051316455",
+    ["highrisebangs"] = "rbxassetid://8699745251",
+    ["highrisebuns"] = "rbxassetid://13166359008",
+    ["highthickponytail"] = "rbxassetid://972917686",
+    ["hijab"] = "rbxassetid://5312834970",
+    ["hippie"] = "rbxassetid://5713115928",
+    ["hollyday"] = "rbxassetid://6018876932",
+    ["hollywoodglam"] = "rbxassetid://82992952",
+    ["hotheadplugs"] = "rbxassetid://11128705953",
+    ["hugglysnugglybooties"] = "rbxassetid://4244517908",
+    ["hugglysnugglyknittedbeaniehat"] = "rbxassetid://15499622873",
+    ["hypnosisbangs"] = "rbxassetid://6018826139",
+    ["i3candy"] = "rbxassetid://2321984626",
+    ["iborrowedyourpencilinenglishclass"] = "rbxassetid://972964895",
+    ["ibroughtthebackup"] = "rbxassetid://82347527",
+    ["icedgingerbreadearrings"] = "rbxassetid://7969718463",
+    ["iceprinceshawlcape"] = "rbxassetid://8096541824",
+    ["icequeen"] = "rbxassetid://82992952",
+    ["icewokeuplikedis"] = "rbxassetid://6357464193",
+    ["icon"] = "rbxassetid://12156357522",
+    ["iconicchic"] = "rbxassetid://734902470",
+    ["imadethisbunwithoutlookinginthemirror"] = "rbxassetid://906744741",
+    ["image"] = "rbxassetid://924320031",
+    ["imheredudestopyelling"] = "rbxassetid://157924852",
+    ["independentwoman"] = "rbxassetid://3008847849",
+    ["inquisitormaster"] = "rbxassetid://2515278584",
+    ["inventorsbangs"] = "rbxassetid://91385932601799",
+    ["inventorsbuns"] = "rbxassetid://70576788989567",
+    ["inventorstopbun"] = "rbxassetid://104607009511456",
+    ["inventorstopbunaddon"] = "rbxassetid://73126692494058",
+    ["inventorstopbunwindy"] = "rbxassetid://115670878551717",
+    ["inventorstopbunwindyaddon"] = "rbxassetid://84375125124930",
+    ["isanaosana"] = "rbxassetid://5218490913",
+    ["itsnotaphasemom"] = "rbxassetid://2506999130",
+    ["itssnowingoutside"] = "rbxassetid://6023289794",
+    ["iwokeuplikedis"] = "rbxassetid://972984350",
+    ["izumi"] = "rbxassetid://4753839924",
+    ["izumibangs"] = "rbxassetid://4753839924",
+    ["jackolanternhead"] = "rbxassetid://97765390274797",
+    ["jada"] = "rbxassetid://5280240511",
+    ["jade"] = "rbxassetid://5313537627",
+    ["jasminebraids"] = "rbxassetid://818739298",
+    ["jason"] = "rbxassetid://7610313648",
+    ["jaxon"] = "rbxassetid://8026641171",
+    ["jeweledelvenearcuff"] = "rbxassetid://15496999505",
+    ["joey"] = "rbxassetid://8699744723",
+    ["joji"] = "rbxassetid://6328437770",
+    ["joyfulspring"] = "rbxassetid://9190407433",
+    ["jumbogoddessbraids"] = "rbxassetid://11150675278",
+    ["juna"] = "rbxassetid://5490169879",
+    ["justine"] = "rbxassetid://82992952",
+    ["kagura"] = "rbxassetid://6332761099",
+    ["kagurabangs"] = "rbxassetid://6332763119",
+    ["kaito"] = "rbxassetid://5165758278",
+    ["kanzashibeauty"] = "rbxassetid://966158978",
+    ["kaori"] = "rbxassetid://4686546433",
+    ["kaoribangs"] = "rbxassetid://4753834464",
+    ["karashair"] = "rbxassetid://3329888177",
+    ["kat"] = "rbxassetid://5708999569",
+    ["katherine"] = "rbxassetid://7461353720",
+    ["kawaiischoolgirl"] = "rbxassetid://2515286241",
+    ["keiko"] = "rbxassetid://4686533295",
+    ["keikobangs"] = "rbxassetid://4753848578",
+    ["kelp"] = "rbxassetid://105229619624492",
+    ["keyhole"] = "rbxassetid://7199772842",
+    ["keyholeinside"] = "rbxassetid://7199772839",
+    ["keytemplate"] = "rbxassetid://8553626111",
+    ["kiara"] = "rbxassetid://5280178248",
+    ["killerbangs"] = "rbxassetid://11079836632",
+    ["kindheartedpiggies"] = "rbxassetid://4568631477",
+    ["kindheartedpiggiesbangs"] = "rbxassetid://4568642116",
+    ["kirana"] = "rbxassetid://5366105839",
+    ["kitchenaccident"] = "rbxassetid://5780659405",
+    ["kittycrossbody"] = "rbxassetid://5768975150",
+    ["kokona"] = "rbxassetid://5218501650",
+    ["lacesnowflakestolescarf"] = "rbxassetid://8097468581",
+    ["largetrainbowskirt"] = "rbxassetid://4757091401",
+    ["largewispybangs"] = "rbxassetid://13166359962",
+    ["latenightstudier"] = "rbxassetid://4677952329",
+    ["layeredblowoutbangs"] = "rbxassetid://15071813653",
+    ["layeredpushedback"] = "rbxassetid://13748310932",
+    ["layla"] = "rbxassetid://6253962664",
+    ["lazysummerwaves"] = "rbxassetid://82992952",
+    ["leadguitarist"] = "rbxassetid://3713895895",
+    ["leadguitaristbangsandbuns"] = "rbxassetid://3713895895",
+    ["lightblack"] = "rbxassetid://2113398727",
+    ["lightblue"] = "rbxassetid://2113398727",
+    ["lightscameraaction"] = "rbxassetid://5708878682",
+    ["lightupornamentnecklace"] = "rbxassetid://6026890878",
+    ["lina"] = "rbxassetid://6021619866",
+    ["lnsombrebangs"] = "rbxassetid://4677958644",
+    ["lnsstreakbangs"] = "rbxassetid://4677955522",
+    ["locksmithstopbun"] = "rbxassetid://104607009511456",
+    ["locksmithstopbunaddon"] = "rbxassetid://73126692494058",
+    ["locksmithstopbunwindy"] = "rbxassetid://115670878551717",
+    ["locksmithstopbunwindyaddon"] = "rbxassetid://84375125124930",
+    ["lolipopbangs"] = "rbxassetid://6348205341",
+    ["lolipoppiggies"] = "rbxassetid://6348204906",
+    ["lolipopsweetheart"] = "rbxassetid://579349584",
+    ["lolitalovelybowlaceyscarf"] = "rbxassetid://15496859686",
+    ["lollipoplolita"] = "rbxassetid://4327763237",
+    ["lollipoplolitabangs"] = "rbxassetid://4327762473",
+    ["longheavylayeredfringe"] = "rbxassetid://13600258769",
+    ["longlayeredblowout"] = "rbxassetid://15071813065",
+    ["loveboundharmonymullet"] = "rbxassetid://18266809986",
+    ["loveboundsleekfringe"] = "rbxassetid://18266813656",
+    ["lovefairy"] = "rbxassetid://12296918537",
+    ["lovefairysbangs"] = "rbxassetid://12296912815",
+    ["loveknitbacksidebraids"] = "rbxassetid://18266958058",
+    ["loveknitfrontalbraids"] = "rbxassetid://18266967294",
+    ["lovelycurledends"] = "rbxassetid://13166363586",
+    ["lovelyloosebraids"] = "rbxassetid://5000831182",
+    ["lovelyloosebraidsbangs"] = "rbxassetid://5000833110",
+    ["lovelyrose"] = "rbxassetid://6332356004",
+    ["lovemeforeverhandbag"] = "rbxassetid://2804900981",
+    ["lovestruck"] = "rbxassetid://16523077066",
+    ["lovestruckbraidedhearts"] = "rbxassetid://16523077066",
+    ["lovestruckheartbangs"] = "rbxassetid://16523076739",
+    ["lowpolycyl"] = "rbxassetid://4830738486",
+    ["lullabybanglocs"] = "rbxassetid://15635725176",
+    ["lullabynikolai"] = "rbxassetid://107143015696071",
+    ["lullabynikolaiandlauralaibodicesleeves"] = "rbxassetid://75769379684174",
+    ["lullabynikolaiandlauralaicollar"] = "rbxassetid://132810662340895",
+    ["lullabynikolaiandlauralaifuzzycoat"] = "rbxassetid://130798324378859",
+    ["lullabynikolaiandlauralaifuzzygloves"] = "rbxassetid://76995318987876",
+    ["lullabynikolaiandlauralaihatbow"] = "rbxassetid://112713015552792",
+    ["lullabynikolaiandlauralaishoes"] = "rbxassetid://94363318313444",
+    ["lullabynikolaiandlauralaiskirt"] = "rbxassetid://98314600779755",
+    ["lullabynikolaibangs"] = "rbxassetid://80082604943680",
+    ["lullabypigtaillocs"] = "rbxassetid://15635724627",
+    ["lullabypigtaillocsaddon"] = "rbxassetid://15635724822",
+    ["lustforlife"] = "rbxassetid://5711425426",
+    ["lwing"] = "rbxassetid://12559084197",
+    ["lydia"] = "rbxassetid://6020639724",
+    ["lydiabangs"] = "rbxassetid://6020640070",
+    ["magicalbroomstick"] = "rbxassetid://5780519719",
+    ["magicalenchantress"] = "rbxassetid://10569909230",
+    ["magicalglitterfrostblinkinglights"] = "rbxassetid://6024637074",
+    ["magicalhairribbon"] = "rbxassetid://2804826656",
+    ["magicalwitch"] = "rbxassetid://2411972167",
+    ["magicgurlcurls"] = "rbxassetid://4618487014",
+    ["main"] = "rbxassetid://95702835920635",
+    ["maincharacter"] = "rbxassetid://6328360998",
+    ["maindesignimage"] = "rbxassetid://2357028183",
+    ["majesticsavantlocks"] = "rbxassetid://15635498063",
+    ["majesticsavantswoop"] = "rbxassetid://15635423509",
+    ["maketheworlddance"] = "rbxassetid://4381852204",
+    ["maketheworlddancebangs"] = "rbxassetid://4381845797",
+    ["makotomessyhair"] = "rbxassetid://5165768199",
+    ["mamo"] = "rbxassetid://5165874326",
+    ["manpony"] = "rbxassetid://4686522736",
+    ["maracas"] = "rbxassetid://4268735189",
+    ["matchingbangsbutton"] = "rbxassetid://4628593410",
+    ["meetingtime"] = "rbxassetid://843123153",
+    ["megan"] = "rbxassetid://6366167652",
+    ["melody"] = "rbxassetid://5818134555",
+    ["melodybangs"] = "rbxassetid://5818134241",
+    ["mendmyheartstitchedteddy"] = "rbxassetid://8692936428",
+    ["mensstaple"] = "rbxassetid://74878559",
+    ["mermaidbangs"] = "rbxassetid://6348252139",
+    ["mermaidglamearrings"] = "rbxassetid://3235065293",
+    ["mermaidpigtails"] = "rbxassetid://6350823122",
+    ["mermaidroyalty"] = "rbxassetid://6968849380",
+    ["mermalina"] = "rbxassetid://7612398870",
+    ["mermiasconditionedcascade"] = "rbxassetid://116327611666682",
+    ["mermiashightideponytail"] = "rbxassetid://105628930672359",
+    ["mermiashightideshortponytail"] = "rbxassetid://92621422792100",
+    ["mermiaslowtidelocks"] = "rbxassetid://92621422792100",
+    ["mermiaslowtidelocksaddon"] = "rbxassetid://97862265873418",
+    ["mermiasseaswoosh"] = "rbxassetid://108199586703529",
+    ["mermiasshoreswirls"] = "rbxassetid://92621422792100",
+    ["merryciara"] = "rbxassetid://6018802210",
+    ["merrymarchingbandmajorettehat"] = "rbxassetid://128796568804969",
+    ["merrymarchingbandparadebodice"] = "rbxassetid://106522859729695",
+    ["merrymarchingbandpranceboots"] = "rbxassetid://125957483333692",
+    ["merrymarchingbandprestigejacket"] = "rbxassetid://111956099301798",
+    ["merrymarchingbandrhythmdrum"] = "rbxassetid://121095373610737",
+    ["merrymarchingbandtwirlskirt"] = "rbxassetid://76046613133739",
+    ["merrysparklydress"] = "rbxassetid://6024656579",
+    ["meshpart"] = "rbxassetid://9022135886",
+    ["messwiththespikesyougetthehurt"] = "rbxassetid://984736285",
+    ["messybruhhair"] = "rbxassetid://319337852",
+    ["messygrungebangs"] = "rbxassetid://16361010089",
+    ["messygrungesidebun"] = "rbxassetid://16361009858",
+    ["messysummerwaves"] = "rbxassetid://7674266153",
+    ["middle"] = "rbxassetid://746813002",
+    ["middlepartedlocs"] = "rbxassetid://16562534082",
+    ["midnightmademoiselle"] = "rbxassetid://3368732051",
+    ["minisona"] = "rbxassetid://4686534219",
+    ["miracleshappen"] = "rbxassetid://3019163021",
+    ["missamazingateverything"] = "rbxassetid://3765486966",
+    ["missamazingateverythingbangs"] = "rbxassetid://3735279448",
+    ["missbeautybohemian"] = "rbxassetid://4996310240",
+    ["momsaiditsmyturnonthexbox"] = "rbxassetid://1532314104",
+    ["monchriteapartybowtiebodice"] = "rbxassetid://6365521460",
+    ["monchriteapartyclutch"] = "rbxassetid://6365520394",
+    ["monchriteapartylovelyberet"] = "rbxassetid://6365520940",
+    ["monchriteapartypalacesleeves"] = "rbxassetid://6365520855",
+    ["monchriteapartyplatforms"] = "rbxassetid://6365521288",
+    ["monchriteapartyskirt"] = "rbxassetid://6365520691",
+    ["monica"] = "rbxassetid://6357464193",
+    ["monika"] = "rbxassetid://5218515741",
+    ["monstergirlponytail"] = "rbxassetid://4556971707",
+    ["monstergirlponytailbangs"] = "rbxassetid://4556972789",
+    ["moonchild"] = "rbxassetid://5218484512",
+    ["moonlitlagoonafro"] = "rbxassetid://139594265943964",
+    ["morrigan"] = "rbxassetid://5782909632",
+    ["morriganbangs"] = "rbxassetid://82992952",
+    ["motherfairy"] = "rbxassetid://2995140878",
+    ["moviestarmiddlepart"] = "rbxassetid://16359669492",
+    ["mrhandsum"] = "rbxassetid://4652866372",
+    ["msponytail"] = "rbxassetid://7026851454",
+    ["myteddybear"] = "rbxassetid://4646088435",
+    ["nasgarden"] = "rbxassetid://10729828339",
+    ["nasvintagesidecurlbangs"] = "rbxassetid://10729913043",
+    ["naturalbliss"] = "rbxassetid://77035810722286",
+    ["naturalred"] = "rbxassetid://2113398727",
+    ["neonmiddlesection"] = "rbxassetid://97695248253910",
+    ["nick"] = "rbxassetid://6020642551",
+    ["nicky"] = "rbxassetid://5312677074",
+    ["nightmarecavernlantern"] = "rbxassetid://11141945467",
+    ["nightstar"] = "rbxassetid://5163422936",
+    ["ninjafast"] = "rbxassetid://340609774",
+    ["no"] = "rbxassetid://4329875758",
+    ["nobutton"] = "rbxassetid://1090899027",
+    ["nocturnalkittyears"] = "rbxassetid://5768972485",
+    ["nomnomfrosteddonutarmfloaties"] = "rbxassetid://3444495197",
+    ["nomnomfrosteddonutwaistfloatie"] = "rbxassetid://3444484354",
+    ["northpolepresentsskirt"] = "rbxassetid://7969721449",
+    ["nova"] = "rbxassetid://12307919630",
+    ["novasbangs"] = "rbxassetid://12307916536",
+    ["novasbuns"] = "rbxassetid://12307975786",
+    ["novashairextensions"] = "rbxassetid://12307919630",
+    ["odette"] = "rbxassetid://2066497553",
+    ["oldqueenmermaidsbubblebraids"] = "rbxassetid://89587428785147",
+    ["ombregirllong"] = "rbxassetid://1164734259",
+    ["ombregirlmedium"] = "rbxassetid://1164734259",
+    ["onyxrazorcutbangs"] = "rbxassetid://130451231732607",
+    ["onyxskullshavenmullet"] = "rbxassetid://88893824584332",
+    ["onyxskullshavenmulletextension"] = "rbxassetid://73865980131701",
+    ["opal"] = "rbxassetid://5818136198",
+    ["opalsbangs"] = "rbxassetid://5818136033",
+    ["oppositesattractheadphones"] = "rbxassetid://8713477587",
+    ["oppositesattractsteampunkglovessleeves"] = "rbxassetid://8692937742",
+    ["oppositesattracttransformationboots"] = "rbxassetid://8692913581",
+    ["oppositesattracttransformationdressbodice"] = "rbxassetid://8708478789",
+    ["opulentcurltailextension"] = "rbxassetid://123254396928923",
+    ["opulentqueencurledupdo"] = "rbxassetid://76520614389609",
+    ["opulentqueenjudgementcurledupdo"] = "rbxassetid://76520614389609",
+    ["orange"] = "rbxassetid://2113398727",
+    ["otherworldlypotion"] = "rbxassetid://7595071041",
+    ["outfitsbg"] = "rbxassetid://1454133912",
+    ["outlawbacksideplaits"] = "rbxassetid://18266988683",
+    ["outlawfrontalplaits"] = "rbxassetid://18266975403",
+    ["outshoppingforpresentsreusablebags"] = "rbxassetid://15499676281",
+    ["overeyeslocs"] = "rbxassetid://16562534082",
+    ["overeyeslocsbangs"] = "rbxassetid://16571153319",
+    ["pageantprincesslong"] = "rbxassetid://4995027879",
+    ["pageantprincessmedium"] = "rbxassetid://4995038658",
+    ["pageantqueen"] = "rbxassetid://743084813",
+    ["pageantwave"] = "rbxassetid://82992952",
+    ["paint"] = "rbxassetid://8380406324",
+    ["paradise"] = "rbxassetid://6558779832",
+    ["paradisebangs"] = "rbxassetid://6558785822",
+    ["part"] = "rbxassetid://134884306982316",
+    ["partyof1"] = "rbxassetid://6348191798",
+    ["peachypigtails"] = "rbxassetid://5818135129",
+    ["peachypigtailsbangs"] = "rbxassetid://5818134955",
+    ["pearlyprincess"] = "rbxassetid://5490267241",
+    ["peoniepatch"] = "rbxassetid://9190665893",
+    ["peoniepatchsbangs"] = "rbxassetid://9192399609",
+    ["peppermintprincessbodice"] = "rbxassetid://8010122496",
+    ["peppermintprincessskirt"] = "rbxassetid://8009656460",
+    ["peppermintprincesssleeves"] = "rbxassetid://8096543653",
+    ["perfectlyfluffy"] = "rbxassetid://3727091417",
+    ["perfectlyfluffybangs"] = "rbxassetid://3727091417",
+    ["perfectwaves"] = "rbxassetid://3014333544",
+    ["personalassistant"] = "rbxassetid://5165787401",
+    ["personalsnowflurry"] = "rbxassetid://6024788969",
+    ["phantomoftheopera"] = "rbxassetid://941268301",
+    ["picnicbraids"] = "rbxassetid://13166361195",
+    ["picnicwispybangs"] = "rbxassetid://13166359333",
+    ["pigtails"] = "rbxassetid://12458830811",
+    ["pigtails006"] = "rbxassetid://12458842831",
+    ["pink"] = "rbxassetid://2113398727",
+    ["pinuprolledbangs"] = "rbxassetid://7632179698",
+    ["piratecaptainhat"] = "rbxassetid://6188756108",
+    ["pixiepigtails"] = "rbxassetid://5218511234",
+    ["plane015"] = "rbxassetid://92965154838942",
+    ["plane052"] = "rbxassetid://112751293744932",
+    ["plane059"] = "rbxassetid://131256040937652",
+    ["plantboy"] = "rbxassetid://208526917",
+    ["poinsettiawreatharmbeauty"] = "rbxassetid://6024645425",
+    ["poisonivy"] = "rbxassetid://82992952",
+    ["polarbearberetcap"] = "rbxassetid://6024741936",
+    ["polarcutiebearhat"] = "rbxassetid://8120762218",
+    ["polarcutiefurlegwarmers"] = "rbxassetid://8120763135",
+    ["polly"] = "rbxassetid://7235921877",
+    ["ponyprincess"] = "rbxassetid://82992952",
+    ["poofdown"] = "rbxassetid://82992952",
+    ["popstarpigtails"] = "rbxassetid://82992952",
+    ["popstarpony"] = "rbxassetid://5998269597",
+    ["popstarponytail"] = "rbxassetid://7674267253",
+    ["porcelinabangs"] = "rbxassetid://129037538451655",
+    ["porcelinadollbabybodice"] = "rbxassetid://99294811196038",
+    ["porcelinadollhauntedmask"] = "rbxassetid://108412897312140",
+    ["porcelinadollhushabybonnet"] = "rbxassetid://130455231953209",
+    ["porcelinadolllostberet"] = "rbxassetid://70679231430058",
+    ["porcelinadollshelfwornskirt"] = "rbxassetid://120316119211140",
+    ["porcelinadollstitchedsleeves"] = "rbxassetid://102867680045115",
+    ["porcelinadolltiptoeshoes"] = "rbxassetid://4244517908",
+    ["porcelinaringletsback"] = "rbxassetid://78773124618305",
+    ["porcelinaringletsbonnet"] = "rbxassetid://89582332737261",
+    ["porcelinaringletsfront"] = "rbxassetid://75830257667330",
+    ["porcelinaringletsfull"] = "rbxassetid://78773124618305",
+    ["portraitframingcurls"] = "rbxassetid://128917781421404",
+    ["poseyscurledtendrils"] = "rbxassetid://19005819103",
+    ["poseysetheralflowinglocks"] = "rbxassetid://92965154838942",
+    ["poseysetheralflowinglocksnomeshdeform"] = "rbxassetid://19005316034",
+    ["poseysetherallocks"] = "rbxassetid://19005316034",
+    ["poseysflowingpigtails"] = "rbxassetid://19005186807",
+    ["positions"] = "rbxassetid://6373798069",
+    ["powderedaristocrat"] = "rbxassetid://77035810722286",
+    ["powderedaristocratjudgement"] = "rbxassetid://77035810722286",
+    ["powderheartbackpack"] = "rbxassetid://8692936828",
+    ["powerderedaristocratbangs"] = "rbxassetid://133474866702280",
+    ["powerpony"] = "rbxassetid://2066527212",
+    ["preppybasicbangs"] = "rbxassetid://15071815519",
+    ["preppyfluffypigtailsaddon"] = "rbxassetid://15071815319",
+    ["preppyfuffypigtails"] = "rbxassetid://15071814495",
+    ["preppypony"] = "rbxassetid://4995068023",
+    ["presentdisguise"] = "rbxassetid://8121741078",
+    ["princelyflow"] = "rbxassetid://5490237050",
+    ["princessbraidbangs"] = "rbxassetid://4622797161",
+    ["princessbraids"] = "rbxassetid://4622795810",
+    ["princessofhearts"] = "rbxassetid://2778071428",
+    ["princessofheartsbangs"] = "rbxassetid://2951032139",
+    ["princessofloveandmagic"] = "rbxassetid://3260522900",
+    ["princessoftheblossomingflowers"] = "rbxassetid://2506946750",
+    ["princessoftheblossomingflowersbangs"] = "rbxassetid://2513600193",
+    ["princessoftheblossomingflowersbangsandbun"] = "rbxassetid://2513600193",
+    ["princesspopstar"] = "rbxassetid://82992952",
+    ["princesssophialong"] = "rbxassetid://3817124517",
+    ["princesssophiashort"] = "rbxassetid://3817318854",
+    ["princessspireveilhat"] = "rbxassetid://121210902983670",
+    ["princessstarfrostcozybodice"] = "rbxassetid://4506011686",
+    ["princessstarfrostcrystalscepter"] = "rbxassetid://4505129996",
+    ["princessstarfrostfigureskates"] = "rbxassetid://4244517908",
+    ["princessstarfrostmagicalskirt"] = "rbxassetid://4506012062",
+    ["princessstarfrostribbonbonnet"] = "rbxassetid://4506011365",
+    ["princessstarfrostshootingstarscape"] = "rbxassetid://4506012295",
+    ["priscilla"] = "rbxassetid://6018654612",
+    ["prudence"] = "rbxassetid://82992952",
+    ["puddinbangs"] = "rbxassetid://82992952",
+    ["pulledbacklocs"] = "rbxassetid://16562534082",
+    ["pulledbacklocsaddon"] = "rbxassetid://16573941236",
+    ["pulledbacklocsbangs"] = "rbxassetid://16573941452",
+    ["pumpkinautumnearrings"] = "rbxassetid://7580868562",
+    ["pumpkinberet"] = "rbxassetid://7580750019",
+    ["pumpkincostume"] = "rbxassetid://7618103761",
+    ["pumpkinpatch"] = "rbxassetid://5818135721",
+    ["puncturedpunkspikes"] = "rbxassetid://18135407391",
+    ["punkbranding"] = "rbxassetid://3788841596",
+    ["punkstarpigtails"] = "rbxassetid://8699744077",
+    ["punkstarpigtailsbangs"] = "rbxassetid://8699744454",
+    ["punkworldgurl"] = "rbxassetid://579355278",
+    ["purple"] = "rbxassetid://2113398727",
+    ["pushedbackfloof"] = "rbxassetid://112704829600728",
+    ["queenmermaidsbubblebraids"] = "rbxassetid://89587428785147",
+    ["queenmermaidsedges"] = "rbxassetid://139013324570130",
+    ["queenmermaidsflowinghair"] = "rbxassetid://114883140468470",
+    ["queenofweebs"] = "rbxassetid://2778071428",
+    ["rainboweclipse"] = "rbxassetid://4322260704",
+    ["rapunzel"] = "rbxassetid://4568549214",
+    ["rawrxd"] = "rbxassetid://398987591",
+    ["readyforaction"] = "rbxassetid://3035148584",
+    ["readytoparty"] = "rbxassetid://2513593079",
+    ["readytopartybangs"] = "rbxassetid://2513593079",
+    ["rebelliouswaves"] = "rbxassetid://9204784800",
+    ["red"] = "rbxassetid://2113398727",
+    ["reindeercrossbodypursebackpack"] = "rbxassetid://6024672063",
+    ["reindeerride"] = "rbxassetid://8233210555",
+    ["rhheart1"] = "rbxassetid://13119449049",
+    ["ribbongoddess"] = "rbxassetid://10730156763",
+    ["ringmesh"] = "rbxassetid://7466807035",
+    ["riven"] = "rbxassetid://4628035561",
+    ["rivenbangs"] = "rbxassetid://4645443383",
+    ["robloxponyhair"] = "rbxassetid://398618628",
+    ["rock"] = "rbxassetid://6409859209",
+    ["rockstarblowout"] = "rbxassetid://8699745068",
+    ["rococochristmas"] = "rbxassetid://6018593889",
+    ["romantictresses"] = "rbxassetid://757678040",
+    ["roots"] = "rbxassetid://12229492339",
+    ["rosalie"] = "rbxassetid://12296734345",
+    ["rosaliesbangs"] = "rbxassetid://12296739474",
+    ["rosealafranaise"] = "rbxassetid://6561189284",
+    ["rosebush"] = "rbxassetid://5053372234",
+    ["rosemary"] = "rbxassetid://5218493800",
+    ["royalcurls"] = "rbxassetid://3741784572",
+    ["royalcurlsbangs"] = "rbxassetid://3741815543",
+    ["royalepageantqueen"] = "rbxassetid://1347572301",
+    ["royalerebelbustleskirt"] = "rbxassetid://5773603687",
+    ["royalerebellacedboots"] = "rbxassetid://4244517908",
+    ["royalerebellocketpendantcorset"] = "rbxassetid://5773536816",
+    ["royalerebelsheerlacedglovessleeves"] = "rbxassetid://5774686941",
+    ["royalerebelspikedveil"] = "rbxassetid://5774278702",
+    ["ruby"] = "rbxassetid://7026173993",
+    ["runawaydamselcandelabra"] = "rbxassetid://8097467736",
+    ["runningthroughthesprinklers"] = "rbxassetid://4397677339",
+    ["runningthroughthesprinklersbangs"] = "rbxassetid://4339471350",
+    ["rwing"] = "rbxassetid://12559084183",
+    ["sabrina"] = "rbxassetid://13166359582",
+    ["sabrinabangs"] = "rbxassetid://13166359733",
+    ["safetypinsweetheartearrings"] = "rbxassetid://7805317953",
+    ["sailorhatwithbow"] = "rbxassetid://2804907770",
+    ["sailorlady"] = "rbxassetid://941089962",
+    ["saka"] = "rbxassetid://5818157286",
+    ["sakabangs"] = "rbxassetid://5818157134",
+    ["sakaears"] = "rbxassetid://5818157021",
+    ["sakura"] = "rbxassetid://4686654398",
+    ["sakurabangs"] = "rbxassetid://4686549720",
+    ["salonfreshcurls"] = "rbxassetid://4339540776",
+    ["salonfreshcurlsbangs"] = "rbxassetid://4339539827",
+    ["saltwatersirenponytail"] = "rbxassetid://109610050724728",
+    ["saltwaterspiralbangs"] = "rbxassetid://120255007244279",
+    ["saltwaterwaves"] = "rbxassetid://15071817992",
+    ["sam"] = "rbxassetid://8026664283",
+    ["santahat"] = "rbxassetid://8219762237",
+    ["santana"] = "rbxassetid://5312834970",
+    ["sassyponies"] = "rbxassetid://5818133613",
+    ["sassyponiesbangs"] = "rbxassetid://5818133399",
+    ["sassysidesweptbangs"] = "rbxassetid://5818133238",
+    ["scarlett"] = "rbxassetid://7026145192",
+    ["searchicon1"] = "rbxassetid://14346979989",
+    ["searchicon2"] = "rbxassetid://14346980537",
+    ["searchicon3"] = "rbxassetid://14346981038",
+    ["seasaltwaves"] = "rbxassetid://8699745387",
+    ["seashellhairclips"] = "rbxassetid://3358329523",
+    ["seastarpearlbracelet"] = "rbxassetid://3234776742",
+    ["secretagent"] = "rbxassetid://5490209816",
+    ["seraphine"] = "rbxassetid://12273317225",
+    ["seraphinesflyaways"] = "rbxassetid://12273317407",
+    ["seraphinesleftpony"] = "rbxassetid://12273317954",
+    ["seraphinesponies"] = "rbxassetid://12273317225",
+    ["seraphinesrightpony"] = "rbxassetid://12273317225",
+    ["severehypnosisbangs"] = "rbxassetid://6018846334",
+    ["shadowempresschainedbodice"] = "rbxassetid://4082198916",
+    ["shadowempresschainedboots"] = "rbxassetid://4244517908",
+    ["shadowempressfallenangelsleeves"] = "rbxassetid://4081565202",
+    ["shadowempressjeweledcrown"] = "rbxassetid://4074397467",
+    ["shadowempressjeweledskirt"] = "rbxassetid://4081054279",
+    ["shalisa"] = "rbxassetid://5366127714",
+    ["shaved"] = "rbxassetid://16433551229",
+    ["shayla"] = "rbxassetid://5366146540",
+    ["sheeksleek"] = "rbxassetid://899375972",
+    ["shorelinebangs"] = "rbxassetid://7674266817",
+    ["shorelinehalfupbuns"] = "rbxassetid://7674266643",
+    ["shorelinetidalbraids"] = "rbxassetid://133257393747562",
+    ["shortanimehair"] = "rbxassetid://5218518464",
+    ["shortcombedsidepart"] = "rbxassetid://88482588253721",
+    ["shortcurlysweetheart"] = "rbxassetid://8073686128",
+    ["shortlayeredblowout"] = "rbxassetid://15071813389",
+    ["shortsweet"] = "rbxassetid://5490179523",
+    ["showinventorybg"] = "rbxassetid://1454133912",
+    ["shytidalmist"] = "rbxassetid://107928949336526",
+    ["shytidalmistflipped"] = "rbxassetid://93004766046185",
+    ["sidebraidbeauty"] = "rbxassetid://966163138",
+    ["sidechoppybangs"] = "rbxassetid://11079522542",
+    ["sidepartedgoddesslocs"] = "rbxassetid://16562534082",
+    ["sidepartedgoddesslocsbangs"] = "rbxassetid://17747546785",
+    ["sidepartedmermaidbangs"] = "rbxassetid://13166365499",
+    ["sidepartedmermaidwaves"] = "rbxassetid://13166365340",
+    ["sidepartedwavybangs"] = "rbxassetid://13167960705",
+    ["sidesweptboywonder"] = "rbxassetid://5165862773",
+    ["sidesweptbraids"] = "rbxassetid://5361846098",
+    ["sidesweptbraidsextensions"] = "rbxassetid://5361835642",
+    ["silver"] = "rbxassetid://2113398727",
+    ["skinshavenvipermullet"] = "rbxassetid://78000321734262",
+    ["skygoddess"] = "rbxassetid://966156800",
+    ["sleekchicloosestrand"] = "rbxassetid://16361088691",
+    ["sleekchicmiddlepart"] = "rbxassetid://16361088593",
+    ["sleighitbodice"] = "rbxassetid://8096555550",
+    ["sleighitskirt"] = "rbxassetid://8096555954",
+    ["slickchick"] = "rbxassetid://4321932132",
+    ["slowdancing"] = "rbxassetid://6328533426",
+    ["smallbackground"] = "rbxassetid://1454133912",
+    ["smallgoddessbraids"] = "rbxassetid://11138977783",
+    ["snowguardian"] = "rbxassetid://6020735506",
+    ["snowmanstophat"] = "rbxassetid://4503062749",
+    ["snowswanadornedornamentalnecklaceearringsset"] = "rbxassetid://15496767919",
+    ["snowswanangelicoperabodice"] = "rbxassetid://15640855233",
+    ["snowswanembracedbylaceluxeheels"] = "rbxassetid://110386116890089",
+    ["snowswanfauxfeatheryfashionhat"] = "rbxassetid://15496796398",
+    ["snowswanholidaysoireskirt"] = "rbxassetid://15640855410",
+    ["snowswanrosettelacegloves"] = "rbxassetid://15496744686",
+    ["snowswansilkyslumberluxesleeves"] = "rbxassetid://15640855790",
+    ["snugglyreindeerslippers"] = "rbxassetid://4244517908",
+    ["softhalfupponytail"] = "rbxassetid://13166362237",
+    ["softmiddlepartedbangs"] = "rbxassetid://13166362373",
+    ["softwind"] = "rbxassetid://4628018185",
+    ["sona"] = "rbxassetid://4686535526",
+    ["sonabangs"] = "rbxassetid://4753831906",
+    ["sora"] = "rbxassetid://5165738326",
+    ["sorceress"] = "rbxassetid://7632177468",
+    ["sorin"] = "rbxassetid://5366161203",
+    ["sorticon"] = "rbxassetid://12897609699",
+    ["soundofharmony"] = "rbxassetid://5256891392",
+    ["sowerebudsright"] = "rbxassetid://726889242",
+    ["sparklycandycaneears"] = "rbxassetid://6024728792",
+    ["sparklychristmasbellsearrings"] = "rbxassetid://6011346784",
+    ["sparklyhearthoopearrings"] = "rbxassetid://4643980638",
+    ["sparklysarong"] = "rbxassetid://3231256354",
+    ["specialmesh"] = "rbxassetid://4250784505",
+    ["specialsomeonechocolatebox"] = "rbxassetid://8692937149",
+    ["sphere002"] = "rbxassetid://106174943083599",
+    ["spikedfluffybangs"] = "rbxassetid://13166362039",
+    ["spikedfluffyponytail"] = "rbxassetid://13166361763",
+    ["spikedsleekbangs"] = "rbxassetid://13166360480",
+    ["spikedstraightbangs"] = "rbxassetid://13166361901",
+    ["spikedunevenbangs"] = "rbxassetid://13166362039",
+    ["spiritwispfrontallocshigh"] = "rbxassetid://18367278904",
+    ["spiritwispfrontallocslow"] = "rbxassetid://18367437906",
+    ["spiritwisplocs"] = "rbxassetid://18367390724",
+    ["splitschoolbraids"] = "rbxassetid://4336485257",
+    ["splitschoolbraidsbangs"] = "rbxassetid://4336485257",
+    ["sportydreamboat"] = "rbxassetid://167549828",
+    ["sportysidepony"] = "rbxassetid://8073685860",
+    ["sportysideponybangs"] = "rbxassetid://8073686987",
+    ["springevening"] = "rbxassetid://13554177836",
+    ["springsoiree"] = "rbxassetid://13554151106",
+    ["springtwist"] = "rbxassetid://5312834970",
+    ["springtwistbangs"] = "rbxassetid://6315048204",
+    ["squareplanter"] = "rbxassetid://7199772744",
+    ["star"] = "rbxassetid://7478789632",
+    ["starboundcowlick"] = "rbxassetid://124701518015386",
+    ["starboundslick"] = "rbxassetid://96120889731678",
+    ["starlet"] = "rbxassetid://4161253055",
+    ["starlightarmwarmers"] = "rbxassetid://16616900394",
+    ["starlightberethat"] = "rbxassetid://16616895098",
+    ["starlightcandybracelets"] = "rbxassetid://16616898050",
+    ["starlightcardigan"] = "rbxassetid://16616903762",
+    ["starlightchoppedcut"] = "rbxassetid://16433551369",
+    ["starlightfairybluntbangs"] = "rbxassetid://16303748018",
+    ["starlightfairybluntbangs2"] = "rbxassetid://16602909976",
+    ["starlightfairyblunttwists"] = "rbxassetid://16575187744",
+    ["starlightfairycurls"] = "rbxassetid://16303747665",
+    ["starlightfairyfronttwists"] = "rbxassetid://16552670201",
+    ["starlightfairypigtailtwists"] = "rbxassetid://16552701970",
+    ["starlightfrontlocs"] = "rbxassetid://16563428963",
+    ["starlightglasses"] = "rbxassetid://16616895678",
+    ["starlighthairbow"] = "rbxassetid://16616894091",
+    ["starlighthalfuplocs"] = "rbxassetid://16562534082",
+    ["starlighthalfuplocsaddon"] = "rbxassetid://16562570852",
+    ["starlightnecklace"] = "rbxassetid://16616893500",
+    ["starlightponytaillocs"] = "rbxassetid://16562534082",
+    ["starlightpuppypoodlepurse"] = "rbxassetid://16616896145",
+    ["starlightrainbowskirt"] = "rbxassetid://16616904426",
+    ["starlightsneaks"] = "rbxassetid://16617013493",
+    ["starlighttshirtbodice"] = "rbxassetid://16616901393",
+    ["starlitfrontalspikes"] = "rbxassetid://17306582148",
+    ["starlitrockerblowout"] = "rbxassetid://17306580608",
+    ["staroftheschool"] = "rbxassetid://3801564177",
+    ["steampunkaerotechnicwings"] = "rbxassetid://11119083957",
+    ["steampunkalchemisttophat"] = "rbxassetid://127305075259524",
+    ["steampunkclockworkskirt"] = "rbxassetid://11119666945",
+    ["steampunkgadgeteergloves"] = "rbxassetid://92747340488620",
+    ["steampunkinventorbodice"] = "rbxassetid://98365475582824",
+    ["steampunkinventorsengineeringgoggles"] = "rbxassetid://137599402321299",
+    ["steampunkmechanicalarms"] = "rbxassetid://122846174741325",
+    ["steampunkundercityswordbelt"] = "rbxassetid://11125612755",
+    ["steampunkvictorianboots"] = "rbxassetid://139654244910106",
+    ["stellarhalfupbun"] = "rbxassetid://7675880780",
+    ["stellarhalfupponytail"] = "rbxassetid://7674267711",
+    ["stellarponies"] = "rbxassetid://8073687149",
+    ["stix"] = "rbxassetid://7624216519",
+    ["stormfly"] = "rbxassetid://6020640687",
+    ["stormflybangs"] = "rbxassetid://6020640819",
+    ["straightastudent"] = "rbxassetid://3260732023",
+    ["straightastudentshort"] = "rbxassetid://3260744836",
+    ["straightblunttasselbangs"] = "rbxassetid://13166364746",
+    ["straightcutponytail"] = "rbxassetid://3052869274",
+    ["strawberrysweetheart"] = "rbxassetid://5818135475",
+    ["strawberrysweetheartbangs"] = "rbxassetid://5818135299",
+    ["stubbypunkbangs"] = "rbxassetid://15071814985",
+    ["stubbypunkpigtailaddon"] = "rbxassetid://15071814794",
+    ["stubbypunkpigtails"] = "rbxassetid://15071814495",
+    ["studdedbikerbuzz"] = "rbxassetid://136587070869225",
+    ["studygirl"] = "rbxassetid://5490063540",
+    ["studygirlsbangs"] = "rbxassetid://5490070154",
+    ["styledwindswepthair"] = "rbxassetid://16359669919",
+    ["stylishfashionista"] = "rbxassetid://3276122060",
+    ["summer"] = "rbxassetid://5313099851",
+    ["summerblossom"] = "rbxassetid://5165651438",
+    ["summerfantasybangs"] = "rbxassetid://6951562688",
+    ["summerfantasybeachboardwalkbodice"] = "rbxassetid://6950918497",
+    ["summerfantasybreezybeachskirt"] = "rbxassetid://6947538941",
+    ["summerfantasygoddessveil"] = "rbxassetid://6947535858",
+    ["summerfantasylocks"] = "rbxassetid://6817859184",
+    ["summerfantasymermaidseashellpurse"] = "rbxassetid://6950743392",
+    ["summerfantasyringsandsleeves"] = "rbxassetid://6947540077",
+    ["summerfantasyseashellsandals"] = "rbxassetid://6947549574",
+    ["summertwist"] = "rbxassetid://7026870517",
+    ["summitshredderxbabybangs"] = "rbxassetid://111454269027322",
+    ["summitshredderxbabybraids"] = "rbxassetid://101126669669153",
+    ["summitshredderxcrystalcleargoggles"] = "rbxassetid://93824137588267",
+    ["summitshredderxpeakperformancebodice"] = "rbxassetid://118347724237289",
+    ["summitshredderxpolarpufferjacket"] = "rbxassetid://79846956845715",
+    ["summitshredderxsnowboarderpantsboots"] = "rbxassetid://112792200470293",
+    ["sunbun"] = "rbxassetid://5490415600",
+    ["sunshinebraids"] = "rbxassetid://15635724627",
+    ["sunshinebraidsbangs"] = "rbxassetid://18283712669",
+    ["sunshinelocs"] = "rbxassetid://15635724627",
+    ["sunshinelocsbangs"] = "rbxassetid://18283712669",
+    ["supernovasleftpony"] = "rbxassetid://12273317954",
+    ["supernovasponies"] = "rbxassetid://12273317954",
+    ["supernovasrightpony"] = "rbxassetid://12273317225",
+    ["superspy"] = "rbxassetid://5709334558",
+    ["surfboard"] = "rbxassetid://5192155191",
+    ["sweetandshy"] = "rbxassetid://2965881546",
+    ["sweetcarolina"] = "rbxassetid://13599426473",
+    ["sweetener"] = "rbxassetid://6579783642",
+    ["sweetheartbantuknots"] = "rbxassetid://16142004269",
+    ["sweetheartedges"] = "rbxassetid://16144677621",
+    ["sweetie"] = "rbxassetid://4444199310",
+    ["sweetiebangs"] = "rbxassetid://4444199310",
+    ["sweetieponies"] = "rbxassetid://4444199310",
+    ["sweetnessfoldedpony"] = "rbxassetid://3823320776",
+    ["sweetpony"] = "rbxassetid://843131269",
+    ["sweptbackvampire"] = "rbxassetid://15071815842",
+    ["sweptmiddlepart"] = "rbxassetid://16359669109",
+    ["swirl"] = "rbxassetid://6986788060",
+    ["swirlyanimebangs"] = "rbxassetid://13166365043",
+    ["swoopybangs"] = "rbxassetid://7235922025",
+    ["symone"] = "rbxassetid://5312834970",
+    ["symphonyaccentribbons"] = "rbxassetid://18266961796",
+    ["tealdefault"] = "rbxassetid://2113398727",
+    ["teddy"] = "rbxassetid://12113989527",
+    ["teddybear"] = "rbxassetid://6366167480",
+    ["teddybearbangs"] = "rbxassetid://6366167270",
+    ["teddyslongbangs"] = "rbxassetid://12121502711",
+    ["teddysshortbangs"] = "rbxassetid://12114063481",
+    ["teddyzilla"] = "rbxassetid://6358739753",
+    ["testy"] = "rbxassetid://715169630",
+    ["thebully"] = "rbxassetid://6375513501",
+    ["thecoolestguyyoullevermeet"] = "rbxassetid://1211520088",
+    ["thecutesthairstyle"] = "rbxassetid://2507348062",
+    ["theitriedinthebackbutnotinthefrontlook"] = "rbxassetid://972986960",
+    ["theperfectbob"] = "rbxassetid://972940434",
+    ["theprotagonist"] = "rbxassetid://3782059156",
+    ["thequietkid"] = "rbxassetid://6328472521",
+    ["theycallmegillz"] = "rbxassetid://1179199744",
+    ["thickglam"] = "rbxassetid://2066523863",
+    ["thinsummerbraids"] = "rbxassetid://13166365772",
+    ["threadthebobbin"] = "rbxassetid://4169420053",
+    ["tidalmist"] = "rbxassetid://102927850203723",
+    ["tidybowtie"] = "rbxassetid://8692936656",
+    ["toocoolforskullshoulderbag"] = "rbxassetid://5740427550",
+    ["tookawaii"] = "rbxassetid://2995723795",
+    ["toomuchhomework"] = "rbxassetid://6185199535",
+    ["topbackground"] = "rbxassetid://2391364980",
+    ["toppiece"] = "rbxassetid://6112720260",
+    ["translucentheartsunglasses"] = "rbxassetid://2804901269",
+    ["trevor"] = "rbxassetid://5366206550",
+    ["ttylchickblushcrushplushskirt"] = "rbxassetid://15506166634",
+    ["ttylchickfavebodicenecklace"] = "rbxassetid://15506255178",
+    ["ttylchickfavesleeves"] = "rbxassetid://15499484034",
+    ["ttylchicklipglossgossplushpurse"] = "rbxassetid://15499336327",
+    ["ttylchicksnowballpuffearrings"] = "rbxassetid://15496628951",
+    ["tuckedinbusinessbob"] = "rbxassetid://15071820274",
+    ["tuckedinsorority"] = "rbxassetid://15071817687",
+    ["tuckedinwaves"] = "rbxassetid://13167960495",
+    ["twinringlets"] = "rbxassetid://2326749955",
+    ["twintails"] = "rbxassetid://2321984626",
+    ["twobunshairdown"] = "rbxassetid://82992952",
+    ["ultrafluff"] = "rbxassetid://7674267055",
+    ["undeadsapientshag"] = "rbxassetid://130922443217489",
+    ["underwaterchic"] = "rbxassetid://82992952",
+    ["untidyponybangs"] = "rbxassetid://13598940341",
+    ["updo1"] = "rbxassetid://2116151927",
+    ["updo2"] = "rbxassetid://2116151927",
+    ["updo3"] = "rbxassetid://1347571818",
+    ["updo4"] = "rbxassetid://941299455",
+    ["updo5"] = "rbxassetid://1347571818",
+    ["updo6"] = "rbxassetid://1347571818",
+    ["updo7"] = "rbxassetid://1347571818",
+    ["updo8"] = "rbxassetid://643128901",
+    ["updo9"] = "rbxassetid://972986746",
+    ["upgradedbacon"] = "rbxassetid://83293901",
+    ["valentina"] = "rbxassetid://5365694952",
+    ["valentinegoddess"] = "rbxassetid://8635368421",
+    ["valkyriebangcurls"] = "rbxassetid://18417343530",
+    ["valkyrieflowingponytail"] = "rbxassetid://18417342942",
+    ["valkyrieponytail"] = "rbxassetid://18417342942",
+    ["valkyriesideponytail"] = "rbxassetid://18417342942",
+    ["valleyofthedolls"] = "rbxassetid://5708890519",
+    ["vampirecrown"] = "rbxassetid://5780659107",
+    ["vampiricbatheartring"] = "rbxassetid://108340199355549",
+    ["vamptote"] = "rbxassetid://7593492398",
+    ["vampy"] = "rbxassetid://7649827073",
+    ["vampybangs"] = "rbxassetid://7649836241",
+    ["vanity"] = "rbxassetid://8140643537",
+    ["vaudevillianballroommask"] = "rbxassetid://7805326954",
+    ["versaillessnowpowderbonnet"] = "rbxassetid://8097469550",
+    ["versaillessnowpowdercoat"] = "rbxassetid://8097469054",
+    ["verycozyglovesmittens"] = "rbxassetid://4505119926",
+    ["verycozyhat"] = "rbxassetid://4505120671",
+    ["veryenvypunkpigtails"] = "rbxassetid://13600143938",
+    ["vintagebeauty"] = "rbxassetid://82992952",
+    ["virtualpopstar"] = "rbxassetid://6348289534",
+    ["virtualpopstarbangs"] = "rbxassetid://6348290198",
+    ["volleyballstarbraids"] = "rbxassetid://15635724627",
+    ["volleyballstarbraidsbangs"] = "rbxassetid://18283709329",
+    ["volleyballstarlocs"] = "rbxassetid://15635724627",
+    ["volleyballstarlocsbangs"] = "rbxassetid://18283709329",
+    ["voluminousqueen"] = "rbxassetid://4455090792",
+    ["voluminoussidepartedbangs"] = "rbxassetid://13166360966",
+    ["voluminoussidepartedwaves"] = "rbxassetid://13166360764",
+    ["wannaseemecombmyhairreallyfast"] = "rbxassetid://29448832",
+    ["warmglitteringcloak"] = "rbxassetid://6011395860",
+    ["warmwinterlantern"] = "rbxassetid://6011287660",
+    ["watercolorwhirlpaintingwaves"] = "rbxassetid://116507918939162",
+    ["watercolorwhirlpuffierpuffs"] = "rbxassetid://94467490845265",
+    ["watercolorwhirlpuffs"] = "rbxassetid://92049574465640",
+    ["watercolorwhirlpuffypuffs"] = "rbxassetid://90760698585505",
+    ["wavyhikingbraids"] = "rbxassetid://8073686382",
+    ["wavyhikingbraidsbangs"] = "rbxassetid://8073686831",
+    ["wavymermaidhair"] = "rbxassetid://5165896996",
+    ["wavymermanhair"] = "rbxassetid://5165887400",
+    ["wavyspacebuns"] = "rbxassetid://5818136793",
+    ["wavyspacebunsshort"] = "rbxassetid://5818136413",
+    ["wehadhomework"] = "rbxassetid://6328222626",
+    ["werein"] = "rbxassetid://6328275860",
+    ["wheresmywaterbottle"] = "rbxassetid://4461569469",
+    ["whimsywitchacademiatroublemakershoes"] = "rbxassetid://7709555887",
+    ["whimsywitchdarksisterscovenhat"] = "rbxassetid://7709196630",
+    ["whimsywitchhexedbodice"] = "rbxassetid://7709194526",
+    ["whimsywitchspellsincantationsskirt"] = "rbxassetid://7709190886",
+    ["whispystudybangs"] = "rbxassetid://6185211711",
+    ["white"] = "rbxassetid://2113398727",
+    ["whoorderedthebreadsticks"] = "rbxassetid://84396019",
+    ["widowspillboxhat"] = "rbxassetid://7805321316",
+    ["widowswebbedfan"] = "rbxassetid://106314903735320",
+    ["widowswiltedbouquet"] = "rbxassetid://7805326561",
+    ["windblownwaves"] = "rbxassetid://17627760963",
+    ["windblownwavesbangs"] = "rbxassetid://17627760215",
+    ["windinmyhair"] = "rbxassetid://5490035702",
+    ["windsweptspikes"] = "rbxassetid://100005485805544",
+    ["windsweptspikesbangs"] = "rbxassetid://107770593892653",
+    ["windydayaintit"] = "rbxassetid://121575613",
+    ["windyfeatheredbangs"] = "rbxassetid://7636599064",
+    ["windymiddlepartedwaves"] = "rbxassetid://13166366036",
+    ["windywitchhat"] = "rbxassetid://7593488871",
+    ["wings"] = "rbxassetid://15054481461",
+    ["winterguardianauraantlers"] = "rbxassetid://6061463462",
+    ["winterguardianenchantedsleeves"] = "rbxassetid://6061499502",
+    ["winterguardianglacierboots"] = "rbxassetid://6061452378",
+    ["winterguardiansnowstormskirt"] = "rbxassetid://6061463262",
+    ["winterguardianthermalbodicetailcoat"] = "rbxassetid://6061452188",
+    ["wintersnowglobe"] = "rbxassetid://6025036596",
+    ["winterwarrior"] = "rbxassetid://5818134109",
+    ["winterwarriorbangs"] = "rbxassetid://5818133918",
+    ["wispyhalfupbun"] = "rbxassetid://15071816221",
+    ["wispyhalfupbunaddon"] = "rbxassetid://15071816701",
+    ["wispyhalfupponytail"] = "rbxassetid://15071816221",
+    ["wispymiddlepartbangs"] = "rbxassetid://15071817122",
+    ["wispyponytailaddon"] = "rbxassetid://15071816499",
+    ["wispyshouldercurls"] = "rbxassetid://13166363309",
+    ["wispyshybangs"] = "rbxassetid://15071817414",
+    ["wondergirl"] = "rbxassetid://3260612792",
+    ["woodlandfaunearsandantlers"] = "rbxassetid://15496650699",
+    ["woodlandfaunhooves"] = "rbxassetid://15496670469",
+    ["youngandpassionate"] = "rbxassetid://2948746701",
+    ["youngandpassionatebangs"] = "rbxassetid://2948746701",
+    ["zane"] = "rbxassetid://12307831408",
+    ["zombiequeen"] = "rbxassetid://11079271502",
+    ["zuko"] = "rbxassetid://5490258026",
+}
+
 -- Fast smart catalog thumbnail lookup
 findItemImage = function(name, cat)
     if not name or name == "" then return "" end
     local clean = name:lower():gsub("%s+", ""):gsub("[^%w]", "")
+
+    -- 0. Direct lookup from extracted 1,346-item Royale High thumbnail map
+    if rhImageLookup[clean] then
+        return rhImageLookup[clean]
+    end
 
     -- 1. Direct key
     local direct = catalogItemByKey[clean] or catalogItemByKey[name:lower()]
@@ -991,6 +2459,13 @@ findItemImage = function(name, cat)
         local itAssetClean = (it.assetName or ""):lower():gsub("%s+", ""):gsub("[^%w]", "")
         if itClean == clean or itAssetClean == clean or clean:find(itClean, 1, true) or itClean:find(clean, 1, true) then
             if it.img and it.img ~= "" then return it.img end
+        end
+    end
+
+    -- 4. Substring fallback on rhImageLookup
+    for k, img in pairs(rhImageLookup) do
+        if #k >= 6 and (clean:find(k, 1, true) or k:find(clean, 1, true)) then
+            return img
         end
     end
 
@@ -1361,7 +2836,7 @@ local function openItemColorAndToggles(item)
         end
     end)
 
-    -- 2. Open Royale High official ColorsGui with 2-color palette & skin protection
+    -- 2. Open Royale High official ColorsGui with 2-color palette & strict skin protection
     pcall(function()
         local cg = pg:FindFirstChild("ColorsGui")
         if not cg then return end
@@ -1391,15 +2866,53 @@ local function openItemColorAndToggles(item)
                 local char = lp.Character
                 if not char then return end
 
-                local slotKey = (item.cat == "Heels" or item.cat == "Skirts" or item.cat == "Bodices" or item.cat == "Wings" or item.cat == "Halos")
-                                and item.cat
-                                or ("Acc_" .. (item.assetName or item.name):gsub("%s+", ""))
+                local slotKey = item.slotKey
+                if not slotKey or slotKey == "" then
+                    slotKey = (item.cat == "Heels" or item.cat == "Skirts" or item.cat == "Bodices" or item.cat == "Wings" or item.cat == "Halos")
+                              and item.cat
+                              or ("Acc_" .. (item.assetName or item.name):gsub("%s+", ""))
+                end
 
-                -- Separate Color 1 (main body/fabric) and Color 2 (trim/lace/ribbon/secondary)
-                local function partMatchesColorGroup(pName, pParentName)
-                    local n = (pName .. " " .. pParentName):lower()
+                local function isSkinPart(p)
+                    local pn = p.Name:lower()
+                    if standardBodyParts[p.Name] or p.Name == "HumanoidRootPart" or p.Name == "Head" then
+                        return true
+                    end
+                    if pn == "coloredleg" or pn:find("skin") or pn:find("skintone")
+                       or pn == "leg" or pn == "arm" or pn == "hand" or pn == "foot" or pn == "thigh" or pn == "body" then
+                        return true
+                    end
+                    return false
+                end
+
+                -- Check if a model uses Royale High's native numbered MultiColor scheme ("1", "2", or MultiColor attribute)
+                local function modelHasNumberedGroups(m)
+                    for _, d in ipairs(m:GetDescendants()) do
+                        if d:GetAttribute("MultiColor") ~= nil or tonumber(d.Name) ~= nil then
+                            return true
+                        end
+                    end
+                    return false
+                end
+
+                local function partMatchesGroup(p, hasNumbers)
+                    local mc = p:GetAttribute("MultiColor")
+                    if mc ~= nil then
+                        return tonumber(mc) == group
+                    end
+                    if hasNumbers then
+                        if tonumber(p.Name) == group then return true end
+                        local par = p.Parent
+                        while par and par ~= char do
+                            if tonumber(par.Name) == group then return true end
+                            par = par.Parent
+                        end
+                        return false
+                    end
+                    local n = (p.Name .. " " .. (p.Parent and p.Parent.Name or "")):lower()
                     local isGroup2 = n:find("2") or n:find("trim") or n:find("lace") or n:find("accent")
-                                  or n:find("ribbon") or n:find("bow") or n:find("secondary") or n:find("buckle") or n:find("detail")
+                                  or n:find("ribbon") or n:find("bow") or n:find("secondary") or n:find("buckle")
+                                  or n:find("detail") or n:find("gem") or n:find("jewel") or n:find("metal")
                     if group == 2 then
                         return isGroup2
                     else
@@ -1407,23 +2920,48 @@ local function openItemColorAndToggles(item)
                     end
                 end
 
-                -- STRICT SKIN PROTECTION: ONLY color parts inside the target item model! NEVER avatar limbs!
                 local function applyColorToModelParts(m)
                     if not m then return end
+                    local hasNumbers = modelHasNumberedGroups(m)
+                    local coloredCount = 0
                     for _, p in ipairs(m:GetDescendants()) do
-                        if p:IsA("BasePart") and not standardBodyParts[p.Name] and p.Name ~= "HumanoidRootPart" and p.Name ~= "Head" then
-                            if partMatchesColorGroup(p.Name, p.Parent.Name) then
+                        if p:IsA("BasePart") and not isSkinPart(p) then
+                            if partMatchesGroup(p, hasNumbers) then
+                                if p:IsA("MeshPart") then pcall(function() p.TextureID = "" end) end
+                                local sm = p:FindFirstChildOfClass("SpecialMesh")
+                                if sm then pcall(function() sm.TextureId = ""; sm.VertexColor = Vector3.new(c3.R, c3.G, c3.B) end) end
                                 p.Color = c3
+                                coloredCount = coloredCount + 1
                             end
-                        elseif p:IsA("SpecialMesh") then
-                            if partMatchesColorGroup(p.Name, p.Parent.Name) then
-                                pcall(function() p.VertexColor = Vector3.new(c3.R, c3.G, c3.B) end)
+                        elseif p:IsA("SpecialMesh") and p.Parent and not isSkinPart(p.Parent) then
+                            if partMatchesGroup(p.Parent, hasNumbers) or partMatchesGroup(p, hasNumbers) then
+                                pcall(function() p.TextureId = ""; p.VertexColor = Vector3.new(c3.R, c3.G, c3.B) end)
+                            end
+                        end
+                    end
+                    -- Fallback: if Group 2 matched 0 parts on an un-numbered model, color secondary/smaller parts
+                    if coloredCount == 0 and group == 2 then
+                        local parts = {}
+                        for _, p in ipairs(m:GetDescendants()) do
+                            if p:IsA("BasePart") and not isSkinPart(p) then
+                                table.insert(parts, p)
+                            end
+                        end
+                        table.sort(parts, function(a, b)
+                            return (a.Size.X * a.Size.Y * a.Size.Z) < (b.Size.X * b.Size.Y * b.Size.Z)
+                        end)
+                        local half = math.max(1, math.floor(#parts / 2))
+                        for i = 1, half do
+                            local p = parts[i]
+                            if p then
+                                if p:IsA("MeshPart") then pcall(function() p.TextureID = "" end) end
+                                p.Color = c3
                             end
                         end
                     end
                 end
 
-                -- Recolor baked item in RH_BakedWardrobe
+                -- Recolor ONLY the target baked item in RH_BakedWardrobe
                 local bakedFolder = char:FindFirstChild("RH_BakedWardrobe")
                 if bakedFolder then
                     local bakedModel = bakedFolder:FindFirstChild(slotKey)
@@ -1432,7 +2970,7 @@ local function openItemColorAndToggles(item)
                     end
                 end
 
-                -- Recolor in EquippedStorage
+                -- Also recolor matching live try-on item in EquippedStorage if still present
                 for _, info in ipairs(getEquippedFolders()) do
                     for _, child in ipairs(info.folder:GetChildren()) do
                         if child.Name == item.name or child.Name == (item.assetName or item.name) then
@@ -1440,15 +2978,6 @@ local function openItemColorAndToggles(item)
                         end
                     end
                 end
-
-                -- Sync with Royale High server recolor remote
-                pcall(function()
-                    local inv = ReplicatedStorage:FindFirstChild("Inventory")
-                    local eq = inv and inv:FindFirstChild("EquipItem")
-                    if eq and eq:IsA("RemoteFunction") then
-                        eq:InvokeServer(item.assetName or item.name, item.cat, chosenColor, group, true)
-                    end
-                end)
             end
 
             -- Open ColorOptionsModule with 2 Color Groups (Color 1 & Color 2 tabs)
@@ -1474,6 +3003,17 @@ local function equipItem(item)
         return equipWings(item)
     end
 
+    -- Snapshot existing items before triggering preview so we only wait for the NEW item
+    local beforeSet = {}
+    for _, info in ipairs(getEquippedFolders()) do
+        for _, child in ipairs(info.folder:GetChildren()) do
+            beforeSet[child] = true
+        end
+    end
+    for _, d in ipairs(char:GetChildren()) do
+        beforeSet[d] = true
+    end
+
     -- 1. Direct Server Remote
     if previewItemRemote then
         pcall(function()
@@ -1489,25 +3029,27 @@ local function equipItem(item)
         end
     end)
 
-    -- 3. Dynamic Smart Polling: Auto-bakes as soon as meshes replicate, then immediately unfreezes
+    -- 3. Targeted Auto-Bake Polling: Waits specifically for THIS new item to replicate, then bakes it 1:1
     task.spawn(function()
         disableFreezeOnlyConnections()
         hideTryOnOverlays()
 
         local startTick = tick()
-        local bakedCount = 0
-        while tick() - startTick < 3.2 do
-            task.wait(0.12)
-            local items = findRoyaleHighItemsOnAvatar()
-            if #items > 0 then
-                bakedCount = lockCurrentAvatarLook(itemCat, item)
-                if bakedCount and bakedCount > 0 then
+        local baked = nil
+        while tick() - startTick < 4.0 do
+            task.wait(0.10)
+            local targetInst, foundCat = findSpecificItemOnAvatar(itemName, itemCat, beforeSet)
+            if targetInst then
+                -- Brief settle wait for child meshes to finish replicating
+                task.wait(0.15)
+                baked = bakeItemToAvatar(targetInst, itemCat or foundCat, nil, item)
+                if baked then
                     break
                 end
             end
         end
 
-        -- Immediately release all movement freezes & terminate try-on anchoring
+        -- Release client movement freezes WITHOUT cancelling server preview prematurely
         releasePlayerMovement()
         updateTabCounts()
         if refreshGridRef then refreshGridRef() end
