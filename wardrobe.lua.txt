@@ -1,5 +1,5 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v36
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v37
 --
 -- NEW FIXES & FEATURES IN v28:
 -- 1. PRECISION CLOTHING SCANNER (ZERO HAIR CLONING):
@@ -279,7 +279,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v36)
+-- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v37)
 -- ============================================================
 local bakedLayersBackup = {}
 local defaultAvatarInstances = {}
@@ -498,7 +498,19 @@ local function findRoyaleHighItemsOnAvatar()
     return itemsFound
 end
 
--- Find a specific newly spawned Royale High item on the avatar or in EquippedStorage
+local function countBaseParts(inst)
+    if not inst then return 0 end
+    if inst:IsA("BasePart") then return 1 end
+    local n = 0
+    for _, d in ipairs(inst:GetDescendants()) do
+        if d:IsA("BasePart") then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+-- Find a specific newly spawned Royale High item on the avatar or in EquippedStorage (must have >=1 BasePart!)
 local function findSpecificItemOnAvatar(itemName, cat, beforeSet)
     local char = lp.Character
     if not char then return nil, nil end
@@ -532,7 +544,7 @@ local function findSpecificItemOnAvatar(itemName, cat, beforeSet)
     -- 1. Check EquippedStorage & WornItems first
     for _, info in ipairs(getEquippedFolders()) do
         for _, child in ipairs(info.folder:GetChildren()) do
-            if not isBaseAvatarObject(child) then
+            if not isBaseAvatarObject(child) and countBaseParts(child) > 0 then
                 if matchesName(child) then
                     return child, info.category
                 end
@@ -546,7 +558,7 @@ local function findSpecificItemOnAvatar(itemName, cat, beforeSet)
     -- 2. Check Character direct children (excluding RH_BakedWardrobe)
     for _, d in ipairs(char:GetChildren()) do
         if not isBaseAvatarObject(d) and d.Name ~= "RH_BakedWardrobe" then
-            if d:IsA("Model") or d:IsA("Folder") or d:IsA("Accessory") or d:IsA("MeshPart") or d:IsA("Tool") then
+            if (d:IsA("Model") or d:IsA("Folder") or d:IsA("Accessory") or d:IsA("MeshPart") or d:IsA("Tool")) and countBaseParts(d) > 0 then
                 if matchesName(d) then
                     return d, cat
                 end
@@ -565,6 +577,7 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
     if not sourceItem then return nil end
     local char = lp.Character
     if not char then return nil end
+    if countBaseParts(sourceItem) == 0 then return nil end
 
     local cat = category or "Accessories"
     local slotKey = nil
@@ -846,6 +859,12 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
                 end
             end
         end
+    end
+
+    -- Abort if clone ended up with 0 visible BaseParts so we never leave an invisible shell that hides the torso
+    if countBaseParts(clone) == 0 then
+        pcall(function() clone:Destroy() end)
+        return nil
     end
 
     -- Snapshot & lock any base avatar body parts hidden by this morph (corset torso, heel legs, sleeve arms, etc.)
@@ -2774,6 +2793,7 @@ local masterList = {
 	-- HALOS
 	{"Halos", "Corrupt Halo", "Corrupt Halo", "Special", ""},
 	{"Halos", "Glimmering Light Halo", "Glimmering Light Halo", "Special", ""},
+	{"Halos", "Alien Halo", "Alien Halo", "Special", ""},
 	{"Halos", "Halloween Halo 2019", "Halloween Halo 2019", "Special", ""},
 	{"Halos", "Halloween Halo 2020", "Halloween Halo 2020", "Special", ""},
 	{"Halos", "Halloween Halo 2021", "Halloween Halo 2021", "Special", ""},
@@ -3210,12 +3230,25 @@ local function equipItem(item)
 
         local startTick = tick()
         local baked = nil
-        while tick() - startTick < 4.0 do
+        while tick() - startTick < 4.5 do
             task.wait(0.10)
             local targetInst, foundCat = findSpecificItemOnAvatar(itemName, itemCat, beforeSet)
             if targetInst then
-                -- Brief settle wait for child meshes to finish replicating
-                task.wait(0.15)
+                -- Wait until child BasePart count stabilizes so ALL meshes of the bodice/dress/heels replicate before cloning
+                local lastCount = countBaseParts(targetInst)
+                local stableChecks = 0
+                local settleStart = tick()
+                while tick() - settleStart < 1.2 do
+                    task.wait(0.10)
+                    local curCount = countBaseParts(targetInst)
+                    if curCount > 0 and curCount == lastCount then
+                        stableChecks = stableChecks + 1
+                        if stableChecks >= 2 then break end
+                    else
+                        lastCount = curCount
+                        stableChecks = 0
+                    end
+                end
                 baked = bakeItemToAvatar(targetInst, itemCat or foundCat, nil, item)
                 if baked then
                     break
@@ -3693,8 +3726,25 @@ local function updateLevel(val)
 				end
 			elseif txt:match("^Grade Level:%s*%d+$") then
 				pcall(function() d.Text = "Grade Level: " .. rawNumStr end)
-			elseif txt:match("^Level%s+%d+$") then
-				pcall(function() d.Text = "Level " .. rawNumStr end)
+			elseif txt:match("^Level%s+[%d,]+$") then
+				pcall(function() d.Text = "Level " .. val end)
+			elseif d.Parent and d.Parent.Name:lower():find("level") and tonumber(txt:gsub("[^%d]", "")) then
+				pcall(function() d.Text = val end)
+			end
+		end
+	end
+	if lp.Character then
+		for _, d in ipairs(lp.Character:GetDescendants()) do
+			if d:IsA("TextLabel") then
+				local nl = d.Name:lower()
+				local txt = d.Text or ""
+				if (nl:find("level") or (d.Parent and d.Parent.Name:lower():find("level"))) and tonumber(txt:gsub("[^%d]", "")) then
+					if txt:match("^Level%s+") then
+						pcall(function() d.Text = "Level " .. val end)
+					else
+						pcall(function() d.Text = val end)
+					end
+				end
 			end
 		end
 	end
