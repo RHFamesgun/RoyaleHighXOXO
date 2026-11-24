@@ -1,14 +1,15 @@
 -- ============================================================
 -- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v20
--- Uses the game's actual internal preview remote:
--- game.ReplicatedStorage.ItemPreviewNetwork.PreviewItem:FireServer(itemName)
+-- Compact Classic Black & White GUI (v18/v19 format)
+-- Full ShopTryOn item catalog (Heels, Skirts, Bodices, Wings, Accessories, Halos)
+-- Multi-tier Equip Pipeline:
+--   1. Remote fire to game.ReplicatedStorage.ItemPreviewNetwork.PreviewItem
+--   2. In-game Shop Directory Tryon button click via VirtualInputManager / VirtualUser
+--   3. In-game MoreInfoPopUp TryCallback invoke
 -- Neutralizes client-side freeze loop in ItemPreviewNetwork
--- Multi-layer isolation: equips stack independently
+-- True multi-layer stacking with layer preservation
 -- ============================================================
 
--- ============================================================
--- SECTION 1: SERVICES & LOCALS
--- ============================================================
 local Players              = game:GetService("Players")
 local RunService           = game:GetService("RunService")
 local ContextActionService = game:GetService("ContextActionService")
@@ -16,9 +17,13 @@ local ReplicatedStorage    = game:GetService("ReplicatedStorage")
 local lp                   = Players.LocalPlayer
 local pg                   = lp:WaitForChild("PlayerGui", 20)
 
-local itemPreviewNetwork = ReplicatedStorage:WaitForChild("ItemPreviewNetwork", 10)
+local VIM = nil
+pcall(function() VIM = game:GetService("VirtualInputManager") end)
+local VU = nil
+pcall(function() VU = game:GetService("VirtualUser") end)
+
+local itemPreviewNetwork = ReplicatedStorage:WaitForChild("ItemPreviewNetwork", 8)
 local previewItemRemote  = itemPreviewNetwork and itemPreviewNetwork:FindFirstChild("PreviewItem")
-local exitPreviewRemote   = itemPreviewNetwork and itemPreviewNetwork:FindFirstChild("ExitPreview")
 
 -- GUI host: gethui > CoreGui > PlayerGui
 local function getGuiParent()
@@ -29,9 +34,9 @@ local function getGuiParent()
 end
 
 -- ============================================================
--- SECTION 2: CLEANUP OLD VERSIONS
+-- CLEANUP PREVIOUS GUIS
 -- ============================================================
-for _, name in ipairs({"RH_Wardrobe_v16","RH_Wardrobe_v17","RH_Wardrobe_v18","RH_Wardrobe_v19","RH_Wardrobe_v20"}) do
+for _, name in ipairs({"RH_Wardrobe_v16","RH_Wardrobe_v17","RH_Wardrobe_v18","RH_Wardrobe_v19","RH_Wardrobe_v20","RH_Wardrobe_Definitive"}) do
     local old = getGuiParent():FindFirstChild(name)
     if old then old:Destroy() end
     local old2 = pg:FindFirstChild(name)
@@ -39,12 +44,8 @@ for _, name in ipairs({"RH_Wardrobe_v16","RH_Wardrobe_v17","RH_Wardrobe_v18","RH
 end
 
 -- ============================================================
--- SECTION 3: ANTI-FREEZE & ANIMATION GUARDIAN
+-- ANTI-FREEZE & ANIMATION GUARDIAN
 -- ============================================================
--- RH runs a client script that loops:
--- while v_u_4 do Character.PrimaryPart.Anchored = true ... end
--- We constantly force PrimaryPart and HRP to unanchored and ensure animations play.
-
 local standardBodyParts = {
     HumanoidRootPart=true, Head=true, Torso=true, UpperTorso=true, LowerTorso=true,
     ["Left Arm"]=true, ["Right Arm"]=true, ["Left Leg"]=true, ["Right Leg"]=true,
@@ -60,13 +61,9 @@ local function restoreCharacterMobility(char)
     if not char then return end
     pcall(function()
         local pp = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
-        if pp and pp.Anchored then
-            pp.Anchored = false
-        end
+        if pp and pp.Anchored then pp.Anchored = false end
         local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp and hrp.Anchored then
-            hrp.Anchored = false
-        end
+        if hrp and hrp.Anchored then hrp.Anchored = false end
         local hum = char:FindFirstChildOfClass("Humanoid")
         if hum then
             if hum.PlatformStand then hum.PlatformStand = false end
@@ -80,18 +77,15 @@ local function restoreCharacterMobility(char)
     end)
 end
 
--- Hook RenderStepped to ensure the character NEVER gets anchored by RH's Preview loop
+-- Every frame check: defeat RH's preview anchor loop
 RunService.RenderStepped:Connect(function()
     local char = lp.Character
     if char then
         local pp = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
-        if pp and pp.Anchored then
-            pp.Anchored = false
-        end
+        if pp and pp.Anchored then pp.Anchored = false end
     end
 end)
 
--- Periodically clear any freeze context bindings
 task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
@@ -107,7 +101,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- SECTION 4: MULTI-LAYER ENGINE
+-- MULTI-LAYER ENGINE
 -- ============================================================
 local savedWornLayers = {} -- [itemName] = { backup = Instance, category = string }
 
@@ -140,7 +134,6 @@ local function restoreAllSavedLayers()
     end
 end
 
--- Layer safeguard loop: re-parent any layer if stripped
 task.spawn(function()
     while task.wait(0.5) do
         pcall(restoreAllSavedLayers)
@@ -162,13 +155,64 @@ local function clearAllWornLayers()
 end
 
 -- ============================================================
--- SECTION 5: DIRECT REMOTE TRY-ON ENGINE
+-- MULTI-TIER EQUIP ENGINE
 -- ============================================================
+local function findShopTryonButton(itemName)
+    local shop = pg:FindFirstChild("Shop")
+    if not shop then return nil end
+    local dir = shop:FindFirstChild("Directory")
+    if not dir then return nil end
+
+    local targetLower = itemName:lower()
+    for _, folder in ipairs(dir:GetChildren()) do
+        local mid = folder:FindFirstChild("MiddlePanel")
+        local sf = mid and mid:FindFirstChild("ScrollingFrame")
+        if sf then
+            for _, itemFrame in ipairs(sf:GetChildren()) do
+                if itemFrame:IsA("Frame") then
+                    local tryon = itemFrame:FindFirstChild("Tryon")
+                    if tryon and tryon.Visible then
+                        local fName = itemFrame.Name:lower()
+                        local nLabel = itemFrame:FindFirstChild("name")
+                        local lText = (nLabel and nLabel:IsA("TextLabel")) and nLabel.Text:lower() or ""
+                        if fName == targetLower or lText == targetLower
+                           or fName:find(targetLower, 1, true) or targetLower:find(fName, 1, true)
+                           or (lText ~= "" and lText:find(targetLower, 1, true)) then
+                            return tryon
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function clickButtonVIM(btn)
+    if not btn then return false end
+    local ok = pcall(function()
+        local pos = btn.AbsolutePosition
+        local sz  = btn.AbsoluteSize
+        local cx  = pos.X + sz.X / 2
+        local cy  = pos.Y + sz.Y / 2
+        if VIM then
+            VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
+            task.wait(0.04)
+            VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
+        elseif VU then
+            VU:Button1Down(Vector2.new(cx, cy), workspace.CurrentCamera)
+            task.wait(0.04)
+            VU:Button1Up(Vector2.new(cx, cy), workspace.CurrentCamera)
+        end
+    end)
+    return ok
+end
+
 local function equipItem(itemName, itemCat)
     local char = lp.Character
     if not char then return "No character" end
 
-    -- Slot replacement for single-slot items (Heels, Skirts, Bodices)
+    -- Manage single-slot swap for Heels, Skirts, Bodices
     if itemCat == "Heels" or itemCat == "Skirts" or itemCat == "Bodices" then
         for savedName, data in pairs(savedWornLayers) do
             if data.category == itemCat then
@@ -182,7 +226,7 @@ local function equipItem(itemName, itemCat)
         end
     end
 
-    -- Snapshot existing custom layers before preview
+    -- Snapshot existing layers
     local snapshot = {}
     for _, child in ipairs(char:GetChildren()) do
         if child:GetAttribute("CustomSavedLayer") then
@@ -190,21 +234,28 @@ local function equipItem(itemName, itemCat)
         end
     end
 
-    -- Call the exact native remote Royale High uses for Try-On
+    -- Tier 1: Direct remote invocation
     if previewItemRemote then
         pcall(function()
             previewItemRemote:FireServer(itemName)
         end)
     end
 
-    -- Process replication & isolate layer
+    -- Tier 2: VIM click on in-game Tryon button if available in shop
+    task.spawn(function()
+        local btn = findShopTryonButton(itemName)
+        if btn then
+            clickButtonVIM(btn)
+        end
+    end)
+
+    -- Capture replication & protect layer
     task.spawn(function()
         task.wait(0.25)
         restoreCharacterMobility(lp.Character)
 
-        -- Find newly replicated asset
         local newItem = nil
-        local lowerTarget = itemName:lower()
+        local targetLower = itemName:lower()
         for _ = 1, 30 do
             task.wait(0.1)
             char = lp.Character
@@ -214,8 +265,7 @@ local function equipItem(itemName, itemCat)
                    and not child:GetAttribute("CustomSavedLayer")
                    and not snapshot[child.Name] then
                     local cln = child.Name:lower()
-                    if cln:find(lowerTarget, 1, true)
-                       or lowerTarget:find(cln, 1, true)
+                    if cln:find(targetLower, 1, true) or targetLower:find(cln, 1, true)
                        or child:IsA("Accessory") or child:IsA("Model") or child:IsA("Part") or child:IsA("MeshPart") then
                         newItem = child
                         break
@@ -235,7 +285,7 @@ local function equipItem(itemName, itemCat)
             end)
         end
 
-        -- Restore previously saved layers that may have been cleared
+        -- Restore previously worn layers that the game may have despawned
         char = lp.Character
         if char then
             for snapName, snapClone in pairs(snapshot) do
@@ -261,7 +311,7 @@ local function equipItem(itemName, itemCat)
 end
 
 -- ============================================================
--- SECTION 6: MASTER CATALOG (392 strictly ShopTryOn items)
+-- MASTER CATALOG (Strictly Try-on-able Items Only)
 -- ============================================================
 local masterCatalog = {
 	{"Accessories", "Porcelina Doll Stitched Sleeves", "23,000", "rbxassetid://102867680045115", true},
@@ -464,7 +514,7 @@ local masterCatalog = {
 	{"Accessories", "Pumpkin Autumn Earrings", "100", "rbxassetid://7580868562", true},
 	{"Skirts", "Darling Valentina Morning & Evening Skirt", "30,000", "rbxassetid://4665955657", true},
 	{"Accessories", "Widow's Wilted Bouquet", "5,000", "rbxassetid://7805326561", true},
-	{"Accessories", "Vamp提案 Tote", "4,000", "rbxassetid://7593492398", true},
+	{"Accessories", "Vamp Tote", "4,000", "rbxassetid://7593492398", true},
 	{"Accessories", "Goth Lolita Purse", "4,000", "rbxassetid://7593473355", true},
 	{"Accessories", "Distinguished Doctor Mask", "3,500", "rbxassetid://130325638012778", true},
 	{"Skirts", "Goddess of TriumphVictorious Skirt", "1,000 Robux", "rbxassetid://10747530752", true},
@@ -658,7 +708,7 @@ local masterCatalog = {
 	{"Bodices", "Fallen Fae Tattered Top & Rose Choker", "18,000", "rbxassetid://113771155649424", true},
 }
 
--- Halos (curated list)
+-- Curated Halos
 local haloList = {
 	{"Halos", "Corrupt Halo", "Special", "rbxassetid://5780659637"},
 	{"Halos", "Glimmering Light Halo", "Special", "rbxassetid://6025681860"},
@@ -691,13 +741,8 @@ local haloList = {
 	{"Halos", "Frozen Halo", "Special", ""},
 }
 
--- ============================================================
--- SECTION 7: CATEGORY ROUTING
--- ============================================================
-local categories = {
-	Heels={}, Skirts={}, Bodices={}, Accessories={}, Wings={}, Halos={}
-}
-local catOrder = {"Heels","Skirts","Bodices","Accessories","Wings","Halos"}
+local categories = { Heels={}, Skirts={}, Bodices={}, Accessories={}, Wings={}, Halos={} }
+local catOrder   = {"Heels", "Skirts", "Bodices", "Accessories", "Wings", "Halos"}
 
 for _, row in ipairs(masterCatalog) do
 	local cat, name, price, img, hasImg = row[1], row[2], row[3], row[4], row[5]
@@ -711,460 +756,475 @@ for _, row in ipairs(haloList) do
 end
 
 -- ============================================================
--- SECTION 8: MONOCHROME TOUCH-OPTIMIZED GUI
+-- COMPACT BLACK & WHITE GUI (Classic v18/v19 Design)
 -- ============================================================
-local SCREEN_W  = 420
-local SCREEN_H  = 580
-local SIDEBAR_W = 90
-local CARD_W    = 90
-local CARD_H    = 110
-local CARD_PAD  = 6
-
 local C = {
-	bg        = Color3.fromRGB(14, 14, 14),
-	panel     = Color3.fromRGB(26, 26, 26),
-	card      = Color3.fromRGB(38, 38, 38),
-	border    = Color3.fromRGB(60, 60, 60),
-	accent    = Color3.fromRGB(220, 220, 220),
-	text      = Color3.fromRGB(230, 230, 230),
-	subtext   = Color3.fromRGB(140, 140, 140),
-	btn       = Color3.fromRGB(220, 220, 220),
-	btnText   = Color3.fromRGB(0, 0, 0),
-	btnDanger = Color3.fromRGB(80, 80, 80),
-	tabActive = Color3.fromRGB(220, 220, 220),
-	tabInact  = Color3.fromRGB(38, 38, 38),
-	tabActTxt = Color3.fromRGB(0, 0, 0),
-	tabInaTxt = Color3.fromRGB(180, 180, 180),
-	imgBg     = Color3.fromRGB(50, 50, 50),
-	searchBg  = Color3.fromRGB(38, 38, 38),
+	bg        = Color3.fromRGB(12, 12, 12),
+	card      = Color3.fromRGB(22, 22, 22),
+	cardHover = Color3.fromRGB(34, 34, 34),
+	border    = Color3.fromRGB(45, 45, 45),
+	borderHi  = Color3.fromRGB(110, 110, 110),
+	text      = Color3.fromRGB(240, 240, 240),
+	sub       = Color3.fromRGB(170, 170, 170),
+	muted     = Color3.fromRGB(90, 90, 90),
+	btn       = Color3.fromRGB(28, 28, 28),
+	btnHi     = Color3.fromRGB(240, 240, 240),
+	btnTextHi = Color3.fromRGB(10, 10, 10),
+	tabActive = Color3.fromRGB(240, 240, 240),
+	tabInact  = Color3.fromRGB(20, 20, 20),
+	tabActTxt = Color3.fromRGB(10, 10, 10),
+	tabInaTxt = Color3.fromRGB(160, 160, 160),
 }
 
-local guiParent = getGuiParent()
-local sg = Instance.new("ScreenGui")
-sg.Name           = "RH_Wardrobe_v20"
-sg.ResetOnSpawn   = false
-sg.IgnoreGuiInset = true
-sg.DisplayOrder   = 999
-sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-sg.Parent         = guiParent
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name           = "RH_Wardrobe_v20"
+ScreenGui.ResetOnSpawn   = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.DisplayOrder   = 999
+ScreenGui.Parent         = getGuiParent()
 
-local mainFrame = Instance.new("Frame")
-mainFrame.Name              = "MainFrame"
-mainFrame.Size              = UDim2.new(0, SCREEN_W, 0, SCREEN_H)
-mainFrame.Position          = UDim2.new(0.5, -SCREEN_W/2, 0.5, -SCREEN_H/2)
-mainFrame.BackgroundColor3  = C.bg
-mainFrame.BorderSizePixel   = 0
-mainFrame.Parent            = sg
+local function mk(cls, props, parent)
+	local o = Instance.new(cls)
+	for k, v in pairs(props) do o[k] = v end
+	if parent then o.Parent = parent end
+	return o
+end
 
-local uic = Instance.new("UICorner")
-uic.CornerRadius = UDim.new(0, 10)
-uic.Parent = mainFrame
+local function corner(r, parent)
+	return mk("UICorner", {CornerRadius = UDim.new(0, r)}, parent)
+end
 
--- Dragging
+local function stroke(t, c, parent)
+	return mk("UIStroke", {Thickness = t, Color = c, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, parent)
+end
+
+-- Floating Menu Button
+local ToggleBtn = mk("TextButton", {
+	Size              = UDim2.new(0, 54, 0, 36),
+	Position          = UDim2.new(0, 10, 1, -54),
+	BackgroundColor3  = C.bg,
+	Text              = "MENU",
+	TextSize          = 10,
+	Font              = Enum.Font.GothamBold,
+	TextColor3        = C.text,
+	BorderSizePixel   = 0,
+	ZIndex            = 100,
+	AutoButtonColor   = false,
+}, ScreenGui)
+corner(6, ToggleBtn)
+stroke(1, C.borderHi, ToggleBtn)
+
+-- Compact window dimensions: 320px width
+local W, H = 320, 480
+local Main = mk("Frame", {
+	Size             = UDim2.new(0, W, 0, H),
+	Position         = UDim2.new(0.5, -W/2, 0.5, -H/2),
+	BackgroundColor3 = C.bg,
+	BorderSizePixel  = 0,
+	Visible          = false,
+	ZIndex           = 10,
+	ClipsDescendants = false,
+}, ScreenGui)
+corner(8, Main)
+stroke(1, C.border, Main)
+
+ToggleBtn.MouseButton1Click:Connect(function()
+	Main.Visible = not Main.Visible
+end)
+ToggleBtn.TouchTap:Connect(function()
+	Main.Visible = not Main.Visible
+end)
+
+-- Draggable logic
 local dragging, dragStart, startPos
-mainFrame.InputBegan:Connect(function(input)
+Main.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		dragging  = true
 		dragStart = input.Position
-		startPos  = mainFrame.Position
+		startPos  = Main.Position
 	end
 end)
-mainFrame.InputChanged:Connect(function(input)
+Main.InputChanged:Connect(function(input)
 	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 		local delta = input.Position - dragStart
-		mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 	end
 end)
-mainFrame.InputEnded:Connect(function(input)
+Main.InputEnded:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		dragging = false
 	end
 end)
 
 -- Title Bar
-local titleBar = Instance.new("Frame")
-titleBar.Name             = "TitleBar"
-titleBar.Size             = UDim2.new(1, 0, 0, 36)
-titleBar.BackgroundColor3 = C.panel
-titleBar.BorderSizePixel  = 0
-titleBar.Parent           = mainFrame
+local TitleBar = mk("Frame", {
+	Size             = UDim2.new(1, 0, 0, 34),
+	BackgroundColor3 = C.card,
+	BorderSizePixel  = 0,
+	ZIndex           = 11,
+}, Main)
+corner(6, TitleBar)
 
-local uic2 = Instance.new("UICorner")
-uic2.CornerRadius = UDim.new(0, 10)
-uic2.Parent = titleBar
+mk("TextLabel", {
+	Size               = UDim2.new(1, -74, 1, 0),
+	Position           = UDim2.new(0, 10, 0, 0),
+	BackgroundTransparency = 1,
+	Text               = "ROYALE HIGH WARDROBE",
+	TextColor3         = C.text,
+	Font               = Enum.Font.GothamBold,
+	TextSize           = 10,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	ZIndex             = 12,
+}, TitleBar)
 
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Text              = "ROYALE HIGH WARDROBE v20"
-titleLabel.Font              = Enum.Font.GothamBold
-titleLabel.TextSize          = 13
-titleLabel.TextColor3        = C.accent
-titleLabel.BackgroundTransparency = 1
-titleLabel.Size              = UDim2.new(1, -70, 1, 0)
-titleLabel.Position          = UDim2.new(0, 10, 0, 0)
-titleLabel.TextXAlignment    = Enum.TextXAlignment.Left
-titleLabel.Parent            = titleBar
+local MinBtn = mk("TextButton", {
+	Size            = UDim2.new(0, 24, 0, 24),
+	Position        = UDim2.new(1, -54, 0, 5),
+	BackgroundColor3= C.btn,
+	Text            = "_",
+	TextColor3      = C.text,
+	Font            = Enum.Font.GothamBold,
+	TextSize        = 11,
+	BorderSizePixel = 0,
+	ZIndex          = 12,
+	AutoButtonColor = false,
+}, TitleBar)
+corner(4, MinBtn)
+stroke(1, C.border, MinBtn)
 
-local closeBtn = Instance.new("TextButton")
-closeBtn.Text              = "X"
-closeBtn.Font              = Enum.Font.GothamBold
-closeBtn.TextSize          = 14
-closeBtn.TextColor3        = C.text
-closeBtn.BackgroundColor3  = Color3.fromRGB(80, 30, 30)
-closeBtn.BorderSizePixel   = 0
-closeBtn.Size              = UDim2.new(0, 30, 0, 24)
-closeBtn.Position          = UDim2.new(1, -36, 0, 6)
-closeBtn.Parent            = titleBar
-local ucl = Instance.new("UICorner")
-ucl.CornerRadius = UDim.new(0, 6)
-ucl.Parent = closeBtn
-closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
-closeBtn.TouchTap:Connect(function() sg:Destroy() end)
+local CloseBtn = mk("TextButton", {
+	Size            = UDim2.new(0, 24, 0, 24),
+	Position        = UDim2.new(1, -26, 0, 5),
+	BackgroundColor3= C.btn,
+	Text            = "X",
+	TextColor3      = C.text,
+	Font            = Enum.Font.GothamBold,
+	TextSize        = 10,
+	BorderSizePixel = 0,
+	ZIndex          = 12,
+	AutoButtonColor = false,
+}, TitleBar)
+corner(4, CloseBtn)
+stroke(1, C.border, CloseBtn)
 
-local minBtn = Instance.new("TextButton")
-minBtn.Text             = "-"
-minBtn.Font             = Enum.Font.GothamBold
-minBtn.TextSize         = 18
-minBtn.TextColor3       = C.text
-minBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 20)
-minBtn.BorderSizePixel  = 0
-minBtn.Size             = UDim2.new(0, 30, 0, 24)
-minBtn.Position         = UDim2.new(1, -70, 0, 6)
-minBtn.Parent           = titleBar
-local ucm = Instance.new("UICorner")
-ucm.CornerRadius = UDim.new(0, 6)
-ucm.Parent = minBtn
+CloseBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+CloseBtn.TouchTap:Connect(function() ScreenGui:Destroy() end)
 
-local contentFrame = Instance.new("Frame")
-contentFrame.Name             = "Content"
-contentFrame.Size             = UDim2.new(1, 0, 1, -36)
-contentFrame.Position         = UDim2.new(0, 0, 0, 36)
-contentFrame.BackgroundTransparency = 1
-contentFrame.ClipsDescendants = true
-contentFrame.Parent           = mainFrame
+local ContentArea = mk("Frame", {
+	Size               = UDim2.new(1, 0, 1, -34),
+	Position           = UDim2.new(0, 0, 0, 34),
+	BackgroundTransparency = 1,
+	ClipsDescendants   = true,
+	ZIndex             = 11,
+}, Main)
 
-local minimized = false
-local function toggleMinimize()
-	minimized = not minimized
-	contentFrame.Visible = not minimized
-	mainFrame.Size = minimized and UDim2.new(0, SCREEN_W, 0, 36) or UDim2.new(0, SCREEN_W, 0, SCREEN_H)
+local isMinimized = false
+local function toggleMin()
+	isMinimized = not isMinimized
+	ContentArea.Visible = not isMinimized
+	Main.Size = isMinimized and UDim2.new(0, W, 0, 34) or UDim2.new(0, W, 0, H)
 end
-minBtn.MouseButton1Click:Connect(toggleMinimize)
-minBtn.TouchTap:Connect(toggleMinimize)
+MinBtn.MouseButton1Click:Connect(toggleMin)
+MinBtn.TouchTap:Connect(toggleMin)
 
--- Sidebar
-local sidebar = Instance.new("Frame")
-sidebar.Name             = "Sidebar"
-sidebar.Size             = UDim2.new(0, SIDEBAR_W, 1, 0)
-sidebar.BackgroundColor3 = C.panel
-sidebar.BorderSizePixel  = 0
-sidebar.Parent           = contentFrame
+-- Left Category Column (Compact)
+local CatScroll = mk("ScrollingFrame", {
+	Size               = UDim2.new(0, 88, 1, 0),
+	Position           = UDim2.new(0, 0, 0, 0),
+	BackgroundColor3   = C.card,
+	BorderSizePixel    = 0,
+	ScrollBarThickness = 2,
+	CanvasSize         = UDim2.new(0, 0, 0, #catOrder * 42 + 8),
+	ZIndex             = 12,
+}, ContentArea)
 
-local rightArea = Instance.new("Frame")
-rightArea.Name             = "RightArea"
-rightArea.Size             = UDim2.new(1, -SIDEBAR_W, 1, 0)
-rightArea.Position         = UDim2.new(0, SIDEBAR_W, 0, 0)
-rightArea.BackgroundTransparency = 1
-rightArea.ClipsDescendants = true
-rightArea.Parent           = contentFrame
+local CatLayout = mk("UIListLayout", {
+	Padding               = UDim.new(0, 4),
+	HorizontalAlignment   = Enum.HorizontalAlignment.Center,
+	SortOrder             = Enum.SortOrder.LayoutOrder,
+}, CatScroll)
+mk("UIPadding", {PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4)}, CatScroll)
 
--- Search
-local searchBar = Instance.new("Frame")
-searchBar.Size            = UDim2.new(1, -8, 0, 30)
-searchBar.Position        = UDim2.new(0, 4, 0, 4)
-searchBar.BackgroundColor3 = C.searchBg
-searchBar.BorderSizePixel = 0
-searchBar.Parent          = rightArea
-local ucSB = Instance.new("UICorner")
-ucSB.CornerRadius = UDim.new(0, 6)
-ucSB.Parent = searchBar
+-- Search Box
+local SearchBoxFrame = mk("Frame", {
+	Size               = UDim2.new(1, -96, 0, 26),
+	Position           = UDim2.new(0, 92, 0, 4),
+	BackgroundColor3   = C.card,
+	BorderSizePixel    = 0,
+	ZIndex             = 13,
+}, ContentArea)
+corner(4, SearchBoxFrame)
+stroke(1, C.border, SearchBoxFrame)
 
-local searchIcon = Instance.new("TextLabel")
-searchIcon.Text           = "[ SEARCH ]"
-searchIcon.Font           = Enum.Font.Gotham
-searchIcon.TextSize       = 10
-searchIcon.TextColor3     = C.subtext
-searchIcon.BackgroundTransparency = 1
-searchIcon.Size           = UDim2.new(0, 65, 1, 0)
-searchIcon.Position       = UDim2.new(0, 4, 0, 0)
-searchIcon.Parent         = searchBar
+local SearchBox = mk("TextBox", {
+	Size               = UDim2.new(1, -12, 1, 0),
+	Position           = UDim2.new(0, 6, 0, 0),
+	BackgroundTransparency = 1,
+	PlaceholderText    = "Search...",
+	Text               = "",
+	TextColor3         = C.text,
+	PlaceholderColor3  = C.muted,
+	Font               = Enum.Font.GothamBold,
+	TextSize           = 9,
+	ClearTextOnFocus   = false,
+	ZIndex             = 14,
+}, SearchBoxFrame)
 
-local searchBox = Instance.new("TextBox")
-searchBox.PlaceholderText = "Search items..."
-searchBox.PlaceholderColor3 = C.subtext
-searchBox.Text            = ""
-searchBox.Font            = Enum.Font.Gotham
-searchBox.TextSize        = 12
-searchBox.TextColor3      = C.text
-searchBox.BackgroundTransparency = 1
-searchBox.Size            = UDim2.new(1, -70, 1, 0)
-searchBox.Position        = UDim2.new(0, 68, 0, 0)
-searchBox.ClearTextOnFocus = false
-searchBox.TextXAlignment   = Enum.TextXAlignment.Left
-searchBox.Parent          = searchBar
+-- Grid Scroll (68x82 cards)
+local GridScroll = mk("ScrollingFrame", {
+	Size               = UDim2.new(1, -92, 1, -34),
+	Position           = UDim2.new(0, 92, 0, 34),
+	BackgroundTransparency = 1,
+	BorderSizePixel    = 0,
+	ScrollBarThickness = 3,
+	CanvasSize         = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	ZIndex             = 12,
+}, ContentArea)
 
--- Grid
-local gridScroll = Instance.new("ScrollingFrame")
-gridScroll.Name               = "GridScroll"
-gridScroll.Size               = UDim2.new(1, -4, 1, -44)
-gridScroll.Position           = UDim2.new(0, 2, 0, 38)
-gridScroll.BackgroundTransparency = 1
-gridScroll.ScrollBarThickness = 4
-gridScroll.ScrollBarImageColor3 = C.border
-gridScroll.BorderSizePixel    = 0
-gridScroll.CanvasSize         = UDim2.new(0, 0, 0, 0)
-gridScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-gridScroll.Parent             = rightArea
+local GridLayout = mk("UIGridLayout", {
+	CellSize    = UDim2.new(0, 68, 0, 82),
+	CellPadding = UDim2.new(0, 4, 0, 4),
+	SortOrder   = Enum.SortOrder.LayoutOrder,
+}, GridScroll)
+mk("UIPadding", {PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4)}, GridScroll)
 
-local gridLayout = Instance.new("UIGridLayout")
-gridLayout.CellSize         = UDim2.new(0, CARD_W, 0, CARD_H)
-gridLayout.CellPadding      = UDim2.new(0, CARD_PAD, 0, CARD_PAD)
-gridLayout.SortOrder        = Enum.SortOrder.LayoutOrder
-gridLayout.FillDirectionMaxCells = 3
-gridLayout.Parent           = gridScroll
+-- Compact Slide-up Inspector
+local InspHeight = 150
+local Inspector = mk("Frame", {
+	Size             = UDim2.new(1, 0, 0, InspHeight),
+	Position         = UDim2.new(0, 0, 1, 0),
+	BackgroundColor3 = C.card,
+	BorderSizePixel  = 0,
+	Visible          = false,
+	ZIndex           = 25,
+	ClipsDescendants = true,
+}, Main)
+corner(8, Inspector)
+stroke(1, C.borderHi, Inspector)
 
-local gridPad = Instance.new("UIPadding")
-gridPad.PaddingLeft   = UDim.new(0, 4)
-gridPad.PaddingTop    = UDim.new(0, 4)
-gridPad.PaddingRight  = UDim.new(0, 4)
-gridPad.PaddingBottom = UDim.new(0, 8)
-gridPad.Parent        = gridScroll
+local inspClose = mk("TextButton", {
+	Size            = UDim2.new(0, 20, 0, 20),
+	Position        = UDim2.new(1, -24, 0, 4),
+	BackgroundColor3= C.btn,
+	Text            = "X",
+	TextColor3      = C.text,
+	Font            = Enum.Font.GothamBold,
+	TextSize        = 10,
+	BorderSizePixel = 0,
+	ZIndex          = 26,
+	AutoButtonColor = false,
+}, Inspector)
+corner(4, inspClose)
+stroke(1, C.border, inspClose)
 
--- Inspector Panel
-local inspector = Instance.new("Frame")
-inspector.Name             = "Inspector"
-inspector.Size             = UDim2.new(1, 0, 0, 0)
-inspector.Position         = UDim2.new(0, 0, 1, 0)
-inspector.BackgroundColor3 = C.panel
-inspector.BorderSizePixel  = 0
-inspector.ClipsDescendants = true
-inspector.Visible          = false
-inspector.ZIndex           = 10
-inspector.Parent           = mainFrame
-local ucInsp = Instance.new("UICorner")
-ucInsp.CornerRadius = UDim.new(0, 10)
-ucInsp.Parent = inspector
+local inspImg = mk("ImageLabel", {
+	Size            = UDim2.new(0, 64, 0, 64),
+	Position        = UDim2.new(0, 8, 0, 8),
+	BackgroundColor3= C.btn,
+	BorderSizePixel = 0,
+	ZIndex          = 26,
+	ScaleType       = Enum.ScaleType.Fit,
+}, Inspector)
+corner(6, inspImg)
+stroke(1, C.border, inspImg)
 
-local inspImg = Instance.new("ImageLabel")
-inspImg.Size               = UDim2.new(0, 80, 0, 80)
-inspImg.Position           = UDim2.new(0, 10, 0, 10)
-inspImg.BackgroundColor3   = C.imgBg
-inspImg.BorderSizePixel    = 0
-inspImg.ScaleType          = Enum.ScaleType.Fit
-inspImg.Image              = ""
-inspImg.ZIndex             = 11
-inspImg.Parent             = inspector
-local ucII = Instance.new("UICorner")
-ucII.CornerRadius = UDim.new(0, 6)
-ucII.Parent = inspImg
+local inspPlaceholder = mk("TextLabel", {
+	Size               = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Text               = "NO\nIMAGE",
+	TextColor3         = C.muted,
+	Font               = Enum.Font.GothamBold,
+	TextSize           = 9,
+	Visible            = false,
+	ZIndex             = 27,
+}, inspImg)
 
-local inspName = Instance.new("TextLabel")
-inspName.Text              = ""
-inspName.Font              = Enum.Font.GothamBold
-inspName.TextSize          = 12
-inspName.TextColor3        = C.text
-inspName.BackgroundTransparency = 1
-inspName.Size              = UDim2.new(1, -110, 0, 36)
-inspName.Position          = UDim2.new(0, 100, 0, 8)
-inspName.TextXAlignment    = Enum.TextXAlignment.Left
-inspName.TextWrapped       = true
-inspName.ZIndex            = 11
-inspName.Parent            = inspector
+local inspName = mk("TextLabel", {
+	Size               = UDim2.new(1, -106, 0, 28),
+	Position           = UDim2.new(0, 80, 0, 6),
+	BackgroundTransparency = 1,
+	Text               = "ITEM NAME",
+	TextColor3         = C.text,
+	Font               = Enum.Font.GothamBold,
+	TextSize           = 10,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	TextWrapped        = true,
+	ZIndex             = 26,
+}, Inspector)
 
-local inspPrice = Instance.new("TextLabel")
-inspPrice.Text             = ""
-inspPrice.Font             = Enum.Font.Gotham
-inspPrice.TextSize         = 11
-inspPrice.TextColor3       = C.subtext
-inspPrice.BackgroundTransparency = 1
-inspPrice.Size             = UDim2.new(1, -110, 0, 20)
-inspPrice.Position         = UDim2.new(0, 100, 0, 44)
-inspPrice.TextXAlignment   = Enum.TextXAlignment.Left
-inspPrice.ZIndex           = 11
-inspPrice.Parent           = inspector
+local inspPrice = mk("TextLabel", {
+	Size               = UDim2.new(1, -106, 0, 16),
+	Position           = UDim2.new(0, 80, 0, 36),
+	BackgroundTransparency = 1,
+	Text               = "PRICE",
+	TextColor3         = C.sub,
+	Font               = Enum.Font.Gotham,
+	TextSize           = 9.5,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	ZIndex             = 26,
+}, Inspector)
 
-local inspCat = Instance.new("TextLabel")
-inspCat.Text               = ""
-inspCat.Font               = Enum.Font.Gotham
-inspCat.TextSize           = 10
-inspCat.TextColor3         = C.subtext
-inspCat.BackgroundTransparency = 1
-inspCat.Size               = UDim2.new(1, -110, 0, 18)
-inspCat.Position           = UDim2.new(0, 100, 0, 62)
-inspCat.TextXAlignment     = Enum.TextXAlignment.Left
-inspCat.ZIndex             = 11
-inspCat.Parent             = inspector
+local inspStatus = mk("TextLabel", {
+	Size               = UDim2.new(1, -106, 0, 16),
+	Position           = UDim2.new(0, 80, 0, 54),
+	BackgroundTransparency = 1,
+	Text               = "",
+	TextColor3         = C.muted,
+	Font               = Enum.Font.Gotham,
+	TextSize           = 9,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	ZIndex             = 26,
+}, Inspector)
 
-local wearBtn = Instance.new("TextButton")
-wearBtn.Text              = "WEAR"
-wearBtn.Font              = Enum.Font.GothamBold
-wearBtn.TextSize          = 14
-wearBtn.TextColor3        = C.btnText
-wearBtn.BackgroundColor3  = C.btn
-wearBtn.BorderSizePixel   = 0
-wearBtn.Size              = UDim2.new(0, 100, 0, 36)
-wearBtn.Position          = UDim2.new(0, 10, 0, 100)
-wearBtn.ZIndex            = 11
-wearBtn.Parent            = inspector
-local ucWB = Instance.new("UICorner")
-ucWB.CornerRadius = UDim.new(0, 8)
-ucWB.Parent = wearBtn
-
-local clearBtn = Instance.new("TextButton")
-clearBtn.Text             = "CLEAR ALL"
-clearBtn.Font             = Enum.Font.GothamBold
-clearBtn.TextSize         = 11
-clearBtn.TextColor3       = C.text
-clearBtn.BackgroundColor3 = C.btnDanger
-clearBtn.BorderSizePixel  = 0
-clearBtn.Size             = UDim2.new(0, 90, 0, 36)
-clearBtn.Position         = UDim2.new(0, 118, 0, 100)
-clearBtn.ZIndex           = 11
-clearBtn.Parent           = inspector
-local ucCB = Instance.new("UICorner")
-ucCB.CornerRadius = UDim.new(0, 8)
-ucCB.Parent = clearBtn
-
-local inspClose = Instance.new("TextButton")
-inspClose.Text            = "v"
-inspClose.Font            = Enum.Font.GothamBold
-inspClose.TextSize        = 14
-inspClose.TextColor3      = C.subtext
-inspClose.BackgroundTransparency = 1
-inspClose.Size            = UDim2.new(0, 30, 0, 24)
-inspClose.Position        = UDim2.new(1, -34, 0, 6)
-inspClose.ZIndex          = 11
-inspClose.Parent          = inspector
-local function closeInspector()
-	inspector.Visible = false
-	inspector.Size = UDim2.new(1, 0, 0, 0)
-	mainFrame.Size = UDim2.new(0, SCREEN_W, 0, SCREEN_H)
-end
-inspClose.MouseButton1Click:Connect(closeInspector)
-inspClose.TouchTap:Connect(closeInspector)
-
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Text              = ""
-statusLabel.Font              = Enum.Font.Gotham
-statusLabel.TextSize          = 11
-statusLabel.TextColor3        = C.subtext
-statusLabel.BackgroundTransparency = 1
-statusLabel.Size              = UDim2.new(1, -220, 0, 36)
-statusLabel.Position          = UDim2.new(0, 216, 0, 100)
-statusLabel.TextXAlignment    = Enum.TextXAlignment.Left
-statusLabel.TextWrapped       = true
-statusLabel.ZIndex            = 11
-statusLabel.Parent            = inspector
-
-local function setStatus(msg, color)
-	statusLabel.Text       = msg
-	statusLabel.TextColor3 = color or C.subtext
+local function setStatus(msg, col)
+	inspStatus.Text = msg
+	inspStatus.TextColor3 = col or C.sub
 	task.delay(3, function()
-		if statusLabel.Text == msg then statusLabel.Text = "" end
+		if inspStatus.Text == msg then inspStatus.Text = "" end
 	end)
 end
 
+local equipBtn = mk("TextButton", {
+	Size             = UDim2.new(0.48, -4, 0, 28),
+	Position         = UDim2.new(0, 8, 0, 110),
+	BackgroundColor3 = C.btnHi,
+	Text             = "WEAR",
+	TextColor3       = C.btnTextHi,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 9,
+	BorderSizePixel  = 0,
+	ZIndex           = 26,
+	AutoButtonColor  = false,
+}, Inspector)
+corner(4, equipBtn)
+
+local clearLayersBtn = mk("TextButton", {
+	Size             = UDim2.new(0.48, -4, 0, 28),
+	Position         = UDim2.new(0.5, 2, 0, 110),
+	BackgroundColor3 = C.btn,
+	Text             = "CLEAR ALL",
+	TextColor3       = C.text,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 9,
+	BorderSizePixel  = 0,
+	ZIndex           = 26,
+	AutoButtonColor  = false,
+}, Inspector)
+corner(4, clearLayersBtn)
+stroke(1, C.border, clearLayersBtn)
+
 local selectedItem = nil
-local function openInspector(item)
-	selectedItem   = item
-	inspImg.Image  = item.img or ""
-	inspName.Text  = item.name or ""
-	inspPrice.Text = "Price: " .. (item.price or "N/A")
-	inspCat.Text   = "Category: " .. (item.cat or "")
-	inspector.Visible  = true
-	inspector.Size     = UDim2.new(1, 0, 0, 148)
-	inspector.Position = UDim2.new(0, 0, 1, -148)
-	mainFrame.Size     = UDim2.new(0, SCREEN_W, 0, SCREEN_H + 148)
+local function closeInsp()
+	Inspector.Visible = false
+	Inspector.Position = UDim2.new(0, 0, 1, 0)
+end
+inspClose.MouseButton1Click:Connect(closeInsp)
+inspClose.TouchTap:Connect(closeInsp)
+
+local function openInsp(item)
+	selectedItem = item
+	inspName.Text = item.name:upper()
+	inspPrice.Text = (item.price ~= "" and ("Price: " .. item.price) or "Special / Event")
+	if item.img and item.img ~= "" then
+		inspImg.Image = item.img
+		inspPlaceholder.Visible = false
+	else
+		inspImg.Image = ""
+		inspPlaceholder.Visible = true
+	end
+	Inspector.Visible = true
+	Inspector.Position = UDim2.new(0, 0, 1, -InspHeight)
 end
 
 local function handleWear()
 	if not selectedItem then return end
 	if selectedItem.isHalo then
-		setStatus("Halos cannot be tried on.\nMust be won or traded!", C.subtext)
+		setStatus("Halos must be won or traded!", C.sub)
 		return
 	end
-	setStatus("Equipping...", C.subtext)
-	local result = equipItem(selectedItem.name, selectedItem.cat)
-	if result == "OK" then
+	setStatus("Equipping...", C.sub)
+	local res = equipItem(selectedItem.name, selectedItem.cat)
+	if res == "OK" then
 		setStatus("Equipped!", C.text)
 	else
-		setStatus("Failed: " .. tostring(result), C.subtext)
+		setStatus("Failed", C.muted)
 	end
 end
-wearBtn.MouseButton1Click:Connect(handleWear)
-wearBtn.TouchTap:Connect(handleWear)
+equipBtn.MouseButton1Click:Connect(handleWear)
+equipBtn.TouchTap:Connect(handleWear)
 
-clearBtn.MouseButton1Click:Connect(function()
+clearLayersBtn.MouseButton1Click:Connect(function()
 	clearAllWornLayers()
-	setStatus("All layers cleared.", C.subtext)
+	setStatus("Cleared layers.", C.sub)
 end)
-clearBtn.TouchTap:Connect(function()
+clearLayersBtn.TouchTap:Connect(function()
 	clearAllWornLayers()
-	setStatus("All layers cleared.", C.subtext)
+	setStatus("Cleared layers.", C.sub)
 end)
 
 -- ============================================================
--- SECTION 9: POPULATE & TABS
+-- POPULATE GRID & TABS
 -- ============================================================
 local currentCat    = "Heels"
 local currentSearch = ""
 local cardInstances = {}
 
 local function makeCard(item, order)
-	local card = Instance.new("Frame")
-	card.Name             = "Card_" .. item.name:sub(1,20)
-	card.BackgroundColor3 = C.card
-	card.BorderSizePixel  = 0
-	card.LayoutOrder      = order
-	card.Parent           = gridScroll
-	local ucCard = Instance.new("UICorner")
-	ucCard.CornerRadius = UDim.new(0, 6)
-	ucCard.Parent = card
+	local card = mk("Frame", {
+		Name             = "Card_" .. item.name:sub(1,15),
+		BackgroundColor3 = C.card,
+		BorderSizePixel  = 0,
+		LayoutOrder      = order,
+		ZIndex           = 13,
+	}, GridScroll)
+	corner(4, card)
+	stroke(1, C.border, card)
 
-	local img = Instance.new("ImageLabel")
-	img.Size             = UDim2.new(1, -8, 0, 68)
-	img.Position         = UDim2.new(0, 4, 0, 4)
-	img.BackgroundColor3 = C.imgBg
-	img.BorderSizePixel  = 0
-	img.ScaleType        = Enum.ScaleType.Fit
-	img.Image            = item.img or ""
-	img.Parent           = card
-	local ucImg = Instance.new("UICorner")
-	ucImg.CornerRadius = UDim.new(0, 4)
-	ucImg.Parent = img
+	local img = mk("ImageLabel", {
+		Size             = UDim2.new(1, -6, 0, 48),
+		Position         = UDim2.new(0, 3, 0, 3),
+		BackgroundColor3 = C.btn,
+		BorderSizePixel  = 0,
+		ScaleType        = Enum.ScaleType.Fit,
+		Image            = item.img or "",
+		ZIndex           = 14,
+	}, card)
+	corner(3, img)
 
 	if not item.img or item.img == "" then
-		local noImg = Instance.new("TextLabel")
-		noImg.Text              = "NO IMG"
-		noImg.Font              = Enum.Font.Gotham
-		noImg.TextSize          = 9
-		noImg.TextColor3        = C.subtext
-		noImg.BackgroundTransparency = 1
-		noImg.Size              = UDim2.new(1, 0, 1, 0)
-		noImg.TextXAlignment    = Enum.TextXAlignment.Center
-		noImg.Parent            = img
+		mk("TextLabel", {
+			Size               = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Text               = "NO IMG",
+			TextColor3         = C.muted,
+			Font               = Enum.Font.Gotham,
+			TextSize           = 8,
+			ZIndex             = 15,
+		}, img)
 	end
 
-	local nameLbl = Instance.new("TextLabel")
-	nameLbl.Text             = item.name
-	nameLbl.Font             = Enum.Font.Gotham
-	nameLbl.TextSize         = 9
-	nameLbl.TextColor3       = C.text
-	nameLbl.BackgroundTransparency = 1
-	nameLbl.Size             = UDim2.new(1, -4, 0, 26)
-	nameLbl.Position         = UDim2.new(0, 2, 0, 76)
-	nameLbl.TextWrapped      = true
-	nameLbl.TextXAlignment   = Enum.TextXAlignment.Center
-	nameLbl.TextYAlignment   = Enum.TextYAlignment.Top
-	nameLbl.Parent           = card
+	mk("TextLabel", {
+		Size               = UDim2.new(1, -4, 0, 24),
+		Position           = UDim2.new(0, 2, 0, 54),
+		BackgroundTransparency = 1,
+		Text               = item.name,
+		TextColor3         = C.text,
+		Font               = Enum.Font.Gotham,
+		TextSize           = 7.5,
+		TextWrapped        = true,
+		TextYAlignment     = Enum.TextYAlignment.Top,
+		ZIndex             = 14,
+	}, card)
 
-	local btn = Instance.new("TextButton")
-	btn.Text              = ""
-	btn.BackgroundTransparency = 1
-	btn.Size              = UDim2.new(1, 0, 1, 0)
-	btn.Parent            = card
-	btn.ZIndex            = 2
-	btn.MouseButton1Click:Connect(function() openInspector(item) end)
-	btn.TouchTap:Connect(function() openInspector(item) end)
+	local btn = mk("TextButton", {
+		Size               = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text               = "",
+		ZIndex             = 16,
+	}, card)
+	btn.MouseButton1Click:Connect(function() openInsp(item) end)
+	btn.TouchTap:Connect(function() openInsp(item) end)
 
 	cardInstances[item] = card
 	return card
@@ -1178,8 +1238,7 @@ local function refreshGrid()
 	local search = currentSearch:lower()
 	local order = 0
 	for _, item in ipairs(list) do
-		local match = search == "" or item.name:lower():find(search, 1, true)
-		if match then
+		if search == "" or item.name:lower():find(search, 1, true) then
 			order = order + 1
 			makeCard(item, order)
 		end
@@ -1187,18 +1246,7 @@ local function refreshGrid()
 end
 
 local tabButtons = {}
-local sideLayout = Instance.new("UIListLayout")
-sideLayout.SortOrder = Enum.SortOrder.LayoutOrder
-sideLayout.Padding   = UDim.new(0, 2)
-sideLayout.Parent    = sidebar
-
-local sidePad = Instance.new("UIPadding")
-sidePad.PaddingTop   = UDim.new(0, 6)
-sidePad.PaddingLeft  = UDim.new(0, 4)
-sidePad.PaddingRight = UDim.new(0, 4)
-sidePad.Parent       = sidebar
-
-local function setActiveTab(cat)
+local function setActiveCategory(cat)
 	currentCat = cat
 	for c, btn in pairs(tabButtons) do
 		if c == cat then
@@ -1209,35 +1257,40 @@ local function setActiveTab(cat)
 			btn.TextColor3       = C.tabInaTxt
 		end
 	end
+	closeInsp()
 	refreshGrid()
 end
 
 for i, cat in ipairs(catOrder) do
 	local count = #(categories[cat] or {})
-	local tab = Instance.new("TextButton")
-	tab.Text             = cat .. "\n(" .. count .. ")"
-	tab.Font             = Enum.Font.GothamBold
-	tab.TextSize         = 10
-	tab.TextWrapped      = true
-	tab.BackgroundColor3 = C.tabInact
-	tab.TextColor3       = C.tabInaTxt
-	tab.BorderSizePixel  = 0
-	tab.Size             = UDim2.new(1, 0, 0, 52)
-	tab.LayoutOrder      = i
-	tab.Parent           = sidebar
-	local ucT = Instance.new("UICorner")
-	ucT.CornerRadius = UDim.new(0, 6)
-	ucT.Parent = tab
-	tabButtons[cat] = tab
-	tab.MouseButton1Click:Connect(function() setActiveTab(cat) end)
-	tab.TouchTap:Connect(function() setActiveTab(cat) end)
+	local btn = mk("TextButton", {
+		Size             = UDim2.new(1, -6, 0, 36),
+		BackgroundColor3 = C.tabInact,
+		Text             = cat .. "\n(" .. count .. ")",
+		TextColor3       = C.tabInaTxt,
+		Font             = Enum.Font.GothamBold,
+		TextSize         = 8.5,
+		BorderSizePixel  = 0,
+		LayoutOrder      = i,
+		ZIndex           = 13,
+		AutoButtonColor  = false,
+	}, CatScroll)
+	corner(4, btn)
+	stroke(1, C.border, btn)
+	tabButtons[cat] = btn
+
+	btn.MouseButton1Click:Connect(function() setActiveCategory(cat) end)
+	btn.TouchTap:Connect(function() setActiveCategory(cat) end)
 end
 
-searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-	currentSearch = searchBox.Text
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	currentSearch = SearchBox.Text
 	refreshGrid()
 end)
 
-setActiveTab("Heels")
+setActiveCategory("Heels")
 
-print("[RH Wardrobe v20] Loaded successfully with direct ItemPreviewNetwork integration.")
+-- Open the window by default
+Main.Visible = true
+
+print("[RH Wardrobe v20] Compact black & white UI ready. " .. #masterCatalog .. " items loaded.")
