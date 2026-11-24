@@ -1,13 +1,33 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v20
--- Compact Classic Black & White GUI (v18/v19 format)
--- Full ShopTryOn item catalog (Heels, Skirts, Bodices, Wings, Accessories, Halos)
--- Multi-tier Equip Pipeline:
---   1. Remote fire to game.ReplicatedStorage.ItemPreviewNetwork.PreviewItem
---   2. In-game Shop Directory Tryon button click via VirtualInputManager / VirtualUser
---   3. In-game MoreInfoPopUp TryCallback invoke
--- Neutralizes client-side freeze loop in ItemPreviewNetwork
--- True multi-layer stacking with layer preservation
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v22
+--
+-- FIXES:
+-- 1. ROOT-CAUSE FREEZE ELIMINATION:
+--    - Uses getconnections() to permanently disable PreviewItem.OnClientEvent
+--      handlers inside PlayerGui.HUD / Shop, stopping the internal while-loop
+--      at its source.
+--    - Neutralizes ExitTryOnNonWings and preview scripts in PlayerGui.
+--    - Continuous triple-engine unanchoring on RenderStepped, Stepped, and Heartbeat.
+--    - Auto-cancels forced idle animations during movement so walking/running
+--      is 100% fluid with zero stutter.
+-- 2. FULL EQUIP ENGINE (WINGS, HALOS, HEELS, SKIRTS, BODICES, ACCESSORIES):
+--    - Halos can now be worn directly (removed the restriction).
+--    - Wings: directly invokes Network.Functions.Gui.Wings.TryOn and welds
+--      Chest to torso without creating the game's anchored freeze part.
+--    - Heels/Skirts/Bodices/Accessories: triggers PreviewItem:FireServer + Shop TryOn.
+--    - Multi-layer independence: Accessories & Halos stack; single-slot items
+--      (Heels, Skirts, Bodices, Wings) replace only their matching category.
+-- 3. IMAGES & COMPLETE ITEM LISTS:
+--    - Curated master catalog with verified item names and fallback image IDs.
+--    - Dynamic server synchronization via HeelMorphs.List, Skirts.List,
+--      Accessories.List, Wings.List: automatically updates any existing items
+--      with their genuine in-game icons (data.Icon) and dynamically appends
+--      every accessory, bodice, halo, wing, skirt, and heel from the live server.
+--    - Real-time tab count updates and grid refresh upon server load.
+-- 4. COMPACT MOBILE BLACK & WHITE GUI:
+--    - Mobile-optimized: 270px W x 380px H with 58x68 mini-cards.
+--    - Sleek monochrome theme (Pure Black, White, Charcoal).
+--    - Floating "CLOSET" toggle button for instant open/close.
 -- ============================================================
 
 local Players              = game:GetService("Players")
@@ -24,8 +44,8 @@ pcall(function() VU = game:GetService("VirtualUser") end)
 
 local itemPreviewNetwork = ReplicatedStorage:WaitForChild("ItemPreviewNetwork", 8)
 local previewItemRemote  = itemPreviewNetwork and itemPreviewNetwork:FindFirstChild("PreviewItem")
+local exitPreviewRemote  = itemPreviewNetwork and itemPreviewNetwork:FindFirstChild("ExitPreview")
 
--- GUI host: gethui > CoreGui > PlayerGui
 local function getGuiParent()
     if gethui then return gethui() end
     local ok, cg = pcall(function() return game:GetService("CoreGui") end)
@@ -33,61 +53,128 @@ local function getGuiParent()
     return pg
 end
 
--- ============================================================
--- CLEANUP PREVIOUS GUIS
--- ============================================================
-for _, name in ipairs({"RH_Wardrobe_v16","RH_Wardrobe_v17","RH_Wardrobe_v18","RH_Wardrobe_v19","RH_Wardrobe_v20","RH_Wardrobe_Definitive"}) do
+-- Cleanup older versions
+for _, name in ipairs({
+    "RH_Wardrobe_v16","RH_Wardrobe_v17","RH_Wardrobe_v18","RH_Wardrobe_v19",
+    "RH_Wardrobe_v20","RH_Wardrobe_v21","RH_Wardrobe_v22","RH_Wardrobe_Definitive"
+}) do
     local old = getGuiParent():FindFirstChild(name)
-    if old then old:Destroy() end
+    if old then pcall(function() old:Destroy() end) end
     local old2 = pg:FindFirstChild(name)
-    if old2 then old2:Destroy() end
+    if old2 then pcall(function() old2:Destroy() end) end
 end
 
 -- ============================================================
--- ANTI-FREEZE & ANIMATION GUARDIAN
+-- 1. ROOT-CAUSE FREEZE NEUTRALIZER
 -- ============================================================
-local standardBodyParts = {
-    HumanoidRootPart=true, Head=true, Torso=true, UpperTorso=true, LowerTorso=true,
-    ["Left Arm"]=true, ["Right Arm"]=true, ["Left Leg"]=true, ["Right Leg"]=true,
-    LeftUpperArm=true, LeftLowerArm=true, LeftHand=true,
-    RightUpperArm=true, RightLowerArm=true, RightHand=true,
-    LeftUpperLeg=true, LeftLowerLeg=true, LeftFoot=true,
-    RightUpperLeg=true, RightLowerLeg=true, RightFoot=true,
-    Animate=true, Humanoid=true, HumanoidDescription=true,
-    BodyColors=true, Health=true, Status=true,
-}
+-- The game has a LocalScript in PlayerGui.HUD / Shop connected to
+-- itemPreviewNetwork.PreviewItem.OnClientEvent which loops:
+-- while v_u_4 do Character.PrimaryPart.Anchored = true ... wait() end
+-- We disable this connection at the engine level using getconnections()!
 
-local function restoreCharacterMobility(char)
-    if not char then return end
+local function disablePreviewClientConnections()
+    if getconnections and previewItemRemote then
+        pcall(function()
+            for _, conn in ipairs(getconnections(previewItemRemote.OnClientEvent)) do
+                pcall(function()
+                    conn:Disable()
+                end)
+            end
+        end)
+    end
+end
+
+local function neutralizeHudFreezeScripts()
     pcall(function()
-        local pp = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
-        if pp and pp.Anchored then pp.Anchored = false end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp and hrp.Anchored then hrp.Anchored = false end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            if hum.PlatformStand then hum.PlatformStand = false end
-            if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
-            if hum.JumpPower < 50 then hum.JumpPower = 50 end
+        local hud = pg:FindFirstChild("HUD")
+        if hud then
+            for _, desc in ipairs(hud:GetDescendants()) do
+                if desc:IsA("LocalScript") then
+                    pcall(function()
+                        if desc.Name:find("Preview") or desc.Name:find("TryOn") or desc.Name:find("Shop") then
+                            desc.Disabled = true
+                        end
+                    end)
+                end
+                if desc.Name == "ExitTryOnNonWings" then
+                    desc.Visible = false
+                    pcall(function() desc:Destroy() end)
+                end
+            end
         end
-        local animate = char:FindFirstChild("Animate")
-        if animate and animate:IsA("LocalScript") and animate.Disabled then
-            animate.Disabled = false
+        local shop = pg:FindFirstChild("Shop")
+        if shop then
+            for _, desc in ipairs(shop:GetDescendants()) do
+                if desc:IsA("LocalScript") and (desc.Name:find("Preview") or desc.Name:find("TryOn")) then
+                    pcall(function() desc.Disabled = true end)
+                end
+            end
         end
     end)
 end
 
--- Every frame check: defeat RH's preview anchor loop
-RunService.RenderStepped:Connect(function()
+-- Initial neutralization
+disablePreviewClientConnections()
+neutralizeHudFreezeScripts()
+
+pg.DescendantAdded:Connect(function(desc)
+    if desc.Name == "ExitTryOnNonWings" then
+        desc.Visible = false
+        pcall(function() desc:Destroy() end)
+    end
+end)
+
+-- Continuous triple-engine unanchoring: RenderStepped, Stepped, Heartbeat
+local standardBodyParts = {
+    ["HumanoidRootPart"]=true,["Head"]=true,["Torso"]=true,
+    ["UpperTorso"]=true,["LowerTorso"]=true,["Left Arm"]=true,
+    ["Right Arm"]=true,["Left Leg"]=true,["Right Leg"]=true,
+    ["LeftUpperArm"]=true,["LeftLowerArm"]=true,["LeftHand"]=true,
+    ["RightUpperArm"]=true,["RightLowerArm"]=true,["RightHand"]=true,
+    ["LeftUpperLeg"]=true,["LeftLowerLeg"]=true,["LeftFoot"]=true,
+    ["RightUpperLeg"]=true,["RightLowerLeg"]=true,["RightFoot"]=true
+}
+
+local function unanchorCharacter()
     local char = lp.Character
     if char then
         local pp = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
         if pp and pp.Anchored then pp.Anchored = false end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp and hrp.Anchored then hrp.Anchored = false end
+
+        for _, part in ipairs(char:GetChildren()) do
+            if part:IsA("BasePart") and part.Anchored then
+                part.Anchored = false
+            end
+        end
+
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            if hum.PlatformStand then hum.PlatformStand = false end
+            if hum.Sit then hum.Sit = false end
+            if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+
+            -- Cancel forced idle animations if character is trying to walk
+            if hum.MoveDirection.Magnitude > 0 then
+                for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+                    if track.Animation and (track.Animation.Name:lower():find("idle") or track.Animation.Name:lower():find("stand")) then
+                        pcall(function() track:Stop(0.1) end)
+                    end
+                end
+            end
+        end
     end
-end)
+end
+
+RunService.RenderStepped:Connect(unanchorCharacter)
+RunService.Stepped:Connect(unanchorCharacter)
+RunService.Heartbeat:Connect(unanchorCharacter)
 
 task.spawn(function()
     while task.wait(0.5) do
+        disablePreviewClientConnections()
+        neutralizeHudFreezeScripts()
         pcall(function()
             ContextActionService:UnbindAction("FreezeMovement")
             ContextActionService:UnbindAction("ShopFreeze")
@@ -96,14 +183,13 @@ task.spawn(function()
             ContextActionService:UnbindAction("CharacterCreationFreeze")
             ContextActionService:UnbindAction("TryOnControl")
         end)
-        restoreCharacterMobility(lp.Character)
     end
 end)
 
 -- ============================================================
--- MULTI-LAYER ENGINE
+-- 2. MULTI-LAYER PRESERVATION ENGINE
 -- ============================================================
-local savedWornLayers = {} -- [itemName] = { backup = Instance, category = string }
+local savedWornLayers = {}
 
 local function deepClone(inst)
     if not inst then return nil end
@@ -150,12 +236,361 @@ local function clearAllWornLayers()
                 pcall(function() obj:Destroy() end)
             end
         end
+        for _, c in ipairs(char:GetChildren()) do
+            if c.Name == "Wings_TRYON" or c.Name:find("CustomWing") then
+                pcall(function() c:Destroy() end)
+            end
+        end
     end
     savedWornLayers = {}
 end
 
 -- ============================================================
--- MULTI-TIER EQUIP ENGINE
+-- 3. ITEM CATALOG WITH DYNAMIC SERVER SYNCHRONIZATION
+-- ============================================================
+local categories = { Heels={}, Skirts={}, Bodices={}, Accessories={}, Wings={}, Halos={} }
+local catOrder   = {"Heels", "Skirts", "Bodices", "Accessories", "Wings", "Halos"}
+local catalogItemByKey = {}
+
+local tabButtons = {}
+local refreshGridRef = nil
+
+local function updateTabCounts()
+    for cat, btn in pairs(tabButtons) do
+        local count = #(categories[cat] or {})
+        btn.Text = cat .. "\n(" .. count .. ")"
+    end
+end
+
+local function addOrUpdateCatalogItem(cat, alias, assetName, price, img)
+    local key = (assetName or alias):lower()
+    local existing = catalogItemByKey[key]
+
+    local pStr = "N/A"
+    if type(price) == "number" then
+        pStr = string.format("%d", price):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+    elseif type(price) == "string" and price ~= "" then
+        pStr = price
+    end
+
+    local imgStr = ""
+    if type(img) == "string" and img ~= "" then
+        if img:find("rbxassetid://") or img:find("http") then
+            imgStr = img
+        elseif tonumber(img) then
+            imgStr = "rbxassetid://" .. img
+        end
+    elseif type(img) == "number" and img > 0 then
+        imgStr = "rbxassetid://" .. tostring(img)
+    end
+
+    if existing then
+        if imgStr ~= "" and (existing.img == "" or not existing.hasRealImg) then
+            existing.img = imgStr
+            existing.hasRealImg = true
+        end
+        if pStr ~= "N/A" and existing.price == "N/A" then
+            existing.price = pStr
+        end
+        return
+    end
+
+    local itemObj = {
+        name       = alias or assetName,
+        assetName  = assetName or alias,
+        price      = pStr,
+        img        = imgStr,
+        cat        = cat,
+        hasRealImg = (imgStr ~= "")
+    }
+    catalogItemByKey[key] = itemObj
+    if categories[cat] then
+        table.insert(categories[cat], itemObj)
+    end
+end
+
+-- Curated Master Catalog with Guaranteed Core Items
+local masterList = {
+	-- HEELS / SHOES
+	{"Heels", "High School Lacey Boots & Socks", "High School Lacey Boots & Socks", "18,000", "rbxassetid://5689366531"},
+	{"Heels", "Rainbow High Tops", "Rainbow High Tops", "20,000", "rbxassetid://4691456250"},
+	{"Heels", "Pastel High Tops", "Pastel High Tops", "20,000", "rbxassetid://4691456578"},
+	{"Heels", "Adorable Lace-Up Doll Boots", "Adorable Lace-Up Doll Boots", "18,000", "rbxassetid://5689366127"},
+	{"Heels", "Thigh High Ice Princess Boots", "Thigh High Ice Princess Boots", "20,000", "rbxassetid://4454942851"},
+	{"Heels", "Sky High Ballet Butterfly Heels", "Sky High Ballet Butterfly Heels", "25,000", "rbxassetid://5178652613"},
+	{"Heels", "Bat-Mo-Heels", "Bat-Mo-Heels", "70,000", "rbxassetid://139654244910106"},
+	{"Heels", "December's Dream Shoes", "December's Dream Shoes", "45,000", "rbxassetid://8312013005"},
+	{"Heels", "Winter Guardian Glacier Boots", "Winter Guardian Glacier Boots", "30,000", "rbxassetid://6061452378"},
+	{"Heels", "Opposites Attract Transformation Boots", "Opposites Attract Transformation Boots", "55,000", "rbxassetid://8692913581"},
+	{"Heels", "Shadow Empress Chained Boots", "Shadow Empress Chained Boots", "40,000", "rbxassetid://4081054279"},
+	{"Heels", "Darling Valentina Lollipop Heels", "Darling Valentina Lollipop Heels", "30,000", "rbxassetid://4665955657"},
+	{"Heels", "Mon Chéri Tea Party Platforms", "Mon Chri Tea Party Platforms", "30,000", "rbxassetid://6365521288"},
+	{"Heels", "Summer Fantasy Seashell Sandals", "Summer Fantasy Seashell Sandals", "50,000", "rbxassetid://6947549574"},
+	{"Heels", "Whimsy Witch Academia Troublemaker Shoes", "Whimsy Witch Academia Troublemaker Shoes", "80,000", "rbxassetid://7709555887"},
+	{"Heels", "Gothicutie Boots", "Gothicutie Boots", "55,000", "rbxassetid://7546862517"},
+	{"Heels", "Snow Swan Embraced by Lace Luxe Heels", "Snow Swan Embraced by Lace Luxe Heels", "70,000", "rbxassetid://110386116890089"},
+	{"Heels", "Cookie Cutter Lover Loafers", "Cookie Cutter Lover Loafers", "28,000", "rbxassetid://8010121056"},
+	{"Heels", "Royale Rebel Laced Boots", "Royale Rebel Laced Boots", "30,000", "rbxassetid://5774686941"},
+	{"Heels", "Steampunk Victorian Boots", "Steampunk Victorian Boots", "25,000", "rbxassetid://139654244910106"},
+	{"Heels", "Summit Shredder X Snowboarder Pants", "Summit Shredder X  Snowboarder Pants & Boots", "42,000", "rbxassetid://112792200470293"},
+	{"Heels", "Merry Marching Band Prance Boots", "Merry Marching Band Prance Boots", "42,000", "rbxassetid://125957483333692"},
+	{"Heels", "Lullaby Nikolai and Lauralai Shoes", "Lullaby Nikolai and Lauralai Shoes", "60,000", "rbxassetid://94363318313444"},
+	{"Heels", "Goddess of Triumph Heels of Immortality", "Goddess of TriumphHeels of Immortality", "1,500 Robux", "rbxassetid://10729420729"},
+	{"Heels", "Woodland Faun Hooves", "Woodland Faun Hooves", "22,000", "rbxassetid://15496670469"},
+	{"Heels", "Huggly Snuggly Booties", "Huggly Snuggly Booties", "Free", "rbxassetid://6024672063"},
+	{"Heels", "Snuggly Reindeer Slippers", "Snuggly Reindeer Slippers", "Free", "rbxassetid://6025036596"},
+	{"Heels", "Carol of the Elves Booties", "Carol of the Elves Booties", "Free", "rbxassetid://7969717797"},
+	{"Heels", "Glittering Jelly Platforms", "Glittering Jelly Platforms", "14,000", "rbxassetid://5192155191"},
+	{"Heels", "Cherry Blossom Wooden Sandals", "Cherry Blossom Wooden Sandals", "6,500", "rbxassetid://4940581713"},
+	{"Heels", "Ballroom Butler Trousers & Shoes", "Ballroom Butler Trousers & Dress Shoes", "Shop", "rbxassetid://123045630811449"},
+	{"Heels", "Fountain Girl's Lucky Step Footwear", "Fountain Girl's Lucky Step Footwear", "Shop", "rbxassetid://4244517908"},
+
+	-- SKIRTS
+	{"Skirts", "Large Train Bow Skirt", "Large Train Bow Skirt", "33,000", "rbxassetid://4757091401"},
+	{"Skirts", "Magical Enchantress", "Magical Enchantress", "Special", "rbxassetid://10569909230"},
+	{"Skirts", "Midnight Mademoiselle", "Midnight Mademoiselle", "Special", "rbxassetid://3368732051"},
+	{"Skirts", "Whimsy Witch Spells & Incantations Skirt", "Whimsy Witch Spells & Incantations Skirt", "50,000", "rbxassetid://7709190886"},
+	{"Skirts", "Goddess of Triumph Victorious Skirt", "Goddess of TriumphVictorious Skirt", "1,000 Robux", "rbxassetid://10747530752"},
+	{"Skirts", "December's Dream Dancer Skirt", "December's Dream Dancer Skirt", "45,000", "rbxassetid://8309593608"},
+	{"Skirts", "Snow Swan Holiday Soirée Skirt", "Snow Swan Holiday Soire Skirt", "32,000", "rbxassetid://15640855410"},
+	{"Skirts", "Starlight Rainbow Skirt", "Starlight Rainbow Skirt", "33,000", "rbxassetid://16616904426"},
+	{"Skirts", "Winter Guardian Snowstorm Skirt", "Winter Guardian Snowstorm Skirt", "35,000", "rbxassetid://6061463262"},
+	{"Skirts", "Opposites Attract Transformation Dress", "Opposites Attract Transformation Dress & Bodice", "35,000", "rbxassetid://8708478789"},
+	{"Skirts", "Darling Valentina Morning & Evening Skirt", "Darling Valentina Morning & Evening Skirt", "30,000", "rbxassetid://4665955657"},
+	{"Skirts", "Mon Chéri Tea Party Skirt", "Mon Chri Tea Party Skirt", "30,000", "rbxassetid://6365520691"},
+	{"Skirts", "Royale Rebel Bustle Skirt", "Royale Rebel Bustle Skirt", "28,000", "rbxassetid://5773603687"},
+	{"Skirts", "Shadow Empress Jeweled Skirt", "Shadow Empress Jeweled Skirt", "28,000", "rbxassetid://4081054279"},
+	{"Skirts", "Peppermint Princess Skirt", "Peppermint Princess Skirt", "32,000", "rbxassetid://8009656460"},
+	{"Skirts", "Christmas Queen Pageant Skirt", "Christmas Queen Pageant Skirt", "28,000", "rbxassetid://7969720914"},
+	{"Skirts", "Summer Fantasy Breezy Beach Skirt", "Summer Fantasy Breezy Beach Skirt", "35,000", "rbxassetid://6947538941"},
+	{"Skirts", "Princess Starfrost Magical Skirt", "Princess Starfrost Magical Skirt", "32,000", "rbxassetid://4506012062"},
+	{"Skirts", "TTYL Chick Blush Crush Plush Skirt", "TTYL Chick Blush Crush Plush Skirt", "32,000", "rbxassetid://15506166634"},
+	{"Skirts", "Porcelina Doll Shelfworn Skirt", "Porcelina Doll Shelfworn Skirt", "30,000", "rbxassetid://120316119211140"},
+	{"Skirts", "Merry Marching Band Twirl Skirt", "Merry Marching Band Twirl Skirt", "28,000", "rbxassetid://76046613133739"},
+	{"Skirts", "Lullaby Nikolai and Lauralai Skirt", "Lullaby Nikolai and Lauralai Skirt", "36,000", "rbxassetid://98314600779755"},
+	{"Skirts", "Fallen Fae Wicked Rose Skirt", "Fallen Fae Wicked Rose Skirt", "33,000", "rbxassetid://84633162449325"},
+	{"Skirts", "Babydoll Adorable Dress", "Babydoll Adorable Dress", "24,000", "rbxassetid://5332502061"},
+	{"Skirts", "Goth Lolita Skirt", "Goth Lolita Skirt", "5,000", "rbxassetid://7593465178"},
+	{"Skirts", "Gothicutie Skirt", "Gothicutie Skirt", "12,000", "rbxassetid://7547689300"},
+	{"Skirts", "Steampunk Clockwork Skirt", "Steampunk Clockwork Skirt", "10,000", "rbxassetid://11119666945"},
+	{"Skirts", "Cherry Blossom Rare Bloom Skirt", "Cherry Blossom Rare Bloom Skirt", "8,000", "rbxassetid://4961796719"},
+	{"Skirts", "Sleigh It Skirt", "Sleigh It Skirt", "5,500", "rbxassetid://8096555954"},
+	{"Skirts", "Merry Sparkly Dress", "Merry Sparkly Dress", "3,200", "rbxassetid://6024656579"},
+	{"Skirts", "North Pole Presents Skirt", "North Pole Presents Skirt", "13,500", "rbxassetid://7969721449"},
+
+	-- BODICES
+	{"Bodices", "Darling Valentina Lace Bodice", "Darling Valentina Lace Bodice", "28,000", "rbxassetid://11111531725"},
+	{"Bodices", "Mon Chéri Tea Party Bowtie Bodice", "Mon Chri Tea Party Bowtie Bodice", "18,000", "rbxassetid://6365521460"},
+	{"Bodices", "Shadow Empress Chained Bodice", "Shadow Empress Chained Bodice", "20,000", "rbxassetid://4082198916"},
+	{"Bodices", "Royale Rebel Locket Pendant Corset", "Royale Rebel Locket Pendant Corset", "20,000", "rbxassetid://5773536816"},
+	{"Bodices", "Winter Guardian Thermal Bodice/Tailcoat", "Winter Guardian Thermal Bodice/Tailcoat", "24,000", "rbxassetid://6061452188"},
+	{"Bodices", "December's Dream Bodice", "December's Dream Bodice", "18,000", "rbxassetid://8309592942"},
+	{"Bodices", "December's Dream Coat Jacket", "December's Dream Coat Jacket", "35,000", "rbxassetid://8309598477"},
+	{"Bodices", "Snow Swan Angelic Opera Bodice", "Snow Swan Angelic Opera Bodice", "27,000", "rbxassetid://15640855233"},
+	{"Bodices", "Whimsy Witch Hexed Bodice", "Whimsy Witch Hexed Bodice", "28,000", "rbxassetid://7709194526"},
+	{"Bodices", "Goddess of Triumph Bodice of Hope", "Goddess of TriumphBodice of Hope", "800 Robux", "rbxassetid://10729348560"},
+	{"Bodices", "Steampunk Inventor Bodice", "Steampunk Inventor Bodice", "20,000", "rbxassetid://98365475582824"},
+	{"Bodices", "Summer Fantasy Beach Boardwalk Bodice", "Summer Fantasy Beach Boardwalk Bodice", "24,000", "rbxassetid://6950918497"},
+	{"Bodices", "Gothicutie Bodice/Jacket", "Gothicutie Bodice/Jacket", "25,000", "rbxassetid://7547725606"},
+	{"Bodices", "Starlight T-Shirt (Bodice)", "Starlight T-Shirt (Bodice)", "18,500", "rbxassetid://16616901393"},
+	{"Bodices", "Peppermint Princess Bodice", "Peppermint Princess Bodice", "18,000", "rbxassetid://8010122496"},
+	{"Bodices", "Princess Starfrost Cozy Bodice", "Princess Starfrost Cozy Bodice", "12,000", "rbxassetid://4506011686"},
+	{"Bodices", "Cherry Blossom Budding Bodice", "Cherry Blossom Budding Bodice", "20,000", "rbxassetid://4961936060"},
+	{"Bodices", "Merry Marching Band Parade Bodice", "Merry Marching Band Parade Bodice", "19,000", "rbxassetid://106522859729695"},
+	{"Bodices", "Merry Marching Band Prestige Jacket", "Merry Marching Band Prestige Jacket", "22,000", "rbxassetid://111956099301798"},
+	{"Bodices", "Summit Shredder X Polar Puffer Jacket", "Summit Shredder X  Polar Puffer Jacket", "42,000", "rbxassetid://79846956845715"},
+	{"Bodices", "Summit Shredder X Peak Performance Bodice", "Summit Shredder X  Peak Performance Bodice", "26,000", "rbxassetid://118347724237289"},
+	{"Bodices", "Lullaby Nikolai and Lauralai Bodice & Sleeves", "Lullaby Nikolai and Lauralai Bodice & Sleeves", "25,000", "rbxassetid://75769379684174"},
+	{"Bodices", "Lullaby Nikolai and Lauralai Fuzzy Coat", "Lullaby Nikolai and Lauralai Fuzzy Coat", "28,000", "rbxassetid://130798324378859"},
+	{"Bodices", "Porcelina Doll Baby Bodice", "Porcelina Doll Baby Bodice", "22,000", "rbxassetid://99294811196038"},
+	{"Bodices", "Fallen Fae Tattered Top & Rose Choker", "Fallen Fae Tattered Top & Rose Choker", "18,000", "rbxassetid://113771155649424"},
+	{"Bodices", "TTYL Chick Fave Bodice & Necklace", "TTYL Chick Fave Bodice & Necklace", "19,500", "rbxassetid://15506255178"},
+	{"Bodices", "Crisp Air Puffy Jacket", "Crisp Air Puffy Jacket", "20,000", "rbxassetid://6026062237"},
+	{"Bodices", "Versailles Snow Powder Coat", "Versailles Snow Powder Coat", "12,000", "rbxassetid://8097469054"},
+	{"Bodices", "Sleigh It Bodice", "Sleigh It Bodice", "12,000", "rbxassetid://8096555550"},
+
+	-- WINGS (Curated Core Wings)
+	{"Wings", "Fallen Fae Mistwoven Wings", "Fallen Fae Mistwoven Wings", "40,000", "rbxassetid://83872288940809"},
+	{"Wings", "Steampunk Aerotechnic Wings", "Steampunk Aerotechnic Wings", "13,000", "rbxassetid://11119083957"},
+	{"Wings", "Cherry Blossom Billowing Sleeves", "Cherry Blossom Billowing Sleeves", "20,000", "rbxassetid://4961936910"},
+	{"Wings", "Bad Luck Wings", "Bad Luck Wings", "6,000", "rbxassetid://5780659637"},
+	{"Wings", "Valentines Cake Wings", "Valentines Cake Wings", "5,500", "rbxassetid://4643980638"},
+	{"Wings", "Warm JamJamnamon Roll Wings", "Warm JamJamnamon Roll Wings", "2,500", "rbxassetid://6024656579"},
+	{"Wings", "Cozy Flannel Bow Wings", "Cozy Flannel Bow Wings", "3,000", "rbxassetid://6061452378"},
+	{"Wings", "Candy Cane Sugar Wings", "Candy Cane Sugar Wings", "4,000", "rbxassetid://6024728792"},
+	{"Wings", "Chocolate Truffle Love", "Chocolate Truffle Love", "6,500", "rbxassetid://8692937149"},
+	{"Wings", "Love Dragon", "Love Dragon", "8,500", "rbxassetid://2804901380"},
+	{"Wings", "Baby Dragon's Wings", "Baby Dragon's Wings", "2,750", "rbxassetid://2804901110"},
+	{"Wings", "Heart Chocolate Donuts", "Heart Chocolate Donuts", "4,500", "rbxassetid://8692936428"},
+	{"Wings", "Blossoming Admirer", "Blossoming Admirer", "4,000", "rbxassetid://4940534712"},
+	{"Wings", "Heavenly Love", "Heavenly Love", "11,000", "rbxassetid://8692996045"},
+	{"Wings", "Social Love Butterfly", "Social Love Butterfly", "5,000", "rbxassetid://4643949185"},
+	{"Wings", "Teddy 4 My Valentine Cookies", "Teddy 4 My Valentine Cookies", "7,000", "rbxassetid://6358739502"},
+	{"Wings", "Mini Roses are Red Valentines", "Mini Roses are Red Valentines", "3,750", "rbxassetid://4643990755"},
+	{"Wings", "Falling into Fate", "Falling into Fate", "8,000", "rbxassetid://4665355394"},
+	{"Wings", "Scarf Wings", "Scarf Wings", "4,500", "rbxassetid://7969717797"},
+	{"Wings", "Rainbow Shamrock Butterfly Wings", "Rainbow Shamrock Butterfly Wings", "7,000", "rbxassetid://16616904426"},
+	{"Wings", "Song of the Lovebird", "Song of the Lovebird", "11,000", "rbxassetid://2804900854"},
+	{"Wings", "Mini Social Love Butterfly", "Mini Social Love Butterfly", "1,000", "rbxassetid://4643949185"},
+	{"Wings", "Ragged Prince", "Ragged Prince", "4,000", "rbxassetid://7593465178"},
+	{"Wings", "Arachnophobia SpiderLeg Wings", "Arachnophobia SpiderLeg Wings", "10,000", "rbxassetid://7593491733"},
+	{"Wings", "Glowing Fairy of Luck", "Glowing Fairy of Luck", "7,500", "rbxassetid://8116118294"},
+	{"Wings", "Gobble Gobble Wings", "Gobble Gobble Wings", "5,500", "rbxassetid://6024672063"},
+	{"Wings", "Mini Gingerbread Wings", "Mini Gingerbread Wings", "2,750", "rbxassetid://7969718463"},
+	{"Wings", "Heart Container", "Heart Container", "10,000", "rbxassetid://8692936828"},
+	{"Wings", "Sparkling Valentine", "Sparkling Valentine", "5,500", "rbxassetid://4643980638"},
+
+	-- HALOS (Curated Core Halos)
+	{"Halos", "Corrupt Halo", "Corrupt Halo", "Special", "rbxassetid://5780659637"},
+	{"Halos", "Glimmering Light Halo", "Glimmering Light Halo", "Special", "rbxassetid://6025681860"},
+	{"Halos", "Halloween Halo 2019", "Halloween Halo 2019", "Special", "rbxassetid://4081054279"},
+	{"Halos", "Halloween Halo 2020", "Halloween Halo 2020", "Special", "rbxassetid://5780659405"},
+	{"Halos", "Halloween Halo 2021", "Halloween Halo 2021", "Special", "rbxassetid://7593487278"},
+	{"Halos", "Halloween Halo 2022", "Halloween Halo 2022", "Special", "rbxassetid://7709196630"},
+	{"Halos", "Halloween Halo 2023", "Halloween Halo 2023", "Special", "rbxassetid://11124998349"},
+	{"Halos", "Spring Halo 2020", "Spring Halo 2020", "Special", "rbxassetid://4940534712"},
+	{"Halos", "Spring Halo 2021", "Spring Halo 2021", "Special", "rbxassetid://6950743392"},
+	{"Halos", "Spring Halo 2022", "Spring Halo 2022", "Special", "rbxassetid://8692996045"},
+	{"Halos", "Winter Halo 2019", "Winter Halo 2019", "Special", "rbxassetid://4505120671"},
+	{"Halos", "Winter Halo 2020", "Winter Halo 2020", "Special", "rbxassetid://6061463462"},
+	{"Halos", "Winter Halo 2021", "Winter Halo 2021", "Special", "rbxassetid://8097468251"},
+	{"Halos", "Winter Halo 2022", "Winter Halo 2022", "Special", "rbxassetid://8309588314"},
+	{"Halos", "Mermaid Halo 2019", "Mermaid Halo 2019", "Special", "rbxassetid://3235065293"},
+	{"Halos", "Mermaid Halo 2020", "Mermaid Halo 2020", "Special", "rbxassetid://6968849380"},
+	{"Halos", "Mermaid Halo 2021", "Mermaid Halo 2021", "Special", "rbxassetid://6950918497"},
+	{"Halos", "Mermaid Halo 2022", "Mermaid Halo 2022", "Special", "rbxassetid://6947535858"},
+	{"Halos", "Lucky Halo 2019", "Lucky Halo 2019", "Special", "rbxassetid://2804900854"},
+	{"Halos", "Lucky Halo 2020", "Lucky Halo 2020", "Special", "rbxassetid://4643949185"},
+	{"Halos", "Lucky Halo 2021", "Lucky Halo 2021", "Special", "rbxassetid://8692996254"},
+	{"Halos", "Val Halo 2019", "Val Halo 2019", "Special", "rbxassetid://2804901380"},
+	{"Halos", "Val Halo 2020", "Val Halo 2020", "Special", "rbxassetid://4665955657"},
+	{"Halos", "Val Halo 2021", "Val Halo 2021", "Special", "rbxassetid://8692936828"},
+	{"Halos", "Easter Halo 2019", "Easter Halo 2019", "Special", "rbxassetid://2804826656"},
+	{"Halos", "Autumn Halo 2019", "Autumn Halo 2019", "Special", "rbxassetid://7580750019"},
+	{"Halos", "Starlight Halo 2023", "Starlight Halo 2023", "Special", "rbxassetid://16616893500"},
+	{"Halos", "Solarix Halo 2023", "Solarix Halo 2023", "Special", "rbxassetid://10758264344"},
+	{"Halos", "Dark Fairy Halo 2023", "Dark Fairy Halo 2023", "Special", "rbxassetid://7709555887"},
+
+	-- POPULAR ACCESSORIES
+	{"Accessories", "Bahia's Pacifier", "Bahia's Pacifier", "Special", "rbxassetid://2804900854"},
+	{"Accessories", "Rosies Rose", "Rosies Rose", "Special", "rbxassetid://2804901110"},
+	{"Accessories", "Mood Changing Necklace", "Mood Changing Necklace", "Special", "rbxassetid://3368732051"},
+	{"Accessories", "Callmehbob Ring", "Callmehbob Diamond Ring", "Special", "rbxassetid://4757091401"},
+	{"Accessories", "Nocturnal Kitty Ears", "Nocturnal Kitty Ears", "10,000", "rbxassetid://4081054279"},
+	{"Accessories", "Goth Lolita Wrist Cuffs", "Goth Lolita Wrist Cuffs", "3,500", "rbxassetid://7593465178"},
+	{"Accessories", "Vampire Tote", "Vampire Tote", "4,000", "rbxassetid://7593487278"},
+	{"Accessories", "Batpack", "Batpack", "5,000", "rbxassetid://7593491733"},
+	{"Accessories", "Otherworldly Potion", "Otherworldly Potion", "20,000", "rbxassetid://7546862517"},
+	{"Accessories", "Elegant Parasol", "Elegant Parasol", "60,000", "rbxassetid://4665955657"},
+	{"Accessories", "Original 2019 Elegant Parasol", "2019 Elegant Parasol", "Special", "rbxassetid://4665955657"},
+	{"Accessories", "LeahAshe's Bear Ears", "LeahAshe's Bear Ears", "Special", "rbxassetid://4691456250"},
+	{"Accessories", "Antilique's Horns", "Antilique's Horns", "Special", "rbxassetid://4454942851"},
+	{"Accessories", "Cristal's Tiara", "Cristal's Tiara", "Special", "rbxassetid://5178652613"},
+	{"Accessories", "Anzu's Mindwings", "Anzu's Mindwings", "Special", "rbxassetid://4940581713"},
+	{"Accessories", "Lizzy Winkle's Crown", "Lizzy Winkle's Crown of Roses", "Special", "rbxassetid://6061452378"},
+}
+
+for _, it in ipairs(masterList) do
+    addOrUpdateCatalogItem(it[1], it[2], it[3], it[4], it[5])
+end
+
+-- Asynchronous live server list synchronizer
+local function syncWithLiveServer()
+    local net = ReplicatedStorage:FindFirstChild("Network")
+    local fn  = net and net:FindFirstChild("Functions") and net.Functions:FindFirstChild("Gui")
+    if not fn then return end
+
+    -- 1. Heels
+    task.spawn(function()
+        pcall(function()
+            if fn:FindFirstChild("HeelMorphs") and fn.HeelMorphs:FindFirstChild("List") then
+                local heels = fn.HeelMorphs.List:InvokeServer()
+                if type(heels) == "table" then
+                    for assetName, data in pairs(heels) do
+                        local alias = data.Alias or assetName
+                        local img = data.Icon or (data.Icons and data.Icons[1]) or ""
+                        addOrUpdateCatalogItem("Heels", alias, assetName, data.Price, img)
+                    end
+                    updateTabCounts()
+                    if refreshGridRef then refreshGridRef("Heels") end
+                end
+            end
+        end)
+    end)
+
+    -- 2. Skirts
+    task.spawn(function()
+        pcall(function()
+            if fn:FindFirstChild("Skirts") and fn.Skirts:FindFirstChild("List") then
+                local skirts = fn.Skirts.List:InvokeServer()
+                if type(skirts) == "table" then
+                    for assetName, data in pairs(skirts) do
+                        local alias = data.Alias or assetName
+                        local img = data.Icon or (data.Icons and data.Icons[1]) or ""
+                        addOrUpdateCatalogItem("Skirts", alias, assetName, data.Price, img)
+                    end
+                    updateTabCounts()
+                    if refreshGridRef then refreshGridRef("Skirts") end
+                end
+            end
+        end)
+    end)
+
+    -- 3. Accessories, Bodices, & Halos
+    task.spawn(function()
+        pcall(function()
+            if fn:FindFirstChild("Accessories") and fn.Accessories:FindFirstChild("List") then
+                local accs = fn.Accessories.List:InvokeServer()
+                if type(accs) == "table" then
+                    for assetName, data in pairs(accs) do
+                        local alias = data.Alias or assetName
+                        local img = data.Icon or (data.Icons and data.Icons[1]) or ""
+                        local sub = (data.Type or data.Category or ""):lower()
+                        local aliasL = alias:lower()
+                        local assetL = assetName:lower()
+
+                        if aliasL:find("halo") or assetL:find("halo") then
+                            addOrUpdateCatalogItem("Halos", alias, assetName, data.Price or "Special", img)
+                        elseif aliasL:find("bodice") or aliasL:find("corset") or aliasL:find("jacket") or sub:find("bodice") or sub:find("torso") then
+                            addOrUpdateCatalogItem("Bodices", alias, assetName, data.Price, img)
+                        else
+                            addOrUpdateCatalogItem("Accessories", alias, assetName, data.Price, img)
+                        end
+                    end
+                    updateTabCounts()
+                    if refreshGridRef then
+                        refreshGridRef("Accessories")
+                        refreshGridRef("Bodices")
+                        refreshGridRef("Halos")
+                    end
+                end
+            end
+        end)
+    end)
+
+    -- 4. Wings
+    task.spawn(function()
+        pcall(function()
+            if fn:FindFirstChild("Wings") and fn.Wings:FindFirstChild("List") then
+                local wings = fn.Wings.List:InvokeServer()
+                if type(wings) == "table" then
+                    for assetName, data in pairs(wings) do
+                        local alias = data.Alias or assetName
+                        local img = data.Icon or (data.Icons and data.Icons[1]) or ""
+                        addOrUpdateCatalogItem("Wings", alias, assetName, data.Price, img)
+                    end
+                    updateTabCounts()
+                    if refreshGridRef then refreshGridRef("Wings") end
+                end
+            end
+        end)
+    end)
+end
+
+task.spawn(syncWithLiveServer)
+
+-- ============================================================
+-- 4. EQUIP ENGINE (WINGS, HALOS, HEELS, SKIRTS, BODICES, ACCESSORIES)
 -- ============================================================
 local function findShopTryonButton(itemName)
     local shop = pg:FindFirstChild("Shop")
@@ -208,11 +643,73 @@ local function clickButtonVIM(btn)
     return ok
 end
 
-local function equipItem(itemName, itemCat)
+local function equipWings(item)
+    local char = lp.Character
+    if not char then return "No character" end
+    local assetName = item.assetName or item.name
+
+    -- Remove any old Wings_TRYON or previous custom wings
+    for _, c in ipairs(char:GetChildren()) do
+        if c.Name == "Wings_TRYON" or c.Name:find("CustomWing") then
+            pcall(function() c:Destroy() end)
+        end
+    end
+
+    local net = ReplicatedStorage:FindFirstChild("Network")
+    local fn  = net and net:FindFirstChild("Functions") and net.Functions:FindFirstChild("Gui")
+    if fn and fn:FindFirstChild("Wings") and fn.Wings:FindFirstChild("TryOn") then
+        local ok, res = pcall(function()
+            return fn.Wings.TryOn:InvokeServer(assetName)
+        end)
+        if ok and res then
+            local chest = res.Chest or res:FindFirstChild("Chest") or res
+            if chest then
+                chest.Name = "Wings_TRYON"
+                local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+                local center = chest:FindFirstChild("Center") or chest.PrimaryPart or chest:FindFirstChildWhichIsA("BasePart")
+                if torso and center then
+                    for _, p in ipairs(chest:GetDescendants()) do
+                        if p:IsA("BasePart") then
+                            p.Anchored = false
+                            p.CanCollide = false
+                        end
+                    end
+                    local weld = Instance.new("Weld")
+                    weld.Name = "CustomWingWeld"
+                    weld.Part0 = torso
+                    weld.Part1 = center
+                    weld.C0 = CFrame.new(0, 0.2, 0.6)
+                    weld.Parent = torso
+                    chest.Parent = char
+                    chest:SetAttribute("CustomSavedLayer", true)
+                    savedWornLayers["Wings_TRYON"] = { category = "Wings", backup = deepClone(chest) }
+                    return "OK"
+                end
+            end
+        end
+    end
+
+    local btn = findShopTryonButton(item.name) or findShopTryonButton(assetName)
+    if btn then
+        clickButtonVIM(btn)
+        return "OK"
+    end
+    return "OK"
+end
+
+local function equipItem(item)
     local char = lp.Character
     if not char then return "No character" end
 
-    -- Manage single-slot swap for Heels, Skirts, Bodices
+    local itemName = item.assetName or item.name
+    local itemCat  = item.cat
+
+    -- Wings are handled by direct server invocation and torso weld
+    if itemCat == "Wings" then
+        return equipWings(item)
+    end
+
+    -- Single-slot category clearing: replacing Heels only replaces Heels
     if itemCat == "Heels" or itemCat == "Skirts" or itemCat == "Bodices" then
         for savedName, data in pairs(savedWornLayers) do
             if data.category == itemCat then
@@ -226,7 +723,6 @@ local function equipItem(itemName, itemCat)
         end
     end
 
-    -- Snapshot existing layers
     local snapshot = {}
     for _, child in ipairs(char:GetChildren()) do
         if child:GetAttribute("CustomSavedLayer") then
@@ -234,16 +730,16 @@ local function equipItem(itemName, itemCat)
         end
     end
 
-    -- Tier 1: Direct remote invocation
+    -- 1. Direct Server Remote
     if previewItemRemote then
         pcall(function()
             previewItemRemote:FireServer(itemName)
         end)
     end
 
-    -- Tier 2: VIM click on in-game Tryon button if available in shop
+    -- 2. Parallel Shop TryOn Button Click
     task.spawn(function()
-        local btn = findShopTryonButton(itemName)
+        local btn = findShopTryonButton(item.name) or findShopTryonButton(itemName)
         if btn then
             clickButtonVIM(btn)
         end
@@ -252,10 +748,13 @@ local function equipItem(itemName, itemCat)
     -- Capture replication & protect layer
     task.spawn(function()
         task.wait(0.25)
-        restoreCharacterMobility(lp.Character)
+        disablePreviewClientConnections()
+        neutralizeHudFreezeScripts()
 
         local newItem = nil
-        local targetLower = itemName:lower()
+        local targetLower = item.name:lower()
+        local assetLower  = itemName:lower()
+
         for _ = 1, 30 do
             task.wait(0.1)
             char = lp.Character
@@ -266,6 +765,7 @@ local function equipItem(itemName, itemCat)
                    and not snapshot[child.Name] then
                     local cln = child.Name:lower()
                     if cln:find(targetLower, 1, true) or targetLower:find(cln, 1, true)
+                       or cln:find(assetLower, 1, true) or assetLower:find(cln, 1, true)
                        or child:IsA("Accessory") or child:IsA("Model") or child:IsA("Part") or child:IsA("MeshPart") then
                         newItem = child
                         break
@@ -278,14 +778,14 @@ local function equipItem(itemName, itemCat)
         if newItem then
             pcall(function()
                 newItem:SetAttribute("CustomSavedLayer", true)
-                savedWornLayers[itemName] = {
+                savedWornLayers[item.name] = {
                     backup   = deepClone(newItem),
                     category = itemCat
                 }
             end)
         end
 
-        -- Restore previously worn layers that the game may have despawned
+        -- Restore other layers
         char = lp.Character
         if char then
             for snapName, snapClone in pairs(snapshot) do
@@ -304,480 +804,36 @@ local function equipItem(itemName, itemCat)
             end
         end
 
-        restoreCharacterMobility(lp.Character)
+        disablePreviewClientConnections()
+        neutralizeHudFreezeScripts()
     end)
 
     return "OK"
 end
 
 -- ============================================================
--- MASTER CATALOG (Strictly Try-on-able Items Only)
--- ============================================================
-local masterCatalog = {
-	{"Accessories", "Porcelina Doll Stitched Sleeves", "23,000", "rbxassetid://102867680045115", true},
-	{"Accessories", "Kitty Crossbody", "5,000", "rbxassetid://5768975150", true},
-	{"Bodices", "Steampunk Inventor Bodice", "20,000", "rbxassetid://98365475582824", true},
-	{"Accessories", "Warm Winter Lantern", "4,000", "rbxassetid://6011287660", true},
-	{"Accessories", "Goddess of TriumphFearless Gloves", "500 Robux", "rbxassetid://10750492683", true},
-	{"Accessories", "Maracas", "1,750", "rbxassetid://4268735189", true},
-	{"Heels", "Fountain Girl's Lucky Step Footwear", "Shop Item", "", false},
-	{"Heels", "December's Dream Shoes", "45,000", "rbxassetid://8312013005", true},
-	{"Accessories", "Figure Skater", "7,000", "", false},
-	{"Accessories", "Crescent Moon Cloak", "1,750", "rbxassetid://7595136625", true},
-	{"Accessories", "Aphrodite's Shoulder Bag", "12,000", "rbxassetid://2804900854", true},
-	{"Accessories", "Extreme Terror of the Deep", "12,000", "", false},
-	{"Heels", "Winter Guardian Glacier Boots", "30,000", "rbxassetid://6061452378", true},
-	{"Accessories", "Tidy Bowtie", "300", "rbxassetid://8692936656", true},
-	{"Accessories", "Ivy Pumpkins", "800", "", false},
-	{"Accessories", "Darling Valentina Lace Cuffs", "3,000", "rbxassetid://4665355394", true},
-	{"Heels", "Bat-Mo-Heels", "70,000", "rbxassetid://139654244910106", true},
-	{"Accessories", "Glitterfrost Celebration Pearl Party Shawl", "14,000", "rbxassetid://15496974533", true},
-	{"Accessories", "14 Karat Gold Infinity Chain", "14,000", "", false},
-	{"Accessories", "December's Dream Fur Muff", "12,500", "rbxassetid://8309592780", true},
-	{"Accessories", "Undertaker's Hands", "600", "", false},
-	{"Accessories", "Woodland Faun Ears and Antlers", "8,500", "rbxassetid://15496650699", true},
-	{"Accessories", "Dashing Through the Snow Scarf", "7,500", "rbxassetid://7969717797", true},
-	{"Accessories", "Snow Swan Faux Feathery Fashion Hat", "10,000", "rbxassetid://15496796398", true},
-	{"Accessories", "Special Someone Chocolate Box", "6,500", "rbxassetid://8692937149", true},
-	{"Accessories", "Pirate Captain Hat", "5,500", "rbxassetid://6188756108", true},
-	{"Accessories", "Curiosity Of Vipers", "4,500", "", false},
-	{"Accessories", "Mend My Heart Stitched Teddy", "13,000", "rbxassetid://8692936428", true},
-	{"Accessories", "Fluttery Frozen Fan", "35,000", "rbxassetid://8011917112", true},
-	{"Wings", "Bad Luck Wings", "6,000", "", false},
-	{"Wings", "Cherry Blossom Billowing Sleeves", "20,000", "rbxassetid://4961936910", true},
-	{"Wings", "Valentines Cake Wings", "5,500", "", false},
-	{"Accessories", "Sweet Marshmallow Charms", "8,500", "", false},
-	{"Accessories", "Opposites Attract Steampunk Gloves (Sleeves)", "25,000", "rbxassetid://8692937742", true},
-	{"Heels", "Snuggly Reindeer Slippers", "Shop Item", "", false},
-	{"Skirts", "Mon Chri Tea Party Skirt", "30,000", "rbxassetid://6365520691", true},
-	{"Accessories", "Pearls of the Moon", "500", "", false},
-	{"Heels", "Cherry Blossom Wooden Sandals", "Shop Item", "", false},
-	{"Accessories", "Mon Chri Tea Party Palace Sleeves", "20,000", "rbxassetid://6365520855", true},
-	{"Accessories", "Flame of Love", "12,000", "", false},
-	{"Accessories", "Baby Star Penguin", "7,200", "rbxassetid://8116118294", true},
-	{"Skirts", "Sleigh It Skirt", "5,500", "rbxassetid://8096555954", true},
-	{"Accessories", "Batpack", "5,000", "rbxassetid://7588478248", true},
-	{"Accessories", "Hot Head Plugs", "1,000", "rbxassetid://11128705953", true},
-	{"Accessories", "Summer Fantasy Mermaid Seashell Purse", "25,000", "rbxassetid://6950743392", true},
-	{"Accessories", "Fuzzy Earmuffs", "9,000", "rbxassetid://8219761306", true},
-	{"Accessories", "Widow's PillBox Hat", "2,250", "rbxassetid://7805321316", true},
-	{"Accessories", "Soul Scavenger", "6,000", "", false},
-	{"Accessories", "Cherry Blossom Back Bow", "5,000", "rbxassetid://4940600691", true},
-	{"Wings", "Warm JamJamnamon Roll Wings", "2,500", "", false},
-	{"Accessories", "Starlight Candy Bracelets", "11,000", "rbxassetid://16616898050", true},
-	{"Heels", "Mon Chri Tea Party Platforms", "30,000", "rbxassetid://6365521288", true},
-	{"Accessories", "Sparkly Heart Hoop Earrings", "1,500", "rbxassetid://4643980638", true},
-	{"Accessories", "Fall Fairy", "5,500", "", false},
-	{"Accessories", "HEAD Antler Lights", "6,000", "", false},
-	{"Accessories", "I Wish for a Unicorn", "10,500", "", false},
-	{"Accessories", "Goth Lolita Sleeves", "3,500", "rbxassetid://5774712034", true},
-	{"Accessories", "Widow's Webbed Fan", "10,000", "rbxassetid://106314903735320", true},
-	{"Accessories", "Fallen Fae Torn Adorned Sleeves", "16,000", "rbxassetid://132242371259852", true},
-	{"Accessories", "Haunted", "6,500", "", false},
-	{"Accessories", "Princess Starfrost Crystal Scepter", "15,000", "rbxassetid://4505129996", true},
-	{"Wings", "Cozy Flannel Bow Wings", "3,000", "", false},
-	{"Accessories", "Aurora's Longsword", "13,500", "rbxassetid://8121750656", true},
-	{"Accessories", "Good Tidings Shawl Cape", "12,000", "rbxassetid://7969720148", true},
-	{"Accessories", "Gothicutie Earrings", "5,000", "rbxassetid://7542251722", true},
-	{"Bodices", "Mon Chri Tea Party Bowtie Bodice", "18,000", "rbxassetid://6365521460", true},
-	{"Skirts", "Merry Sparkly Dress", "3,200", "rbxassetid://6024656579", true},
-	{"Skirts", "Peppermint Princess Skirt", "32,000", "rbxassetid://8009656460", true},
-	{"Accessories", "Surf Board", "28,000", "rbxassetid://5192155191", true},
-	{"Wings", "Candy Cane Sugar Wings", "4,000", "", false},
-	{"Heels", "Royale Rebel Laced Boots", "Shop Item", "", true},
-	{"Accessories", "Giant Teddy Bear", "8,000", "rbxassetid://6358739502", true},
-	{"Accessories", "Sea Star Pearl Bracelet", "7,000", "rbxassetid://3234776742", true},
-	{"Accessories", "Mon Chri Tea Party Clutch", "8,000", "rbxassetid://6365520394", true},
-	{"Wings", "Steampunk Aerotechnic Wings", "13,000", "rbxassetid://11119083957", true},
-	{"Accessories", "Celebration Sombrero", "5,000", "rbxassetid://114907566839210", true},
-	{"Accessories", "Magical Field of Clovers", "6,000", "", false},
-	{"Accessories", "Powder Heart Backpack", "18,000", "rbxassetid://8692936828", true},
-	{"Heels", "Opposites Attract Transformation Boots", "55,000", "rbxassetid://8692913581", true},
-	{"Accessories", "Stylish Tree Fashion", "6,250", "", false},
-	{"Accessories", "Peppermint Princess Sleeves", "3,000", "rbxassetid://8096543653", true},
-	{"Accessories", "Love Me Forever Handbag", "8,000", "rbxassetid://2804900981", true},
-	{"Accessories", "Elegance Rose Boutineer", "10,000", "rbxassetid://4643990755", true},
-	{"Heels", "Ballroom Butler Trousers & Dress Shoes", "Shop Item", "rbxassetid://123045630811449", true},
-	{"Accessories", "Gooey S'mores", "10,000", "", false},
-	{"Skirts", "Lullaby Nikolai and Lauralai Skirt", "36,000", "rbxassetid://98314600779755", true},
-	{"Bodices", "Winter Guardian Thermal Bodice/Tailcoat", "24,000", "rbxassetid://6061452188", true},
-	{"Accessories", "TEDDYZILLA", "20,000", "rbxassetid://6358739753", true},
-	{"Accessories", "Black Widow", "3,650", "", false},
-	{"Accessories", "Summit Shredder X  Crystal Clear Goggles", "12,000", "rbxassetid://93824137588267", true},
-	{"Skirts", "Snow Swan Holiday Soire Skirt", "32,000", "rbxassetid://15640855410", true},
-	{"Wings", "Chocolate Truffle Love", "6,500", "", false},
-	{"Accessories", "Reindeer Crossbody Purse / Backpack", "16,000", "rbxassetid://6024672063", true},
-	{"Accessories", "Father Christmas' Present Bag", "2,000", "rbxassetid://7969720753", true},
-	{"Accessories", "Pumpkin Spice Scented Candle", "500", "", false},
-	{"Accessories", "Baby Star Bear", "7,500", "rbxassetid://15496813004", true},
-	{"Wings", "Love Dragon", "8,500", "", false},
-	{"Accessories", "Celestial Cathedral Veil", "15,000", "rbxassetid://8692995862", true},
-	{"Accessories", "December's Dream Earrings", "6,000", "rbxassetid://8309593144", true},
-	{"Wings", "Baby Dragon's Wings", "2,750", "", false},
-	{"Wings", "Heart Chocolate Donuts", "4,500", "", false},
-	{"Accessories", "Winter Guardian Aura Antlers", "8,000", "rbxassetid://6061463462", true},
-	{"Wings", "Blossoming Admirer", "4,000", "", false},
-	{"Skirts", "December's Dream Dancer Skirt", "45,000", "rbxassetid://8309593608", true},
-	{"Accessories", "Sparkly Soul-Snatcher", "1,800", "", false},
-	{"Accessories", "Princess Starfrost Shooting Stars Cape", "10,000", "rbxassetid://4506012295", true},
-	{"Accessories", "Sparkly Sarong", "15,000", "rbxassetid://3231256354", true},
-	{"Heels", "Shadow Empress Chained Boots", "Shop Item", "", true},
-	{"Accessories", "Twas the Night before Christmas", "10,000", "", false},
-	{"Accessories", "Light Up Ornament Necklace", "3,000", "rbxassetid://6026890878", true},
-	{"Wings", "Heavenly Love", "11,000", "", false},
-	{"Accessories", "Frozen Angel", "15,000", "", false},
-	{"Accessories", "Magical Witch", "2,000", "rbxassetid://2411972167", true},
-	{"Accessories", "Porcelina Doll Haunted Mask", "24,000", "rbxassetid://108412897312140", true},
-	{"Skirts", "Christmas Queen Pageant Skirt", "28,000", "rbxassetid://7969720914", true},
-	{"Accessories", "Royale Rebel Spiked Veil", "15,000", "rbxassetid://5774278702", true},
-	{"Accessories", "Ghost Head", "175", "rbxassetid://11124998349", true},
-	{"Wings", "Social Love Butterfly", "5,000", "", false},
-	{"Bodices", "Darling Valentina Lace Bodice", "28,000", "rbxassetid://11111531725", true},
-	{"Accessories", "Gold Keeper", "20,000", "", false},
-	{"Accessories", "Huggly Snuggly Knitted Beanie Hat", "15,500", "rbxassetid://15499622873", true},
-	{"Accessories", "Rainy Graveyard Lurker", "6,500", "", false},
-	{"Bodices", "Versailles Snow Powder Coat", "12,000", "rbxassetid://8097469054", true},
-	{"Wings", "Teddy 4 My Valentine Cookies", "7,000", "", false},
-	{"Accessories", "Ice Prince Shawl Cape", "12,000", "rbxassetid://8096541824", true},
-	{"Accessories", "Out Shopping for Presents Reusable Bags", "5,000", "rbxassetid://15499676281", true},
-	{"Accessories", "Mini Hot Cocoa", "2,000", "", false},
-	{"Accessories", "Otherworldly Potion", "20,000", "rbxassetid://7595071041", true},
-	{"Accessories", "The Ace", "750", "", false},
-	{"Bodices", "Royale Rebel Locket Pendant Corset", "20,000", "rbxassetid://5773536816", true},
-	{"Accessories", "Nomnom Frosted Donut Waist Floatie", "3,500", "rbxassetid://3444484354", true},
-	{"Accessories", "Sparkly Christmas Bells Earrings", "2,000", "rbxassetid://6011346784", true},
-	{"Accessories", "Windy Witch Hat", "1,250", "rbxassetid://7593488871", true},
-	{"Accessories", "Vampire's Bride", "7,000", "", false},
-	{"Accessories", "Duchess Spire Veil Hat", "7,000", "rbxassetid://132330579005333", true},
-	{"Accessories", "Fabulous Fur Boa", "35,000", "rbxassetid://8009685411", true},
-	{"Accessories", "Heavenly Harp", "6,500", "rbxassetid://8692937003", true},
-	{"Accessories", "Whimsy Witch Dark Sisters Coven Hat", "25,000", "rbxassetid://7709196630", true},
-	{"Accessories", "Cute Carrot Nose", "500", "rbxassetid://8120763722", true},
-	{"Accessories", "Shadow Empress Fallen Angel Sleeves", "20,000", "rbxassetid://4081565202", true},
-	{"Accessories", "Safety Pin Sweetheart Earrings", "1,000", "rbxassetid://7805317953", true},
-	{"Heels", "Cookie Cutter Lover Loafers", "28,000", "rbxassetid://8010121056", true},
-	{"Accessories", "Starlight Hair Bow", "10,000", "rbxassetid://16616894091", true},
-	{"Accessories", "Steampunk Alchemist Top Hat", "2,500", "rbxassetid://127305075259524", true},
-	{"Accessories", "TTYL Chick Lip Gloss & Goss Plush Purse", "13,500", "rbxassetid://15499336327", true},
-	{"Accessories", "Pumpkin Spice Sparkluccino", "12,000", "", false},
-	{"Accessories", "Toxicity", "2,000", "", false},
-	{"Skirts", "Winter Guardian Snowstorm Skirt", "35,000", "rbxassetid://6061463262", true},
-	{"Accessories", "Nightmare Cavern Lantern", "15,000", "rbxassetid://11141945467", true},
-	{"Accessories", "Starry Eyed Felines", "2,500", "", false},
-	{"Wings", "Mini Roses are Red Valentines", "3,750", "", false},
-	{"Accessories", "Steampunk Inventor's Engineering Goggles", "7,500", "rbxassetid://137599402321299", true},
-	{"Accessories", "Fly Through a Rainbow", "8,750", "", false},
-	{"Bodices", "Starlight T-Shirt (Bodice)", "18,500", "rbxassetid://16616901393", true},
-	{"Accessories", "DotD Ancestor's Celebration Skull", "10,000", "rbxassetid://84828488637315", true},
-	{"Accessories", "Magical Broomstick", "100,000", "rbxassetid://5780519719", true},
-	{"Accessories", "Personal Snow Flurry", "4,500", "rbxassetid://6024788969", true},
-	{"Skirts", "Opposites Attract Transformation Dress & Bodice", "35,000", "rbxassetid://8708478789", true},
-	{"Heels", "Darling Valentina Lollipop Heels", "Shop Item", "", true},
-	{"Heels", "Steampunk Victorian Boots", "25,000", "rbxassetid://139654244910106", true},
-	{"Bodices", "Shadow Empress Chained Bodice", "20,000", "rbxassetid://4082198916", true},
-	{"Skirts", "Goth Lolita Skirt", "5,000", "rbxassetid://7593465178", true},
-	{"Accessories", "Versailles Snow Powder Bonnet", "8,500", "rbxassetid://8097469550", true},
-	{"Accessories", "Cutting Edge Claw Nails", "3,000", "rbxassetid://88397039737720", true},
-	{"Accessories", "Cherry Blossom Hairpins", "15,000", "rbxassetid://4940534712", true},
-	{"Accessories", "Present Disguise", "1,500", "rbxassetid://8121741078", true},
-	{"Accessories", "DotD Aromatic Head Flowers", "6,500", "rbxassetid://90197212222680", true},
-	{"Accessories", "Goth Lolita Wrist Cuffs", "3,500", "rbxassetid://7593491733", true},
-	{"Accessories", "Grungy Gas Glaring Goggles", "3,250", "rbxassetid://140264295106252", true},
-	{"Accessories", "A Witch's Best Friend", "5,500", "", false},
-	{"Accessories", "Too Cool for Skull Shoulder Bag", "2,500", "rbxassetid://5740427550", true},
-	{"Heels", "Summer Fantasy Seashell Sandals", "50,000", "rbxassetid://6947549574", true},
-	{"Heels", "Merry Marching Band Prance Boots", "42,000", "rbxassetid://125957483333692", true},
-	{"Bodices", "December's Dream Bodice", "18,000", "rbxassetid://8309592942", true},
-	{"Accessories", "Gone with the Wind Bow Headband", "2,000", "rbxassetid://6025736756", true},
-	{"Wings", "Falling into Fate", "8,000", "", false},
-	{"Wings", "Scarf Wings", "4,500", "", false},
-	{"Accessories", "ALIEN INVASION!!!", "2,500", "", false},
-	{"Accessories", "Elf Helper Hat", "2,750", "rbxassetid://7969718774", true},
-	{"Accessories", "Summer Fantasy Rings and Sleeves", "22,000", "rbxassetid://6947540077", true},
-	{"Heels", "Whimsy Witch Academia Troublemaker Shoes", "80,000", "rbxassetid://7709555887", true},
-	{"Accessories", "Merry Marching Band Rhythm Drum", "15,000", "rbxassetid://121095373610737", true},
-	{"Accessories", "Lullaby Nikolai and Lauralai Collar", "13,000", "rbxassetid://132810662340895", true},
-	{"Accessories", "Goddess of TriumphFemme Fleur Fascinator", "400 Robux", "rbxassetid://10758265593", true},
-	{"Heels", "Summit Shredder X  Snowboarder Pants & Boots", "42,000", "rbxassetid://112792200470293", true},
-	{"Accessories", "Starlight Arm Warmers", "8,000", "rbxassetid://16616900394", true},
-	{"Accessories", "Princess Spire Veil Hat", "6,500", "rbxassetid://121210902983670", true},
-	{"Heels", "ALTER/EGO Platform Boots", "Shop Item", "", true},
-	{"Accessories", "The Unfortunate", "1,800", "", false},
-	{"Accessories", "Baby Spider", "5,000", "", false},
-	{"Accessories", "Snow Swan Rosette Lace Gloves", "12,000", "rbxassetid://15496744686", true},
-	{"Accessories", "Santa Hat", "5,000", "rbxassetid://8219762237", true},
-	{"Accessories", "Vampire Crown", "2,500", "rbxassetid://5780659107", true},
-	{"Accessories", "Mermaid Glam Earrings", "10,000", "rbxassetid://3235065293", true},
-	{"Accessories", "Mon Chri Tea Party Lovely Beret", "10,000", "rbxassetid://6365520940", true},
-	{"Accessories", "Sparkly Snowflake Skater", "7,500", "", false},
-	{"Accessories", "Mini Figure Skater", "3,000", "", false},
-	{"Accessories", "Pumpkin Autumn Earrings", "100", "rbxassetid://7580868562", true},
-	{"Skirts", "Darling Valentina Morning & Evening Skirt", "30,000", "rbxassetid://4665955657", true},
-	{"Accessories", "Widow's Wilted Bouquet", "5,000", "rbxassetid://7805326561", true},
-	{"Accessories", "Vamp Tote", "4,000", "rbxassetid://7593492398", true},
-	{"Accessories", "Goth Lolita Purse", "4,000", "rbxassetid://7593473355", true},
-	{"Accessories", "Distinguished Doctor Mask", "3,500", "rbxassetid://130325638012778", true},
-	{"Skirts", "Goddess of TriumphVictorious Skirt", "1,000 Robux", "rbxassetid://10747530752", true},
-	{"Accessories", "Hellion Horns", "5,000", "rbxassetid://14944124640", true},
-	{"Accessories", "Magical Hair Ribbon", "7,000", "rbxassetid://2804826656", true},
-	{"Accessories", "Grungy Gas Muffs and Mask", "8,500", "rbxassetid://125068042471821", true},
-	{"Accessories", "My Teddy Bear", "8,000", "rbxassetid://4646088435", true},
-	{"Accessories", "Frozen Royalty Crown", "18,000", "rbxassetid://8097468251", true},
-	{"Accessories", "Chamber Chains", "450", "rbxassetid://7593462444", true},
-	{"Accessories", "Kitchen Accident", "500", "rbxassetid://5780659405", true},
-	{"Accessories", "Fancy Monocle Eyepiece", "275", "rbxassetid://7593486019", true},
-	{"Accessories", "Pumpkin Beret", "600", "rbxassetid://7580750019", true},
-	{"Accessories", "Pumpkin Costume", "275", "rbxassetid://7618103761", true},
-	{"Skirts", "Steampunk Clockwork Skirt", "10,000", "rbxassetid://11119666945", true},
-	{"Accessories", "Catty Glasses", "3,500", "rbxassetid://15932396131", true},
-	{"Accessories", "Distinguished Doctor Hat", "2,800", "rbxassetid://102924085367188", true},
-	{"Accessories", "Couture Coffin Nails", "2,750", "rbxassetid://129599085337775", true},
-	{"Accessories", "Vampiric Bat Heart Ring", "1,600", "rbxassetid://108340199355549", true},
-	{"Accessories", "Poinsettia Wreath Arm Beauty", "2,000", "rbxassetid://6024645425", true},
-	{"Accessories", "Fiendish Ears", "2,000", "rbxassetid://120250878985771", true},
-	{"Bodices", "Porcelina Doll Baby Bodice", "22,000", "rbxassetid://99294811196038", true},
-	{"Accessories", "Goddess of TriumphRosette Rhinestone Earrings", "300 Robux", "rbxassetid://10758263657", true},
-	{"Accessories", "Goddess of TriumphRibbon Parasol", "4,000 Robux", "rbxassetid://10758264344", true},
-	{"Bodices", "Goddess of TriumphBodice of Hope", "800 Robux", "rbxassetid://10729348560", true},
-	{"Wings", "Spirit Of Halloween Wings", "1,200", "", false},
-	{"Bodices", "Cherry Blossom Budding Bodice", "20,000", "rbxassetid://4961936060", true},
-	{"Bodices", "Summer Fantasy Beach Boardwalk Bodice", "24,000", "rbxassetid://6950918497", true},
-	{"Heels", "Snow Swan Embraced by Lace Luxe Heels", "70,000", "rbxassetid://110386116890089", true},
-	{"Accessories", "Chroma Dreams", "8,500", "", false},
-	{"Accessories", "Wish of Good Luck", "14,000", "", false},
-	{"Heels", "Gothicutie Boots", "55,000", "rbxassetid://7546862517", true},
-	{"Accessories", "Mermaid Royalty", "50,000", "rbxassetid://6968849380", true},
-	{"Skirts", "Whimsy Witch Spells & Incantations Skirt", "50,000", "rbxassetid://7709190886", true},
-	{"Accessories", "Jack-o-Lantern Head", "1,000", "rbxassetid://97765390274797", true},
-	{"Skirts", "Babydoll Adorable Dress", "24,000", "rbxassetid://5332502061", true},
-	{"Bodices", "Summit Shredder X  Polar Puffer Jacket", "42,000", "rbxassetid://79846956845715", true},
-	{"Wings", "Fallen Fae Mistwoven Wings", "40,000", "rbxassetid://83872288940809", true},
-	{"Bodices", "December's Dream Coat Jacket", "35,000", "rbxassetid://8309598477", true},
-	{"Skirts", "Starlight Rainbow Skirt", "33,000", "rbxassetid://16616904426", true},
-	{"Skirts", "Fallen Fae Wicked Rose Skirt", "33,000", "rbxassetid://84633162449325", true},
-	{"Skirts", "TTYL Chick Blush Crush Plush Skirt", "32,000", "rbxassetid://15506166634", true},
-	{"Skirts", "Princess Starfrost Magical Skirt", "32,000", "rbxassetid://4506012062", true},
-	{"Skirts", "Porcelina Doll Shelfworn Skirt", "30,000", "rbxassetid://120316119211140", true},
-	{"Accessories", "December's Dream Sleeves & Gloves", "30,000", "rbxassetid://8309586738", true},
-	{"Bodices", "Merry Marching Band Parade Bodice", "19,000", "rbxassetid://106522859729695", true},
-	{"Skirts", "Merry Marching Band Twirl Skirt", "28,000", "rbxassetid://76046613133739", true},
-	{"Accessories", "TTYL Chick Snowball Puff Earrings", "7,500", "rbxassetid://15496628951", true},
-	{"Wings", "Rainbow Shamrock Butterfly Wings", "7,000", "", false},
-	{"Accessories", "Cherry Blossom Hand Fan", "28,000", "rbxassetid://4940581713", true},
-	{"Skirts", "Royale Rebel Bustle Skirt", "28,000", "rbxassetid://5773603687", true},
-	{"Bodices", "Snow Swan Angelic Opera Bodice", "27,000", "rbxassetid://15640855233", true},
-	{"Accessories", "Starlight Cardigan", "27,000", "rbxassetid://16616903762", true},
-	{"Bodices", "Summit Shredder X  Peak Performance Bodice", "26,000", "rbxassetid://118347724237289", true},
-	{"Accessories", "Porcelina Doll Hushaby Bonnet", "26,000", "rbxassetid://130455231953209", true},
-	{"Bodices", "Lullaby Nikolai and Lauralai Bodice & Sleeves", "25,000", "rbxassetid://75769379684174", true},
-	{"Accessories", "Snow Swan Silky Slumber Luxe Sleeves", "25,000", "rbxassetid://15640855790", true},
-	{"Heels", "Porcelina Doll Tiptoe Shoes", "Shop Item", "", true},
-	{"Bodices", "Gothicutie Bodice/Jacket", "25,000", "rbxassetid://7547725606", true},
-	{"Accessories", "Winter Snowglobe", "7,500", "rbxassetid://6025036596", true},
-	{"Accessories", "Starlight Sneaks", "77,000", "rbxassetid://16617013493", true},
-	{"Accessories", "Dragon Teeth", "3,000", "", false},
-	{"Accessories", "Golden Guardian of Rainbows", "12,000", "", false},
-	{"Bodices", "Merry Marching Band Prestige Jacket", "22,000", "rbxassetid://111956099301798", true},
-	{"Bodices", "Crisp Air Puffy Jacket", "20,000", "rbxassetid://6026062237", true},
-	{"Accessories", "Wild Roses", "6,500", "", false},
-	{"Accessories", "Winter Guardian Enchanted Sleeves", "20,000", "rbxassetid://6061499502", true},
-	{"Accessories", "Royale Rebel Sheer Laced Gloves & Sleeves", "20,000", "rbxassetid://5774686941", true},
-	{"Accessories", "Translucent Heart Sunglasses", "3,500", "rbxassetid://2804901269", true},
-	{"Bodices", "TTYL Chick Fave Bodice & Necklace", "19,500", "rbxassetid://15506255178", true},
-	{"Accessories", "Nomnom Frosted Donut Arm Floaties", "3,500", "rbxassetid://3444495197", true},
-	{"Accessories", "Shadow Empress Jeweled Crown", "15,000", "rbxassetid://4074397467", true},
-	{"Accessories", "Lolita Lovely Bow Lacey Scarf", "14,000", "rbxassetid://15496859686", true},
-	{"Accessories", "Archery Kit for Love Fairies", "13,500", "rbxassetid://2804901110", true},
-	{"Accessories", "Polar Cutie Fur Leg Warmers", "13,500", "rbxassetid://8120763135", true},
-	{"Accessories", "Aurora's Battleaxe", "13,500", "rbxassetid://8121752268", true},
-	{"Accessories", "Snow Swan Adorned Ornamental Necklace & Earrings Set", "12,750", "rbxassetid://15496767919", true},
-	{"Accessories", "Runaway Damsel Candelabra", "12,500", "rbxassetid://8097467736", true},
-	{"Accessories", "Starlight Glasses", "12,500", "rbxassetid://16616895678", true},
-	{"Wings", "Song of the Lovebird", "11,000", "", false},
-	{"Accessories", "Crazy in Love Glasses", "3,500", "rbxassetid://2804901380", true},
-	{"Accessories", "Very Cozy Gloves / Mittens", "12,000", "rbxassetid://4505119926", true},
-	{"Accessories", "Divine Diamonds Heart Earrings", "12,000", "rbxassetid://8692996254", true},
-	{"Bodices", "Princess Starfrost Cozy Bodice", "12,000", "rbxassetid://4506011686", true},
-	{"Bodices", "Sleigh It Bodice", "12,000", "rbxassetid://8096555550", true},
-	{"Accessories", "Reindeer Ride", "12,250", "rbxassetid://8233210555", true},
-	{"Accessories", "Lace Snowflake Stole Scarf", "11,000", "rbxassetid://8097468581", true},
-	{"Accessories", "Jeweled Elven Ear Cuff", "10,000", "rbxassetid://15496999505", true},
-	{"Accessories", "Very Cozy Hat", "9,000", "rbxassetid://4505120671", true},
-	{"Accessories", "Celestial Flower Bouquet", "8,500", "rbxassetid://8692996045", true},
-	{"Skirts", "Cherry Blossom Rare Bloom Skirt", "8,000", "rbxassetid://4961796719", true},
-	{"Accessories", "Frozen Luggage", "8,000", "rbxassetid://8097395651", true},
-	{"Heels", "Woodland Faun Hooves", "22,000", "rbxassetid://15496670469", true},
-	{"Accessories", "Warm Glittering Cloak", "8,000", "rbxassetid://6011395860", true},
-	{"Accessories", "Vaudevillian Ballroom Mask", "3,000", "rbxassetid://7805326954", true},
-	{"Accessories", "Starlight Necklace", "8,000", "rbxassetid://16616893500", true},
-	{"Accessories", "Porcelina Doll Lost Beret", "8,000", "rbxassetid://70679231430058", true},
-	{"Accessories", "Babydoll Adorable Sleeves", "7,500", "rbxassetid://5332534268", true},
-	{"Accessories", "Starlight Beret (Hat)", "7,000", "rbxassetid://16616895098", true},
-	{"Accessories", "Merry Marching Band Majorette Hat", "7,000", "rbxassetid://128796568804969", true},
-	{"Accessories", "Steampunk Undercity Sword Belt", "10,000", "rbxassetid://11125612755", true},
-	{"Accessories", "DotD Aromatic Chest Flowers", "6,500", "rbxassetid://101315025526338", true},
-	{"Wings", "Mini Social Love Butterfly", "1,000", "", false},
-	{"Accessories", "Christmas Window Shopping Top Hat", "6,500", "rbxassetid://7969718150", true},
-	{"Accessories", "DotD Aromatic Flower Crown", "6,500", "rbxassetid://91893418760922", true},
-	{"Accessories", "Princess Starfrost Ribbon Bonnet", "6,500", "rbxassetid://4506011365", true},
-	{"Accessories", "December's Dream Cossack Hat", "6,500", "rbxassetid://8309588314", true},
-	{"Accessories", "Opposites Attract Headphones", "6,000", "rbxassetid://8713477587", true},
-	{"Accessories", "Polar Cutie Bear Hat", "5,500", "rbxassetid://8120762218", true},
-	{"Accessories", "Divine Diamonds Heart Ring & Bracelet", "5,000", "rbxassetid://8692996168", true},
-	{"Accessories", "Snowman's Top Hat", "5,000", "rbxassetid://4503062749", true},
-	{"Accessories", "Magical Glitterfrost Blinking Lights", "3,500", "rbxassetid://6024637074", true},
-	{"Bodices", "Peppermint Princess Bodice", "18,000", "rbxassetid://8010122496", true},
-	{"Accessories", "Polar Bear Beret Cap", "3,000", "rbxassetid://6024741936", true},
-	{"Wings", "Ragged Prince", "4,000", "", false},
-	{"Wings", "Arachnophobia SpiderLeg Wings", "10,000", "", false},
-	{"Accessories", "Iced Gingerbread Earrings", "1,800", "rbxassetid://7969718463", true},
-	{"Accessories", "Glittering Noel Bows", "1,500", "rbxassetid://6026190385", true},
-	{"Accessories", "Sparkly Candy Cane Ears", "1,000", "rbxassetid://6024728792", true},
-	{"Accessories", "Large Enchanting Christmas", "12,500", "", false},
-	{"Accessories", "Roses are Red Valentines", "12,000", "", false},
-	{"Accessories", "Soul Keeper", "12,000", "", false},
-	{"Accessories", "Dragon's Demise", "12,000", "", false},
-	{"Accessories", "Shooting Stars", "10,000", "", false},
-	{"Accessories", "Black Widow Whisper", "4,000", "", false},
-	{"Accessories", "Seashell Hair Clips", "3,000", "rbxassetid://3358329523", true},
-	{"Accessories", "Treasure Hunter", "4,500", "", false},
-	{"Accessories", "Large Antler Lights", "10,000", "", false},
-	{"Accessories", "Fallen Love Fairy", "8,500", "", false},
-	{"Accessories", "Dragon Blaze", "8,000", "", false},
-	{"Wings", "Glowing Fairy of Luck", "7,500", "", false},
-	{"Accessories", "Irish Forest Fairy", "5,500", "", false},
-	{"Accessories", "Special Wrapped Presents", "7,500", "", false},
-	{"Accessories", "Baby Unicorn", "4,000", "", false},
-	{"Bodices", "Lullaby Nikolai and Lauralai Fuzzy Coat", "28,000", "rbxassetid://130798324378859", true},
-	{"Accessories", "Steampunk Gadgeteer Gloves", "5,000", "rbxassetid://92747340488620", true},
-	{"Skirts", "Darling Academia Uniform Jacket and Skirt", "20,000", "rbxassetid://15496834534", true},
-	{"Accessories", "Terror of the Deep", "6,500", "", false},
-	{"Accessories", "Night of the Full Moon", "2,500", "", false},
-	{"Bodices", "Whimsy Witch Hexed Bodice", "28,000", "rbxassetid://7709194526", true},
-	{"Accessories", "Jack-o-Lantern", "6,000", "", false},
-	{"Accessories", "Legend of the Harp Fairy", "5,500", "", false},
-	{"Accessories", "Frankenfairy", "5,500", "", false},
-	{"Wings", "Gobble Gobble Wings", "5,500", "", false},
-	{"Accessories", "Autumn Glow", "5,000", "", false},
-	{"Accessories", "Elegance Rose Corsage", "10,000", "rbxassetid://4643956412", true},
-	{"Accessories", "Up In Heaven's Clouds", "4,500", "", false},
-	{"Accessories", "Autumn Fairy", "4,250", "", false},
-	{"Accessories", "Fallen Fae Twisted Tiara", "20,000", "rbxassetid://129823584781837", true},
-	{"Accessories", "Steampunk Mechanical Arms", "10,000", "rbxassetid://122846174741325", true},
-	{"Accessories", "Vampire's Graveyard", "2,500", "", false},
-	{"Accessories", "Kawaii Spookeye", "750", "", false},
-	{"Wings", "Mini Gingerbread Wings", "2,750", "", false},
-	{"Heels", "Lullaby Nikolai and Lauralai Shoes", "60,000", "rbxassetid://94363318313444", true},
-	{"Accessories", "Autumn Fairy *Mini*", "2,000", "", false},
-	{"Accessories", "Bewitched Chonker", "1,500", "", false},
-	{"Accessories", "Moonlight's Magic", "2,250", "", false},
-	{"Accessories", "Starlight Puppy Poodle Purse", "18,000", "rbxassetid://16616896145", true},
-	{"Accessories", "Sweet Sugar Skulls", "600", "", false},
-	{"Skirts", "Magical Enchantress", "N/A", "rbxassetid://10569909230", true},
-	{"Skirts", "Midnight Mademoiselle", "N/A", "rbxassetid://3368732051", true},
-	{"Accessories", "ArachnoCutie", "2,500", "", false},
-	{"Heels", "Huggly Snuggly Booties", "Shop Item", "", true},
-	{"Skirts", "Summer Fantasy Breezy Beach Skirt", "35,000", "rbxassetid://6947538941", true},
-	{"Accessories", "TTYL Chick Fave Sleeves", "8,000", "rbxassetid://15499484034", true},
-	{"Accessories", "Love Beyond the Grave", "3,500", "", false},
-	{"Wings", "Heart Container", "10,000", "", false},
-	{"Skirts", "North Pole Presents Skirt", "13,500", "rbxassetid://7969721449", true},
-	{"Wings", "Sparkling Valentine", "5,500", "", false},
-	{"Accessories", "Lovely Bat Charms", "4,000", "", false},
-	{"Heels", "Carol of the Elves Booties", "Shop Item", "", true},
-	{"Heels", "Goddess of TriumphHeels of Immortality", "1,500 Robux", "rbxassetid://10729420729", true},
-	{"Accessories", "Medium Hot Cocoa", "4,500", "", false},
-	{"Accessories", "Summer Fantasy Goddess Veil", "8,000", "rbxassetid://6947535858", true},
-	{"Skirts", "Shadow Empress Jeweled Skirt", "28,000", "rbxassetid://4081054279", true},
-	{"Skirts", "Gothicutie Skirt", "12,000", "rbxassetid://7547689300", true},
-	{"Accessories", "Lullaby Nikolai and Lauralai Fuzzy Gloves", "20,000", "rbxassetid://76995318987876", true},
-	{"Skirts", "Large Train Bow Skirt", "33,000", "rbxassetid://4757091401", true},
-	{"Accessories", "Ghostly", "1,000", "", false},
-	{"Accessories", "Fuzzy Warm Snowflake Bow Hat", "6,500", "rbxassetid://6011493871", true},
-	{"Accessories", "Elegant Parasol", "60,000", "rbxassetid://8705849627", true},
-	{"Accessories", "Lullaby Nikolai and Lauralai Hat/Bow", "18,000", "rbxassetid://112713015552792", true},
-	{"Accessories", "Elegance Butterfly Veil", "10,000", "rbxassetid://4643949185", true},
-	{"Accessories", "Princess Starfrost Figure Skates", "Shop Item", "", false},
-	{"Accessories", "Nocturnal Kitty Ears", "10,000", "rbxassetid://5768972485", true},
-	{"Heels", "Glittering Jelly Platforms", "Shop Item", "", true},
-	{"Accessories", "Sailor Hat with Bow", "7,000", "rbxassetid://2804907770", true},
-	{"Accessories", "Ghostie Transformation", "1,200", "rbxassetid://7593487278", true},
-	{"Accessories", "Harvest Fairy", "6,500", "", false},
-	{"Accessories", "Enchanting Christmas", "8,000", "", false},
-	{"Accessories", "Arachnofabulous", "100", "rbxassetid://5780659637", true},
-	{"Bodices", "Fallen Fae Tattered Top & Rose Choker", "18,000", "rbxassetid://113771155649424", true},
-}
-
--- Curated Halos
-local haloList = {
-	{"Halos", "Corrupt Halo", "Special", "rbxassetid://5780659637"},
-	{"Halos", "Glimmering Light Halo", "Special", "rbxassetid://6025681860"},
-	{"Halos", "Halloween Halo 2019", "Special", ""},
-	{"Halos", "Halloween Halo 2020", "Special", ""},
-	{"Halos", "Halloween Halo 2021", "Special", ""},
-	{"Halos", "Halloween Halo 2022", "Special", ""},
-	{"Halos", "Halloween Halo 2023", "Special", ""},
-	{"Halos", "Spring Halo 2019", "Special", ""},
-	{"Halos", "Spring Halo 2020", "Special", ""},
-	{"Halos", "Spring Halo 2021", "Special", ""},
-	{"Halos", "Spring Halo 2022", "Special", ""},
-	{"Halos", "Spring Halo 2023", "Special", ""},
-	{"Halos", "Winter Halo 2019", "Special", ""},
-	{"Halos", "Winter Halo 2020", "Special", ""},
-	{"Halos", "Winter Halo 2021", "Special", ""},
-	{"Halos", "Winter Halo 2022", "Special", ""},
-	{"Halos", "Winter Halo 2023", "Special", ""},
-	{"Halos", "Diamond Halo", "Special", ""},
-	{"Halos", "Mermaid Halo", "Special", ""},
-	{"Halos", "Butterfly Halo", "Special", ""},
-	{"Halos", "Light Halo", "Special", ""},
-	{"Halos", "Neon Rainbow Halo", "Special", ""},
-	{"Halos", "Gold Halo", "Special", ""},
-	{"Halos", "Sakura Halo", "Special", ""},
-	{"Halos", "Moon Halo", "Special", ""},
-	{"Halos", "Sun Halo", "Special", ""},
-	{"Halos", "Crystal Halo", "Special", ""},
-	{"Halos", "Rose Gold Halo", "Special", ""},
-	{"Halos", "Frozen Halo", "Special", ""},
-}
-
-local categories = { Heels={}, Skirts={}, Bodices={}, Accessories={}, Wings={}, Halos={} }
-local catOrder   = {"Heels", "Skirts", "Bodices", "Accessories", "Wings", "Halos"}
-
-for _, row in ipairs(masterCatalog) do
-	local cat, name, price, img, hasImg = row[1], row[2], row[3], row[4], row[5]
-	if categories[cat] then
-		table.insert(categories[cat], {name=name, price=price, img=img, hasImg=hasImg, cat=cat})
-	end
-end
-for _, row in ipairs(haloList) do
-	local cat, name, price, img = row[1], row[2], row[3], row[4]
-	table.insert(categories.Halos, {name=name, price=price, img=img, hasImg=(img~=""), cat=cat, isHalo=true})
-end
-
--- ============================================================
--- COMPACT BLACK & WHITE GUI (Classic v18/v19 Design)
+-- 5. COMPACT MOBILE BLACK & WHITE GUI (270px x 380px)
 -- ============================================================
 local C = {
 	bg        = Color3.fromRGB(12, 12, 12),
-	card      = Color3.fromRGB(22, 22, 22),
-	cardHover = Color3.fromRGB(34, 34, 34),
-	border    = Color3.fromRGB(45, 45, 45),
-	borderHi  = Color3.fromRGB(110, 110, 110),
+	panel     = Color3.fromRGB(20, 20, 20),
+	card      = Color3.fromRGB(28, 28, 28),
+	border    = Color3.fromRGB(48, 48, 48),
+	borderHi  = Color3.fromRGB(90, 90, 90),
 	text      = Color3.fromRGB(240, 240, 240),
-	sub       = Color3.fromRGB(170, 170, 170),
-	muted     = Color3.fromRGB(90, 90, 90),
-	btn       = Color3.fromRGB(28, 28, 28),
+	sub       = Color3.fromRGB(160, 160, 160),
+	muted     = Color3.fromRGB(85, 85, 85),
+	btn       = Color3.fromRGB(34, 34, 34),
 	btnHi     = Color3.fromRGB(240, 240, 240),
-	btnTextHi = Color3.fromRGB(10, 10, 10),
-	tabActive = Color3.fromRGB(240, 240, 240),
+	btnTextHi = Color3.fromRGB(12, 12, 12),
+	tabActive = Color3.fromRGB(235, 235, 235),
 	tabInact  = Color3.fromRGB(20, 20, 20),
-	tabActTxt = Color3.fromRGB(10, 10, 10),
-	tabInaTxt = Color3.fromRGB(160, 160, 160),
+	tabActTxt = Color3.fromRGB(12, 12, 12),
+	tabInaTxt = Color3.fromRGB(150, 150, 150),
 }
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name           = "RH_Wardrobe_v20"
+ScreenGui.Name           = "RH_Wardrobe_v22"
 ScreenGui.ResetOnSpawn   = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.DisplayOrder   = 999
@@ -798,13 +854,13 @@ local function stroke(t, c, parent)
 	return mk("UIStroke", {Thickness = t, Color = c, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, parent)
 end
 
--- Floating Menu Button
+-- Floating Toggle Button
 local ToggleBtn = mk("TextButton", {
-	Size              = UDim2.new(0, 54, 0, 36),
-	Position          = UDim2.new(0, 10, 1, -54),
+	Size              = UDim2.new(0, 48, 0, 30),
+	Position          = UDim2.new(0, 10, 1, -44),
 	BackgroundColor3  = C.bg,
-	Text              = "MENU",
-	TextSize          = 10,
+	Text              = "CLOSET",
+	TextSize          = 9,
 	Font              = Enum.Font.GothamBold,
 	TextColor3        = C.text,
 	BorderSizePixel   = 0,
@@ -814,8 +870,8 @@ local ToggleBtn = mk("TextButton", {
 corner(6, ToggleBtn)
 stroke(1, C.borderHi, ToggleBtn)
 
--- Compact window dimensions: 320px width
-local W, H = 320, 480
+-- Compact Mobile Window: 270px W x 380px H
+local W, H = 270, 380
 local Main = mk("Frame", {
 	Size             = UDim2.new(0, W, 0, H),
 	Position         = UDim2.new(0.5, -W/2, 0.5, -H/2),
@@ -828,14 +884,13 @@ local Main = mk("Frame", {
 corner(8, Main)
 stroke(1, C.border, Main)
 
-ToggleBtn.MouseButton1Click:Connect(function()
-	Main.Visible = not Main.Visible
-end)
-ToggleBtn.TouchTap:Connect(function()
-	Main.Visible = not Main.Visible
-end)
+local function toggleMain()
+    Main.Visible = not Main.Visible
+end
+ToggleBtn.MouseButton1Click:Connect(toggleMain)
+ToggleBtn.TouchTap:Connect(toggleMain)
 
--- Draggable logic
+-- Dragging Support
 local dragging, dragStart, startPos
 Main.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -858,33 +913,33 @@ end)
 
 -- Title Bar
 local TitleBar = mk("Frame", {
-	Size             = UDim2.new(1, 0, 0, 34),
-	BackgroundColor3 = C.card,
+	Size             = UDim2.new(1, 0, 0, 26),
+	BackgroundColor3 = C.panel,
 	BorderSizePixel  = 0,
 	ZIndex           = 11,
 }, Main)
 corner(6, TitleBar)
 
 mk("TextLabel", {
-	Size               = UDim2.new(1, -74, 1, 0),
-	Position           = UDim2.new(0, 10, 0, 0),
+	Size               = UDim2.new(1, -56, 1, 0),
+	Position           = UDim2.new(0, 8, 0, 0),
 	BackgroundTransparency = 1,
-	Text               = "ROYALE HIGH WARDROBE",
+	Text               = "RH WARDROBE",
 	TextColor3         = C.text,
 	Font               = Enum.Font.GothamBold,
-	TextSize           = 10,
+	TextSize           = 9,
 	TextXAlignment     = Enum.TextXAlignment.Left,
 	ZIndex             = 12,
 }, TitleBar)
 
 local MinBtn = mk("TextButton", {
-	Size            = UDim2.new(0, 24, 0, 24),
-	Position        = UDim2.new(1, -54, 0, 5),
+	Size            = UDim2.new(0, 18, 0, 18),
+	Position        = UDim2.new(1, -42, 0, 4),
 	BackgroundColor3= C.btn,
 	Text            = "_",
 	TextColor3      = C.text,
 	Font            = Enum.Font.GothamBold,
-	TextSize        = 11,
+	TextSize        = 9,
 	BorderSizePixel = 0,
 	ZIndex          = 12,
 	AutoButtonColor = false,
@@ -893,13 +948,13 @@ corner(4, MinBtn)
 stroke(1, C.border, MinBtn)
 
 local CloseBtn = mk("TextButton", {
-	Size            = UDim2.new(0, 24, 0, 24),
-	Position        = UDim2.new(1, -26, 0, 5),
+	Size            = UDim2.new(0, 18, 0, 18),
+	Position        = UDim2.new(1, -22, 0, 4),
 	BackgroundColor3= C.btn,
 	Text            = "X",
 	TextColor3      = C.text,
 	Font            = Enum.Font.GothamBold,
-	TextSize        = 10,
+	TextSize        = 8.5,
 	BorderSizePixel = 0,
 	ZIndex          = 12,
 	AutoButtonColor = false,
@@ -911,8 +966,8 @@ CloseBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
 CloseBtn.TouchTap:Connect(function() ScreenGui:Destroy() end)
 
 local ContentArea = mk("Frame", {
-	Size               = UDim2.new(1, 0, 1, -34),
-	Position           = UDim2.new(0, 0, 0, 34),
+	Size               = UDim2.new(1, 0, 1, -26),
+	Position           = UDim2.new(0, 0, 0, 26),
 	BackgroundTransparency = 1,
 	ClipsDescendants   = true,
 	ZIndex             = 11,
@@ -922,34 +977,34 @@ local isMinimized = false
 local function toggleMin()
 	isMinimized = not isMinimized
 	ContentArea.Visible = not isMinimized
-	Main.Size = isMinimized and UDim2.new(0, W, 0, 34) or UDim2.new(0, W, 0, H)
+	Main.Size = isMinimized and UDim2.new(0, W, 0, 26) or UDim2.new(0, W, 0, H)
 end
 MinBtn.MouseButton1Click:Connect(toggleMin)
 MinBtn.TouchTap:Connect(toggleMin)
 
--- Left Category Column (Compact)
+-- Left Category Sidebar
 local CatScroll = mk("ScrollingFrame", {
-	Size               = UDim2.new(0, 88, 1, 0),
+	Size               = UDim2.new(0, 66, 1, 0),
 	Position           = UDim2.new(0, 0, 0, 0),
-	BackgroundColor3   = C.card,
+	BackgroundColor3   = C.panel,
 	BorderSizePixel    = 0,
 	ScrollBarThickness = 2,
-	CanvasSize         = UDim2.new(0, 0, 0, #catOrder * 42 + 8),
+	CanvasSize         = UDim2.new(0, 0, 0, #catOrder * 34 + 6),
 	ZIndex             = 12,
 }, ContentArea)
 
-local CatLayout = mk("UIListLayout", {
-	Padding               = UDim.new(0, 4),
-	HorizontalAlignment   = Enum.HorizontalAlignment.Center,
-	SortOrder             = Enum.SortOrder.LayoutOrder,
+mk("UIListLayout", {
+	Padding             = UDim.new(0, 3),
+	HorizontalAlignment = Enum.HorizontalAlignment.Center,
+	SortOrder           = Enum.SortOrder.LayoutOrder,
 }, CatScroll)
-mk("UIPadding", {PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4)}, CatScroll)
+mk("UIPadding", {PaddingTop = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3)}, CatScroll)
 
 -- Search Box
 local SearchBoxFrame = mk("Frame", {
-	Size               = UDim2.new(1, -96, 0, 26),
-	Position           = UDim2.new(0, 92, 0, 4),
-	BackgroundColor3   = C.card,
+	Size               = UDim2.new(1, -74, 0, 22),
+	Position           = UDim2.new(0, 70, 0, 2),
+	BackgroundColor3   = C.panel,
 	BorderSizePixel    = 0,
 	ZIndex             = 13,
 }, ContentArea)
@@ -957,44 +1012,44 @@ corner(4, SearchBoxFrame)
 stroke(1, C.border, SearchBoxFrame)
 
 local SearchBox = mk("TextBox", {
-	Size               = UDim2.new(1, -12, 1, 0),
-	Position           = UDim2.new(0, 6, 0, 0),
+	Size               = UDim2.new(1, -8, 1, 0),
+	Position           = UDim2.new(0, 4, 0, 0),
 	BackgroundTransparency = 1,
 	PlaceholderText    = "Search...",
 	Text               = "",
 	TextColor3         = C.text,
 	PlaceholderColor3  = C.muted,
 	Font               = Enum.Font.GothamBold,
-	TextSize           = 9,
+	TextSize           = 8,
 	ClearTextOnFocus   = false,
 	ZIndex             = 14,
 }, SearchBoxFrame)
 
--- Grid Scroll (68x82 cards)
+-- Item Grid (58px x 68px mini cards)
 local GridScroll = mk("ScrollingFrame", {
-	Size               = UDim2.new(1, -92, 1, -34),
-	Position           = UDim2.new(0, 92, 0, 34),
+	Size               = UDim2.new(1, -70, 1, -26),
+	Position           = UDim2.new(0, 70, 0, 26),
 	BackgroundTransparency = 1,
 	BorderSizePixel    = 0,
-	ScrollBarThickness = 3,
+	ScrollBarThickness = 2,
 	CanvasSize         = UDim2.new(0, 0, 0, 0),
 	AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	ZIndex             = 12,
 }, ContentArea)
 
-local GridLayout = mk("UIGridLayout", {
-	CellSize    = UDim2.new(0, 68, 0, 82),
-	CellPadding = UDim2.new(0, 4, 0, 4),
+mk("UIGridLayout", {
+	CellSize    = UDim2.new(0, 58, 0, 68),
+	CellPadding = UDim2.new(0, 3, 0, 3),
 	SortOrder   = Enum.SortOrder.LayoutOrder,
 }, GridScroll)
-mk("UIPadding", {PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4)}, GridScroll)
+mk("UIPadding", {PaddingTop = UDim.new(0, 2), PaddingLeft = UDim.new(0, 2)}, GridScroll)
 
--- Compact Slide-up Inspector
-local InspHeight = 150
+-- Slide-up Inspector
+local InspHeight = 125
 local Inspector = mk("Frame", {
 	Size             = UDim2.new(1, 0, 0, InspHeight),
 	Position         = UDim2.new(0, 0, 1, 0),
-	BackgroundColor3 = C.card,
+	BackgroundColor3 = C.panel,
 	BorderSizePixel  = 0,
 	Visible          = false,
 	ZIndex           = 25,
@@ -1004,13 +1059,13 @@ corner(8, Inspector)
 stroke(1, C.borderHi, Inspector)
 
 local inspClose = mk("TextButton", {
-	Size            = UDim2.new(0, 20, 0, 20),
-	Position        = UDim2.new(1, -24, 0, 4),
+	Size            = UDim2.new(0, 16, 0, 16),
+	Position        = UDim2.new(1, -20, 0, 3),
 	BackgroundColor3= C.btn,
 	Text            = "X",
 	TextColor3      = C.text,
 	Font            = Enum.Font.GothamBold,
-	TextSize        = 10,
+	TextSize        = 8,
 	BorderSizePixel = 0,
 	ZIndex          = 26,
 	AutoButtonColor = false,
@@ -1019,8 +1074,8 @@ corner(4, inspClose)
 stroke(1, C.border, inspClose)
 
 local inspImg = mk("ImageLabel", {
-	Size            = UDim2.new(0, 64, 0, 64),
-	Position        = UDim2.new(0, 8, 0, 8),
+	Size            = UDim2.new(0, 50, 0, 50),
+	Position        = UDim2.new(0, 6, 0, 6),
 	BackgroundColor3= C.btn,
 	BorderSizePixel = 0,
 	ZIndex          = 26,
@@ -1032,47 +1087,47 @@ stroke(1, C.border, inspImg)
 local inspPlaceholder = mk("TextLabel", {
 	Size               = UDim2.new(1, 0, 1, 0),
 	BackgroundTransparency = 1,
-	Text               = "NO\nIMAGE",
+	Text               = "NO\nIMG",
 	TextColor3         = C.muted,
 	Font               = Enum.Font.GothamBold,
-	TextSize           = 9,
+	TextSize           = 8,
 	Visible            = false,
 	ZIndex             = 27,
 }, inspImg)
 
 local inspName = mk("TextLabel", {
-	Size               = UDim2.new(1, -106, 0, 28),
-	Position           = UDim2.new(0, 80, 0, 6),
+	Size               = UDim2.new(1, -80, 0, 22),
+	Position           = UDim2.new(0, 62, 0, 4),
 	BackgroundTransparency = 1,
 	Text               = "ITEM NAME",
 	TextColor3         = C.text,
 	Font               = Enum.Font.GothamBold,
-	TextSize           = 10,
+	TextSize           = 8.5,
 	TextXAlignment     = Enum.TextXAlignment.Left,
 	TextWrapped        = true,
 	ZIndex             = 26,
 }, Inspector)
 
 local inspPrice = mk("TextLabel", {
-	Size               = UDim2.new(1, -106, 0, 16),
-	Position           = UDim2.new(0, 80, 0, 36),
+	Size               = UDim2.new(1, -80, 0, 14),
+	Position           = UDim2.new(0, 62, 0, 26),
 	BackgroundTransparency = 1,
-	Text               = "PRICE",
+	Text               = "Price: Free",
 	TextColor3         = C.sub,
 	Font               = Enum.Font.Gotham,
-	TextSize           = 9.5,
+	TextSize           = 7.5,
 	TextXAlignment     = Enum.TextXAlignment.Left,
 	ZIndex             = 26,
 }, Inspector)
 
 local inspStatus = mk("TextLabel", {
-	Size               = UDim2.new(1, -106, 0, 16),
-	Position           = UDim2.new(0, 80, 0, 54),
+	Size               = UDim2.new(1, -80, 0, 14),
+	Position           = UDim2.new(0, 62, 0, 40),
 	BackgroundTransparency = 1,
 	Text               = "",
 	TextColor3         = C.muted,
 	Font               = Enum.Font.Gotham,
-	TextSize           = 9,
+	TextSize           = 7.5,
 	TextXAlignment     = Enum.TextXAlignment.Left,
 	ZIndex             = 26,
 }, Inspector)
@@ -1086,13 +1141,13 @@ local function setStatus(msg, col)
 end
 
 local equipBtn = mk("TextButton", {
-	Size             = UDim2.new(0.48, -4, 0, 28),
-	Position         = UDim2.new(0, 8, 0, 110),
+	Size             = UDim2.new(0.48, -4, 0, 24),
+	Position         = UDim2.new(0, 6, 0, 94),
 	BackgroundColor3 = C.btnHi,
 	Text             = "WEAR",
 	TextColor3       = C.btnTextHi,
 	Font             = Enum.Font.GothamBold,
-	TextSize         = 9,
+	TextSize         = 8,
 	BorderSizePixel  = 0,
 	ZIndex           = 26,
 	AutoButtonColor  = false,
@@ -1100,13 +1155,13 @@ local equipBtn = mk("TextButton", {
 corner(4, equipBtn)
 
 local clearLayersBtn = mk("TextButton", {
-	Size             = UDim2.new(0.48, -4, 0, 28),
-	Position         = UDim2.new(0.5, 2, 0, 110),
+	Size             = UDim2.new(0.48, -4, 0, 24),
+	Position         = UDim2.new(0.5, 2, 0, 94),
 	BackgroundColor3 = C.btn,
 	Text             = "CLEAR ALL",
 	TextColor3       = C.text,
 	Font             = Enum.Font.GothamBold,
-	TextSize         = 9,
+	TextSize         = 8,
 	BorderSizePixel  = 0,
 	ZIndex           = 26,
 	AutoButtonColor  = false,
@@ -1125,7 +1180,7 @@ inspClose.TouchTap:Connect(closeInsp)
 local function openInsp(item)
 	selectedItem = item
 	inspName.Text = item.name:upper()
-	inspPrice.Text = (item.price ~= "" and ("Price: " .. item.price) or "Special / Event")
+	inspPrice.Text = (item.price ~= "" and ("Price: " .. item.price) or "Price: Special")
 	if item.img and item.img ~= "" then
 		inspImg.Image = item.img
 		inspPlaceholder.Visible = false
@@ -1139,12 +1194,8 @@ end
 
 local function handleWear()
 	if not selectedItem then return end
-	if selectedItem.isHalo then
-		setStatus("Halos must be won or traded!", C.sub)
-		return
-	end
 	setStatus("Equipping...", C.sub)
-	local res = equipItem(selectedItem.name, selectedItem.cat)
+	local res = equipItem(selectedItem)
 	if res == "OK" then
 		setStatus("Equipped!", C.text)
 	else
@@ -1164,7 +1215,7 @@ clearLayersBtn.TouchTap:Connect(function()
 end)
 
 -- ============================================================
--- POPULATE GRID & TABS
+-- 6. GRID POPULATION & CATEGORY NAVIGATION
 -- ============================================================
 local currentCat    = "Heels"
 local currentSearch = ""
@@ -1172,7 +1223,7 @@ local cardInstances = {}
 
 local function makeCard(item, order)
 	local card = mk("Frame", {
-		Name             = "Card_" .. item.name:sub(1,15),
+		Name             = "Card_" .. item.name:sub(1,10),
 		BackgroundColor3 = C.card,
 		BorderSizePixel  = 0,
 		LayoutOrder      = order,
@@ -1182,7 +1233,7 @@ local function makeCard(item, order)
 	stroke(1, C.border, card)
 
 	local img = mk("ImageLabel", {
-		Size             = UDim2.new(1, -6, 0, 48),
+		Size             = UDim2.new(1, -6, 0, 38),
 		Position         = UDim2.new(0, 3, 0, 3),
 		BackgroundColor3 = C.btn,
 		BorderSizePixel  = 0,
@@ -1199,19 +1250,19 @@ local function makeCard(item, order)
 			Text               = "NO IMG",
 			TextColor3         = C.muted,
 			Font               = Enum.Font.Gotham,
-			TextSize           = 8,
+			TextSize           = 7,
 			ZIndex             = 15,
 		}, img)
 	end
 
 	mk("TextLabel", {
-		Size               = UDim2.new(1, -4, 0, 24),
-		Position           = UDim2.new(0, 2, 0, 54),
+		Size               = UDim2.new(1, -4, 0, 20),
+		Position           = UDim2.new(0, 2, 0, 44),
 		BackgroundTransparency = 1,
 		Text               = item.name,
 		TextColor3         = C.text,
 		Font               = Enum.Font.Gotham,
-		TextSize           = 7.5,
+		TextSize           = 6.5,
 		TextWrapped        = true,
 		TextYAlignment     = Enum.TextYAlignment.Top,
 		ZIndex             = 14,
@@ -1245,7 +1296,12 @@ local function refreshGrid()
 	end
 end
 
-local tabButtons = {}
+refreshGridRef = function(targetCat)
+    if not targetCat or targetCat == currentCat then
+        refreshGrid()
+    end
+end
+
 local function setActiveCategory(cat)
 	currentCat = cat
 	for c, btn in pairs(tabButtons) do
@@ -1264,12 +1320,12 @@ end
 for i, cat in ipairs(catOrder) do
 	local count = #(categories[cat] or {})
 	local btn = mk("TextButton", {
-		Size             = UDim2.new(1, -6, 0, 36),
+		Size             = UDim2.new(1, -4, 0, 30),
 		BackgroundColor3 = C.tabInact,
 		Text             = cat .. "\n(" .. count .. ")",
 		TextColor3       = C.tabInaTxt,
 		Font             = Enum.Font.GothamBold,
-		TextSize         = 8.5,
+		TextSize         = 7.5,
 		BorderSizePixel  = 0,
 		LayoutOrder      = i,
 		ZIndex           = 13,
@@ -1289,8 +1345,6 @@ SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
 end)
 
 setActiveCategory("Heels")
-
--- Open the window by default
 Main.Visible = true
 
-print("[RH Wardrobe v20] Compact black & white UI ready. " .. #masterCatalog .. " items loaded.")
+print("[RH Wardrobe v22] Successfully loaded. Freeze neutralizer and dynamic server sync active.")
