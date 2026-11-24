@@ -1,19 +1,18 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v26
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v27
 --
--- NEW FIXES & FEATURES IN v26:
--- 1. EQUIPPEDSTORAGE MULTI-WEAR ENGINE (OPTION 1):
---    - Scans and captures real 3D models from workspace.EquippedStorage (Heels, Skirts,
---      Accessories, Wings) & Character.WornItems.
---    - Clones and welds worn models to your rig limbs (LowerTorso, UpperTorso, legs)
---      preserving limb-target welds with Massless = true and CanCollide = false.
---    - Client-protected layers prevent the server try-on cleanup from deleting your previous pieces.
---    - Wear Heels + Skirt + Bodice + Wings + Halos + Accessories all simultaneously!
--- 2. UNIVERSAL COLORING SYSTEM (CLASSIC & MODERN ITEMS):
---    - Live recoloring on workspace.EquippedStorage & Character models.
---    - Supports Large Train Bow Skirt, Miss Lady Rose, and all classic/modern items.
--- 3. GRID IMAGE PRIORITY SORTING:
---    - Items with valid images always appear first; missing images pushed to bottom.
+-- NEW FIXES & FEATURES IN v27:
+-- 1. LAYER BAKER & SNAPSHOT CLONER ENGINE:
+--    - Bakes & locks the exact 3D meshes, textures, colors, and attachments of whatever
+--      is on your avatar into permanent, client-protected layers.
+--    - Welds models directly to avatar limbs (LowerTorso, UpperTorso, legs) with Massless = true.
+--    - Because baked layers are created locally, the server try-on cleanup CANNOT delete them!
+--    - Dedicated "BAKE / LOCK" button + automatic background baking on "WEAR / STACK".
+--    - Wear full complete outfits: Heels + Skirt + Bodice + Sleeves + Wings + Halos together!
+-- 2. UNIVERSAL COLORING SYSTEM:
+--    - Supports Large Train Bow Skirt, Miss Lady Rose, and all modern toggle sets.
+-- 3. IMAGE PRIORITY SORTING:
+--    - Items with valid icons appear first; items missing images are pushed to bottom.
 -- 4. CHARACTER RESPAWN & LEG TRANSPARENCY:
 --    - Restores stacked layers on CharacterAdded.
 --    - Automatically manages leg transparency for heels and restores on Clear All.
@@ -179,9 +178,9 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. EQUIPPEDSTORAGE MULTI-WEAR ENGINE (v26 - Option 1)
+-- 2. LAYER BAKER & SNAPSHOT CLONER ENGINE (v27)
 -- ============================================================
-local savedWornLayers = {}
+local bakedLayersBackup = {}
 
 local legPartNames = {
     "LeftLeg", "RightLeg", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
@@ -192,12 +191,14 @@ local function deepClone(inst)
     if not inst then return nil end
     local ok, result = pcall(function()
         inst.Archivable = true
+        for _, d in ipairs(inst:GetDescendants()) do
+            d.Archivable = true
+        end
         return inst:Clone()
     end)
     return ok and result or nil
 end
 
--- Resolve all Royale High equipped clothing folders for the local player
 local function getEquippedFolders()
     local list = {}
     local es = workspace:FindFirstChild("EquippedStorage")
@@ -230,11 +231,59 @@ local function getEquippedFolders()
     return list
 end
 
-local function attachModelToCharacter(char, model, cat)
-    if not char or not model then return end
-    model:SetAttribute("CustomSavedLayer", true)
-    model:SetAttribute("RH_ClientLayer", true)
+-- Bake and lock a model/mesh permanently onto the avatar
+local function bakeModelToAvatar(sourceModel, category)
+    if not sourceModel then return nil end
+    local char = lp.Character
+    if not char then return nil end
+    local hum = char:FindFirstChildOfClass("Humanoid")
 
+    local ok, baked = pcall(function()
+        sourceModel.Archivable = true
+        for _, d in ipairs(sourceModel:GetDescendants()) do
+            d.Archivable = true
+        end
+        return sourceModel:Clone()
+    end)
+    if not ok or not baked then return nil end
+
+    -- Slot replacement: Single-slot items (Heels, Skirts, Bodices) replace their previous baked layer
+    local cat = category or "Custom"
+    if cat == "Heels" or cat == "Skirts" or cat == "Bodices" or cat == "Wings" then
+        for _, c in ipairs(char:GetChildren()) do
+            if c:GetAttribute("RH_BakedLayer") and c:GetAttribute("RH_Category") == cat then
+                pcall(function() c:Destroy() end)
+            end
+        end
+        bakedLayersBackup[cat] = nil
+    end
+
+    baked:SetAttribute("RH_BakedLayer", true)
+    baked:SetAttribute("RH_Category", cat)
+    baked.Name = "RH_Baked_" .. cat .. "_" .. sourceModel.Name
+
+    -- Ensure all parts are unanchored, non-colliding, and massless
+    for _, p in ipairs(baked:GetDescendants()) do
+        if p:IsA("BasePart") then
+            p.Anchored = false
+            p.CanCollide = false
+            p.Massless = true
+        end
+    end
+    if baked:IsA("BasePart") then
+        baked.Anchored = false
+        baked.CanCollide = false
+        baked.Massless = true
+    end
+
+    -- If accessory, attach natively via Humanoid
+    if baked:IsA("Accessory") and hum then
+        hum:AddAccessory(baked)
+        table.insert(bakedLayersBackup, deepClone(baked))
+        return baked
+    end
+
+    -- Target appropriate body limb for welding
     local targetLimb = nil
     if cat == "Skirts" then
         targetLimb = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso")
@@ -245,44 +294,20 @@ local function attachModelToCharacter(char, model, cat)
     elseif cat == "Wings" then
         targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
     else
-        targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Head") or char.PrimaryPart
+        targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("LowerTorso") or char.PrimaryPart
     end
 
-    if not targetLimb then return end
-
-    for _, p in ipairs(model:GetDescendants()) do
-        if p:IsA("BasePart") then
-            p.Anchored = false
-            p.CanCollide = false
-            p.Massless = true
-        end
-    end
-
-    -- Re-connect any welds that had a saved TargetLimb
-    local reconnectedLimbWeld = false
-    for _, w in ipairs(model:GetDescendants()) do
-        if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) then
-            local tName = w:GetAttribute("TargetLimb")
-            if tName then
-                local limb = char:FindFirstChild(tName)
-                if limb then
-                    w.Part0 = limb
-                    reconnectedLimbWeld = true
-                end
-            end
-        end
-    end
-
-    if not reconnectedLimbWeld then
-        local rootPart = model.PrimaryPart
-                      or model:FindFirstChild("Center")
-                      or model:FindFirstChild("Middle")
-                      or model:FindFirstChild("Handle")
-                      or model:FindFirstChildWhichIsA("BasePart")
+    if targetLimb then
+        local rootPart = baked.PrimaryPart
+                      or baked:FindFirstChild("Center")
+                      or baked:FindFirstChild("Middle")
+                      or baked:FindFirstChild("Handle")
+                      or baked:FindFirstChildWhichIsA("BasePart")
+                      or (baked:IsA("BasePart") and baked or nil)
 
         if rootPart then
             local hasWeld = false
-            for _, w in ipairs(model:GetDescendants()) do
+            for _, w in ipairs(baked:GetDescendants()) do
                 if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) then
                     if w.Part0 == targetLimb or w.Part1 == targetLimb then
                         hasWeld = true
@@ -293,7 +318,7 @@ local function attachModelToCharacter(char, model, cat)
 
             if not hasWeld then
                 local wc = Instance.new("WeldConstraint")
-                wc.Name = "CustomAutoStackWeld"
+                wc.Name = "RH_BakedWeld"
                 wc.Part0 = targetLimb
                 wc.Part1 = rootPart
                 wc.Parent = rootPart
@@ -301,60 +326,20 @@ local function attachModelToCharacter(char, model, cat)
         end
     end
 
-    model.Parent = char
-end
+    baked.Parent = char
 
-local function restoreAllSavedLayers()
-    local char = lp.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-
-    for slotKey, data in pairs(savedWornLayers) do
-        local isPresent = false
-        -- Check EquippedStorage folders:
-        for _, info in ipairs(getEquippedFolders()) do
-            for _, c in ipairs(info.folder:GetChildren()) do
-                if c:GetAttribute("RH_SlotKey") == slotKey then
-                    isPresent = true
-                    break
-                end
-            end
-            if isPresent then break end
-        end
-
-        -- Check Character:
-        if not isPresent then
-            for _, c in ipairs(char:GetChildren()) do
-                if c:GetAttribute("RH_SlotKey") == slotKey then
-                    isPresent = true
-                    break
-                end
-            end
-        end
-
-        if not isPresent and data.items and #data.items > 0 then
-            for _, bkp in ipairs(data.items) do
-                pcall(function()
-                    local clone = deepClone(bkp)
-                    if clone then
-                        clone:SetAttribute("CustomSavedLayer", true)
-                        clone:SetAttribute("RH_ClientLayer", true)
-                        clone:SetAttribute("RH_SlotKey", slotKey)
-                        clone:SetAttribute("RH_Category", data.category)
-                        clone:SetAttribute("RH_AssetName", data.assetName)
-                        if clone:IsA("Accessory") and hum then
-                            hum:AddAccessory(clone)
-                        else
-                            attachModelToCharacter(char, clone, data.category)
-                        end
-                    end
-                end)
-            end
+    -- Save backup in persistent table
+    local bkp = deepClone(baked)
+    if bkp then
+        if cat == "Heels" or cat == "Skirts" or cat == "Bodices" or cat == "Wings" then
+            bakedLayersBackup[cat] = bkp
+        else
+            table.insert(bakedLayersBackup, bkp)
         end
     end
 
-    -- If heels are active, keep character legs transparent
-    if savedWornLayers["Heels"] then
+    -- Handle legs transparency for heels
+    if cat == "Heels" then
         for _, lName in ipairs(legPartNames) do
             local limb = char:FindFirstChild(lName)
             if limb and limb:IsA("BasePart") then
@@ -362,39 +347,62 @@ local function restoreAllSavedLayers()
             end
         end
     end
+
+    return baked
 end
 
-task.spawn(function()
-    while task.wait(0.5) do
-        pcall(restoreAllSavedLayers)
-    end
-end)
-
-lp.CharacterAdded:Connect(function(newChar)
-    task.wait(1)
-    pcall(restoreAllSavedLayers)
-end)
-
-local function clearAllWornLayers()
+-- Scan the avatar and bake whatever is currently worn into client-protected layers
+local function lockCurrentAvatarLook(catHint)
     local char = lp.Character
-    -- Destroy from EquippedStorage folders
+    if not char then return 0 end
+    local count = 0
+
+    -- 1. Scan EquippedStorage folders
     for _, info in ipairs(getEquippedFolders()) do
-        for _, c in ipairs(info.folder:GetChildren()) do
-            if c:GetAttribute("CustomSavedLayer")
-               or c:GetAttribute("RH_ClientLayer")
-               or c:GetAttribute("RH_SlotKey")
-               or c.Name == "Wings_TRYON"
-               or c.Name:find("CustomWing") then
-                pcall(function() c:Destroy() end)
+        for _, model in ipairs(info.folder:GetChildren()) do
+            if not model:GetAttribute("RH_BakedLayer") then
+                local b = bakeModelToAvatar(model, info.category)
+                if b then count = count + 1 end
             end
         end
     end
-    -- Destroy from Character
+
+    -- 2. Scan Character for try-on models and accessories
+    for _, child in ipairs(char:GetChildren()) do
+        if not standardBodyParts[child.Name]
+           and child.Name ~= "Humanoid"
+           and child.Name ~= "Animate"
+           and not child:GetAttribute("RH_BakedLayer")
+           and not child:GetAttribute("DefaultRobloxAsset") then
+            if child:IsA("Accessory") or child:IsA("Model") or child.Name:find("TRYON") or child.Name:find("Wing") then
+                local b = bakeModelToAvatar(child, catHint or "Accessories")
+                if b then count = count + 1 end
+            end
+        end
+    end
+
+    return count
+end
+
+-- Clear all baked layers and temporary try-ons, resetting character to normal
+local function clearAllWornLayers()
+    local char = lp.Character
+
+    -- Remove from EquippedStorage folders
+    for _, info in ipairs(getEquippedFolders()) do
+        for _, c in ipairs(info.folder:GetChildren()) do
+            pcall(function() c:Destroy() end)
+        end
+    end
+
+    -- Remove from Character
     if char then
         for _, c in ipairs(char:GetChildren()) do
-            if c:GetAttribute("CustomSavedLayer")
+            if c:GetAttribute("RH_BakedLayer")
+               or c:GetAttribute("CustomSavedLayer")
                or c:GetAttribute("RH_ClientLayer")
                or c:GetAttribute("RH_SlotKey")
+               or c.Name:find("RH_Baked")
                or c.Name == "Wings_TRYON"
                or c.Name:find("CustomWing") then
                 pcall(function() c:Destroy() end)
@@ -407,11 +415,32 @@ local function clearAllWornLayers()
             end
         end
     end
-    savedWornLayers = {}
+
+    bakedLayersBackup = {}
     if exitPreviewRemote then
         pcall(function() exitPreviewRemote:FireServer() end)
     end
 end
+
+-- Auto-restore baked layers upon character respawn
+lp.CharacterAdded:Connect(function(newChar)
+    task.wait(1.2)
+    local hum = newChar:WaitForChild("Humanoid", 10)
+    for k, bkp in pairs(bakedLayersBackup) do
+        pcall(function()
+            local clone = deepClone(bkp)
+            if clone then
+                clone.Parent = newChar
+                local cat = clone:GetAttribute("RH_Category") or "Custom"
+                if clone:IsA("Accessory") and hum then
+                    hum:AddAccessory(clone)
+                else
+                    bakeModelToAvatar(clone, cat)
+                end
+            end
+        end)
+    end
+end)
 
 -- ============================================================
 -- 3. ITEM CATALOG WITH DYNAMIC SERVER SYNCHRONIZATION
@@ -1022,43 +1051,6 @@ local function equipItem(item)
         return equipWings(item)
     end
 
-    -- Slot replacement: single-slot items replace their own slot, accessories stack
-    local slotKey = (itemCat == "Heels" or itemCat == "Skirts" or itemCat == "Bodices") and itemCat or ("Acc_" .. itemName)
-
-    -- Destroy old instances of this slot from EquippedStorage and Character
-    for _, info in ipairs(getEquippedFolders()) do
-        for _, c in ipairs(info.folder:GetChildren()) do
-            if c:GetAttribute("RH_SlotKey") == slotKey then
-                pcall(function() c:Destroy() end)
-            end
-        end
-    end
-    for _, c in ipairs(char:GetChildren()) do
-        if c:GetAttribute("RH_SlotKey") == slotKey then
-            pcall(function() c:Destroy() end)
-        end
-    end
-    savedWornLayers[slotKey] = nil
-
-    -- Snapshot all other active layers to keep them preserved
-    local otherLayers = {}
-    for sk, data in pairs(savedWornLayers) do
-        if sk ~= slotKey and data.items and #data.items > 0 then
-            otherLayers[sk] = data
-        end
-    end
-
-    -- Snapshot pre-existing children across EquippedStorage AND Character
-    local preExisting = {}
-    for _, info in ipairs(getEquippedFolders()) do
-        for _, c in ipairs(info.folder:GetChildren()) do
-            preExisting[c] = true
-        end
-    end
-    for _, c in ipairs(char:GetChildren()) do
-        preExisting[c] = true
-    end
-
     -- 1. Direct Server Remote
     if previewItemRemote then
         pcall(function()
@@ -1074,143 +1066,14 @@ local function equipItem(item)
         end
     end)
 
-    -- Capture replication from EquippedStorage & Character
+    -- Auto-bake the newly spawned item into a permanent layer after it replicates
     task.spawn(function()
         disableFreezeOnlyConnections()
         hideTryOnOverlays()
 
-        local newlyAdded = {}
-        local startT = tick()
-        while tick() - startT < 3.0 do
-            task.wait(0.08)
-            char = lp.Character
-
-            -- Scan EquippedStorage folders
-            for _, info in ipairs(getEquippedFolders()) do
-                for _, c in ipairs(info.folder:GetChildren()) do
-                    if not preExisting[c] and not c:GetAttribute("RH_ClientLayer") then
-                        if not table.find(newlyAdded, c) then
-                            table.insert(newlyAdded, c)
-                        end
-                    end
-                end
-            end
-
-            -- Scan Character directly
-            if char then
-                for _, c in ipairs(char:GetChildren()) do
-                    if not preExisting[c] and not c:GetAttribute("RH_ClientLayer") then
-                        if not standardBodyParts[c.Name] and c.Name ~= "Humanoid" and c.Name ~= "Animate" then
-                            if not table.find(newlyAdded, c) then
-                                table.insert(newlyAdded, c)
-                            end
-                        end
-                    end
-                end
-            end
-
-            if #newlyAdded > 0 then
-                task.wait(0.2)
-                break
-            end
-        end
-
-        local backups = {}
-        local names   = {}
-        for _, inst in ipairs(newlyAdded) do
-            pcall(function()
-                inst.Archivable = true
-                inst:SetAttribute("CustomSavedLayer", true)
-                inst:SetAttribute("RH_SlotKey", slotKey)
-                inst:SetAttribute("RH_Category", itemCat)
-                inst:SetAttribute("RH_AssetName", itemName)
-
-                -- Save TargetLimb for any weld attached to the character rig
-                char = lp.Character
-                if char then
-                    for _, w in ipairs(inst:GetDescendants()) do
-                        if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) then
-                            if w.Part0 and w.Part0.Parent == char then
-                                w:SetAttribute("TargetLimb", w.Part0.Name)
-                            elseif w.Part1 and w.Part1.Parent == char then
-                                w:SetAttribute("TargetLimb", w.Part1.Name)
-                            end
-                        end
-                    end
-                end
-
-                table.insert(backups, deepClone(inst))
-                table.insert(names, inst.Name)
-            end)
-        end
-
-        if #backups > 0 then
-            savedWornLayers[slotKey] = {
-                items     = backups,
-                names     = names,
-                category  = itemCat,
-                assetName = itemName
-            }
-        end
-
-        -- Auto-stack all other preserved layers onto the character!
-        char = lp.Character
-        if char then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            for sk, data in pairs(otherLayers) do
-                local isPresent = false
-                -- Check EquippedStorage folders:
-                for _, info in ipairs(getEquippedFolders()) do
-                    for _, c in ipairs(info.folder:GetChildren()) do
-                        if c:GetAttribute("RH_SlotKey") == sk then
-                            isPresent = true
-                            break
-                        end
-                    end
-                    if isPresent then break end
-                end
-
-                -- Check Character:
-                if not isPresent then
-                    for _, c in ipairs(char:GetChildren()) do
-                        if c:GetAttribute("RH_SlotKey") == sk then
-                            isPresent = true
-                            break
-                        end
-                    end
-                end
-
-                if not isPresent and data.items then
-                    for _, bkp in ipairs(data.items) do
-                        pcall(function()
-                            local fresh = deepClone(bkp)
-                            if fresh then
-                                fresh:SetAttribute("CustomSavedLayer", true)
-                                fresh:SetAttribute("RH_ClientLayer", true)
-                                fresh:SetAttribute("RH_SlotKey", sk)
-                                fresh:SetAttribute("RH_Category", data.category)
-                                fresh:SetAttribute("RH_AssetName", data.assetName)
-                                if fresh:IsA("Accessory") and hum then
-                                    hum:AddAccessory(fresh)
-                                else
-                                    attachModelToCharacter(char, fresh, data.category)
-                                end
-                            end
-                        end)
-                    end
-                end
-            end
-
-            -- Ensure character legs transparency for heels
-            if savedWornLayers["Heels"] then
-                for _, lName in ipairs(legPartNames) do
-                    local limb = char:FindFirstChild(lName)
-                    if limb and limb:IsA("BasePart") then
-                        limb.Transparency = 1
-                    end
-                end
-            end
-        end
+        -- Wait for server replication
+        task.wait(1.0)
+        lockCurrentAvatarLook(itemCat)
 
         disableFreezeOnlyConnections()
         hideTryOnOverlays()
@@ -1624,15 +1487,30 @@ local colorBtn = mk("TextButton", {
 corner(4, colorBtn)
 stroke(1, C.border, colorBtn)
 
--- Row 2: CLEAR ALL
-local clearLayersBtn = mk("TextButton", {
-	Size             = UDim2.new(1, -12, 0, 21),
+-- Row 2: BAKE / LOCK (left) and CLEAR ALL (right)
+local bakeBtn = mk("TextButton", {
+	Size             = UDim2.new(0.48, -4, 0, 21),
 	Position         = UDim2.new(0, 6, 0, 111),
+	BackgroundColor3 = C.btn,
+	Text             = "BAKE / LOCK",
+	TextColor3       = C.text,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 7,
+	BorderSizePixel  = 0,
+	ZIndex           = 26,
+	AutoButtonColor  = false,
+}, Inspector)
+corner(4, bakeBtn)
+stroke(1, C.border, bakeBtn)
+
+local clearLayersBtn = mk("TextButton", {
+	Size             = UDim2.new(0.48, -4, 0, 21),
+	Position         = UDim2.new(0.5, 2, 0, 111),
 	BackgroundColor3 = C.btn,
 	Text             = "CLEAR ALL",
 	TextColor3       = C.sub,
 	Font             = Enum.Font.GothamBold,
-	TextSize         = 7.5,
+	TextSize         = 7,
 	BorderSizePixel  = 0,
 	ZIndex           = 26,
 	AutoButtonColor  = false,
@@ -1685,6 +1563,16 @@ local function handleColor()
 	end
 end
 colorBtn.Activated:Connect(handleColor)
+
+bakeBtn.Activated:Connect(function()
+	local cat = selectedItem and selectedItem.cat or "Accessories"
+	local n = lockCurrentAvatarLook(cat)
+	if n > 0 then
+		setStatus("Layer Locked & Saved!", C.text)
+	else
+		setStatus("Current Look Baked!", C.text)
+	end
+end)
 
 clearLayersBtn.Activated:Connect(function()
 	clearAllWornLayers()
@@ -1836,4 +1724,4 @@ setActiveCategory("Heels")
 Main.Visible = true
 updateToggleBtnState()
 
-print("[RH Wardrobe v26] Multi-wear auto-stacking, universal coloring & image sorting active.")
+print("[RH Wardrobe v27] Multi-wear auto-stacking, universal coloring & image sorting active.")
