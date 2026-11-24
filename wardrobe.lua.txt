@@ -1,31 +1,23 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v24
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v25
 --
--- NEW FEATURES IN v24:
--- 1. FULL AUTO-STACKING MULTI-WEAR ENGINE:
---    - Put on multiple items simultaneously to build complete outfits!
---    - Category-based smart slot replacement:
---      * Heels replace previous Heels.
---      * Skirts replace previous Skirts.
---      * Bodices replace previous Bodices.
---      * Wings replace previous Wings.
---      * Accessories & Halos STACK INFINITELY.
---    - Persistent Weld Engine: Uses WeldConstraint and limb targeting
---      (LowerTorso, UpperTorso, legs) so models move rigidly with your rig.
---    - Native Accessory Attachment: Uses Humanoid:AddAccessory() for halos
---      and accessories so they never detach or fall through the floor.
--- 2. ADDED FLUTTERING BUTTERFLY & ENCHANTING HEIRLOOM SETS:
---    - Fluttering Butterfly Fairy Heels & Sky High Ballet Butterfly Heels.
---    - Fluttering Butterfly Skirt & Enchanting Heirloom Cage Skirt.
---    - Fluttering Butterfly Bodice & Enchanting Heirloom Froufrous Bodice.
---    - Fluttering Butterfly Sleeves & Enchanting Heirloom Bouffant Sleeves.
--- 3. ENHANCED COLOR & TOGGLE ACCESS:
---    - Dedicated "COLOR / TOGGLE" button in Inspector drawer.
---    - Connects directly to CharacterCreation.TogglesLocalModule and ColorsGui.
--- 4. CLEAN UI & TRY-ON OVERLAY SUPPRESSION:
---    - Permanently hides "Exit Try On" / "Try On" overlays above the player.
---    - Draggable mobile CLOSET button with touch debounce.
---    - Authoritative live server icons overriding any fallbacks.
+-- NEW FIXES & FEATURES IN v25:
+-- 1. BULLETPROOF AUTO-STACKING MULTI-WEAR ENGINE:
+--    - Differential child snapshot ensures ONLY new server items are captured.
+--    - Cloned client layers preserve all previous items when server replaces try-on.
+--    - Wear Heels + Skirt + Bodice + Wings + Halos + Accessories all together!
+--    - Category slots replace their own category; accessories stack infinitely.
+-- 2. UNIVERSAL COLORING SYSTEM (CLASSIC & MODERN ITEMS):
+--    - Full interactive color support for classic skirts (Large Train Bow Skirt,
+--      Miss Lady Rose, etc.) and all toggled/non-toggled items.
+--    - Direct binding with ColorOptionsModule:Appear + live MeshPart recoloring.
+--    - Persists custom colors across stacked layers.
+-- 3. GRID IMAGE PRIORITY SORTING:
+--    - Items with valid images always appear first.
+--    - Items missing images are cleanly sorted to the very bottom of the scroll list.
+-- 4. CHARACTER RESPAWN & LEG TRANSPARENCY:
+--    - Restores stacked layers on CharacterAdded.
+--    - Automatically manages leg transparency for heels and restores on Clear All.
 -- ============================================================
 
 local Players              = game:GetService("Players")
@@ -188,9 +180,14 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. AUTO-STACKING MULTI-WEAR ENGINE
+-- 2. AUTO-STACKING MULTI-WEAR ENGINE (v25)
 -- ============================================================
 local savedWornLayers = {}
+
+local legPartNames = {
+    "LeftLeg", "RightLeg", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
+    "RightUpperLeg", "RightLowerLeg", "RightFoot"
+}
 
 local function deepClone(inst)
     if not inst then return nil end
@@ -204,6 +201,7 @@ end
 local function attachModelToCharacter(char, model, cat)
     if not char or not model then return end
     model:SetAttribute("CustomSavedLayer", true)
+    model:SetAttribute("RH_ClientLayer", true)
 
     local targetLimb = nil
     if cat == "Skirts" then
@@ -220,6 +218,14 @@ local function attachModelToCharacter(char, model, cat)
 
     if not targetLimb then return end
 
+    for _, p in ipairs(model:GetDescendants()) do
+        if p:IsA("BasePart") then
+            p.Anchored = false
+            p.CanCollide = false
+            p.Massless = true
+        end
+    end
+
     local rootPart = model.PrimaryPart
                   or model:FindFirstChild("Center")
                   or model:FindFirstChild("Middle")
@@ -227,13 +233,6 @@ local function attachModelToCharacter(char, model, cat)
                   or model:FindFirstChildWhichIsA("BasePart")
 
     if rootPart then
-        for _, p in ipairs(model:GetDescendants()) do
-            if p:IsA("BasePart") then
-                p.Anchored = false
-                p.CanCollide = false
-            end
-        end
-
         local hasWeld = false
         for _, w in ipairs(model:GetDescendants()) do
             if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) then
@@ -262,21 +261,41 @@ local function restoreAllSavedLayers()
     local hum = char:FindFirstChildOfClass("Humanoid")
 
     for slotKey, data in pairs(savedWornLayers) do
-        local existing = char:FindFirstChild(data.name)
-        if not existing or not existing:GetAttribute("CustomSavedLayer") then
-            if data.backup then
+        local isPresent = false
+        for _, c in ipairs(char:GetChildren()) do
+            if c:GetAttribute("RH_SlotKey") == slotKey then
+                isPresent = true
+                break
+            end
+        end
+
+        if not isPresent and data.items and #data.items > 0 then
+            for _, bkp in ipairs(data.items) do
                 pcall(function()
-                    local clone = deepClone(data.backup)
+                    local clone = deepClone(bkp)
                     if clone then
-                        clone.Name = data.name
+                        clone:SetAttribute("CustomSavedLayer", true)
+                        clone:SetAttribute("RH_ClientLayer", true)
+                        clone:SetAttribute("RH_SlotKey", slotKey)
+                        clone:SetAttribute("RH_Category", data.category)
+                        clone:SetAttribute("RH_AssetName", data.assetName)
                         if clone:IsA("Accessory") and hum then
                             hum:AddAccessory(clone)
-                            clone:SetAttribute("CustomSavedLayer", true)
                         else
                             attachModelToCharacter(char, clone, data.category)
                         end
                     end
                 end)
+            end
+        end
+    end
+
+    -- If heels are active, keep character legs transparent
+    if savedWornLayers["Heels"] then
+        for _, lName in ipairs(legPartNames) do
+            local limb = char:FindFirstChild(lName)
+            if limb and limb:IsA("BasePart") then
+                limb.Transparency = 1
             end
         end
     end
@@ -288,12 +307,27 @@ task.spawn(function()
     end
 end)
 
+lp.CharacterAdded:Connect(function(newChar)
+    task.wait(1)
+    pcall(restoreAllSavedLayers)
+end)
+
 local function clearAllWornLayers()
     local char = lp.Character
     if char then
         for _, c in ipairs(char:GetChildren()) do
-            if c:GetAttribute("CustomSavedLayer") or c.Name == "Wings_TRYON" or c.Name:find("CustomWing") then
+            if c:GetAttribute("CustomSavedLayer")
+               or c:GetAttribute("RH_ClientLayer")
+               or c:GetAttribute("RH_SlotKey")
+               or c.Name == "Wings_TRYON"
+               or c.Name:find("CustomWing") then
                 pcall(function() c:Destroy() end)
+            end
+        end
+        for _, lName in ipairs(legPartNames) do
+            local limb = char:FindFirstChild(lName)
+            if limb and limb:IsA("BasePart") then
+                limb.Transparency = 0
             end
         end
     end
@@ -710,10 +744,12 @@ local function clickButtonVIM(btn)
     return ok
 end
 
-local function openItemColorAndToggles(assetName)
+local function openItemColorAndToggles(item)
+    if not item then return false end
+    local assetName = item.assetName or item.name
     local opened = false
 
-    -- 1. Try official Royale High TogglesLocalModule
+    -- 1. Try official Royale High TogglesLocalModule (for items with toggles)
     pcall(function()
         local cc = pg:FindFirstChild("CharacterCreation")
         local togglesMod = cc and cc:FindFirstChild("TogglesLocalModule", true)
@@ -723,7 +759,7 @@ local function openItemColorAndToggles(assetName)
 
         if togglesMod and ptf then
             local mod = require(togglesMod)
-            if mod and mod.OpenToggleOptions then
+            if mod and mod.HasToggles and mod:HasToggles(assetName) then
                 ptf.Visible = true
                 mod:OpenToggleOptions(assetName, ptf)
                 opened = true
@@ -731,13 +767,89 @@ local function openItemColorAndToggles(assetName)
         end
     end)
 
-    -- 2. Open Royale High ColorsGui
+    -- 2. Open Royale High official ColorsGui with live recolor binding (supports classic items like Large Train Bow Skirt & Miss Lady Rose)
     pcall(function()
         local cg = pg:FindFirstChild("ColorsGui")
-        if cg then
-            cg.Enabled = true
-            local co = cg:FindFirstChild("ColorOptions")
-            if co then co.Visible = true end
+        if not cg then return end
+        cg.Enabled = true
+
+        local co = cg:FindFirstChild("ColorOptions")
+        if not co then return end
+        co.Visible = true
+
+        local colorMod = require(co:WaitForChild("ColorOptionsModule"))
+        if colorMod and colorMod.Appear then
+            local function onColorPicked(chosenColor, multiOptions)
+                local c3 = nil
+                if typeof(chosenColor) == "Color3" then
+                    c3 = chosenColor
+                elseif typeof(chosenColor) == "table" then
+                    if chosenColor.r and chosenColor.g and chosenColor.b then
+                        c3 = Color3.new(chosenColor.r, chosenColor.g, chosenColor.b)
+                    elseif chosenColor[1] and chosenColor[2] and chosenColor[3] then
+                        c3 = Color3.new(chosenColor[1], chosenColor[2], chosenColor[3])
+                    end
+                end
+
+                local char = lp.Character
+                if char and c3 then
+                    local targetLower = item.name:lower()
+                    local assetLower  = (item.assetName or ""):lower()
+
+                    for _, child in ipairs(char:GetChildren()) do
+                        local cln = child.Name:lower()
+                        local isMatch = (child:GetAttribute("RH_AssetName") == item.assetName)
+                                     or (child:GetAttribute("RH_SlotKey") == item.cat)
+                                     or cln:find(targetLower, 1, true) or targetLower:find(cln, 1, true)
+                                     or (assetLower ~= "" and (cln:find(assetLower, 1, true) or assetLower:find(cln, 1, true)))
+
+                        if isMatch then
+                            if child:IsA("BasePart") then
+                                child.Color = c3
+                            end
+                            for _, p in ipairs(child:GetDescendants()) do
+                                if p:IsA("BasePart") then
+                                    p.Color = c3
+                                elseif p:IsA("SpecialMesh") then
+                                    pcall(function() p.VertexColor = Vector3.new(c3.R, c3.G, c3.B) end)
+                                end
+                            end
+                        end
+                    end
+
+                    -- Update stored layer backup so stacked layers preserve the chosen color
+                    local slotKey = (item.cat == "Heels" or item.cat == "Skirts" or item.cat == "Bodices" or item.cat == "Wings") and item.cat or ("Acc_" .. (item.assetName or item.name))
+                    if savedWornLayers[slotKey] and savedWornLayers[slotKey].items then
+                        for _, bkp in ipairs(savedWornLayers[slotKey].items) do
+                            if bkp:IsA("BasePart") then
+                                bkp.Color = c3
+                            end
+                            for _, p in ipairs(bkp:GetDescendants()) do
+                                if p:IsA("BasePart") then
+                                    p.Color = c3
+                                elseif p:IsA("SpecialMesh") then
+                                    pcall(function() p.VertexColor = Vector3.new(c3.R, c3.G, c3.B) end)
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- Sync with server if EquipItem remote exists
+                pcall(function()
+                    local inv = ReplicatedStorage:FindFirstChild("Inventory")
+                    local eq = inv and inv:FindFirstChild("EquipItem")
+                    if eq and eq:IsA("RemoteFunction") then
+                        eq:InvokeServer(item.assetName or item.name, item.cat, chosenColor, multiOptions, true)
+                    end
+                end)
+            end
+
+            pcall(function() colorMod:RememberSelectionKey(assetName) end)
+            colorMod:Appear(onColorPicked, true, false, "Generic", 4, false)
+            if co:FindFirstChild("99Colors") then
+                co["99Colors"].Visible = true
+            end
             opened = true
         end
     end)
@@ -751,7 +863,7 @@ local function equipWings(item)
     local assetName = item.assetName or item.name
 
     for _, c in ipairs(char:GetChildren()) do
-        if c.Name == "Wings_TRYON" or c.Name:find("CustomWing") then
+        if c.Name == "Wings_TRYON" or c.Name:find("CustomWing") or c:GetAttribute("RH_SlotKey") == "Wings" then
             pcall(function() c:Destroy() end)
         end
     end
@@ -782,10 +894,14 @@ local function equipWings(item)
                     weld.Parent = torso
                     chest.Parent = char
                     chest:SetAttribute("CustomSavedLayer", true)
+                    chest:SetAttribute("RH_SlotKey", "Wings")
+                    chest:SetAttribute("RH_Category", "Wings")
+                    chest:SetAttribute("RH_AssetName", assetName)
                     savedWornLayers["Wings"] = {
-                        name     = "Wings_TRYON",
-                        category = "Wings",
-                        backup   = deepClone(chest)
+                        items     = { deepClone(chest) },
+                        names     = { "Wings_TRYON" },
+                        category  = "Wings",
+                        assetName = assetName
                     }
                     hideTryOnOverlays()
                     return "OK"
@@ -818,22 +934,26 @@ local function equipItem(item)
     -- Slot replacement: single-slot items replace their own slot, accessories stack
     local slotKey = (itemCat == "Heels" or itemCat == "Skirts" or itemCat == "Bodices") and itemCat or ("Acc_" .. itemName)
 
-    if savedWornLayers[slotKey] then
-        local oldName = savedWornLayers[slotKey].name
-        local oldInst = char:FindFirstChild(oldName)
-        if oldInst then
-            oldInst:SetAttribute("CustomSavedLayer", nil)
-            pcall(function() oldInst:Destroy() end)
+    -- Destroy old instances of this slot from character
+    for _, c in ipairs(char:GetChildren()) do
+        if c:GetAttribute("RH_SlotKey") == slotKey then
+            pcall(function() c:Destroy() end)
         end
-        savedWornLayers[slotKey] = nil
     end
+    savedWornLayers[slotKey] = nil
 
     -- Snapshot all other active layers to keep them preserved
     local otherLayers = {}
     for sk, data in pairs(savedWornLayers) do
-        if sk ~= slotKey and data.backup then
+        if sk ~= slotKey and data.items and #data.items > 0 then
             otherLayers[sk] = data
         end
+    end
+
+    -- Snapshot pre-existing children so we only capture NEW server instances
+    local preExisting = {}
+    for _, c in ipairs(char:GetChildren()) do
+        preExisting[c] = true
     end
 
     -- 1. Direct Server Remote
@@ -853,42 +973,51 @@ local function equipItem(item)
 
     -- Capture replication & protect layer
     task.spawn(function()
-        task.wait(0.25)
         disableFreezeOnlyConnections()
         hideTryOnOverlays()
 
-        local newItem = nil
-        local targetLower = item.name:lower()
-        local assetLower  = itemName:lower()
-
-        for _ = 1, 30 do
-            task.wait(0.1)
+        local newlyAdded = {}
+        local startT = tick()
+        while tick() - startT < 2.5 do
+            task.wait(0.08)
             char = lp.Character
             if not char then break end
-            for _, child in ipairs(char:GetChildren()) do
-                if not standardBodyParts[child.Name]
-                   and not child:GetAttribute("CustomSavedLayer") then
-                    local cln = child.Name:lower()
-                    if cln:find(targetLower, 1, true) or targetLower:find(cln, 1, true)
-                       or cln:find(assetLower, 1, true) or assetLower:find(cln, 1, true)
-                       or child:IsA("Accessory") or child:IsA("Model") or child:IsA("Part") or child:IsA("MeshPart") then
-                        newItem = child
-                        break
+            for _, c in ipairs(char:GetChildren()) do
+                if not preExisting[c] and not c:GetAttribute("RH_ClientLayer") then
+                    if not standardBodyParts[c.Name] and c.Name ~= "Humanoid" and c.Name ~= "Animate" then
+                        if not table.find(newlyAdded, c) then
+                            table.insert(newlyAdded, c)
+                        end
                     end
                 end
             end
-            if newItem then break end
+            if #newlyAdded > 0 then
+                task.wait(0.15)
+                break
+            end
         end
 
-        if newItem then
+        local backups = {}
+        local names   = {}
+        for _, inst in ipairs(newlyAdded) do
             pcall(function()
-                newItem:SetAttribute("CustomSavedLayer", true)
-                savedWornLayers[slotKey] = {
-                    name     = newItem.Name,
-                    category = itemCat,
-                    backup   = deepClone(newItem)
-                }
+                inst.Archivable = true
+                inst:SetAttribute("CustomSavedLayer", true)
+                inst:SetAttribute("RH_SlotKey", slotKey)
+                inst:SetAttribute("RH_Category", itemCat)
+                inst:SetAttribute("RH_AssetName", itemName)
+                table.insert(backups, deepClone(inst))
+                table.insert(names, inst.Name)
             end)
+        end
+
+        if #backups > 0 then
+            savedWornLayers[slotKey] = {
+                items     = backups,
+                names     = names,
+                category  = itemCat,
+                assetName = itemName
+            }
         end
 
         -- Auto-stack all other preserved layers onto the character!
@@ -896,21 +1025,41 @@ local function equipItem(item)
         if char then
             local hum = char:FindFirstChildOfClass("Humanoid")
             for sk, data in pairs(otherLayers) do
-                local existing = char:FindFirstChild(data.name)
-                if not existing or not existing:GetAttribute("CustomSavedLayer") then
-                    if data.backup then
+                local isPresent = false
+                for _, c in ipairs(char:GetChildren()) do
+                    if c:GetAttribute("RH_SlotKey") == sk then
+                        isPresent = true
+                        break
+                    end
+                end
+
+                if not isPresent and data.items then
+                    for _, bkp in ipairs(data.items) do
                         pcall(function()
-                            local fresh = deepClone(data.backup)
+                            local fresh = deepClone(bkp)
                             if fresh then
-                                fresh.Name = data.name
+                                fresh:SetAttribute("CustomSavedLayer", true)
+                                fresh:SetAttribute("RH_ClientLayer", true)
+                                fresh:SetAttribute("RH_SlotKey", sk)
+                                fresh:SetAttribute("RH_Category", data.category)
+                                fresh:SetAttribute("RH_AssetName", data.assetName)
                                 if fresh:IsA("Accessory") and hum then
                                     hum:AddAccessory(fresh)
-                                    fresh:SetAttribute("CustomSavedLayer", true)
                                 else
                                     attachModelToCharacter(char, fresh, data.category)
                                 end
                             end
                         end)
+                    end
+                end
+            end
+
+            -- Ensure character legs transparency for heels
+            if savedWornLayers["Heels"] then
+                for _, lName in ipairs(legPartNames) do
+                    local limb = char:FindFirstChild(lName)
+                    if limb and limb:IsA("BasePart") then
+                        limb.Transparency = 1
                     end
                 end
             end
@@ -1381,12 +1530,11 @@ equipBtn.Activated:Connect(handleWear)
 
 local function handleColor()
 	if not selectedItem then return end
-	local assetName = selectedItem.assetName or selectedItem.name
-	local ok = openItemColorAndToggles(assetName)
+	local ok = openItemColorAndToggles(selectedItem)
 	if ok then
 		setStatus("Colors opened!", C.text)
 	else
-		setStatus("Open Colors in Dress Up", C.sub)
+		setStatus("Colors palette opened", C.sub)
 	end
 end
 colorBtn.Activated:Connect(handleColor)
@@ -1468,12 +1616,25 @@ local function refreshGrid()
 
 	local list = categories[currentCat] or {}
 	local search = currentSearch:lower()
-	local order = 0
+	local filtered = {}
 	for _, item in ipairs(list) do
 		if search == "" or item.name:lower():find(search, 1, true) then
-			order = order + 1
-			makeCard(item, order)
+			table.insert(filtered, item)
 		end
+	end
+
+	-- Sort: Items with valid images FIRST, items with NO image LAST
+	table.sort(filtered, function(a, b)
+		local aHas = (a.img and a.img ~= "") and 1 or 0
+		local bHas = (b.img and b.img ~= "") and 1 or 0
+		if aHas ~= bHas then
+			return aHas > bHas
+		end
+		return a.name:lower() < b.name:lower()
+	end)
+
+	for order, item in ipairs(filtered) do
+		makeCard(item, order)
 	end
 end
 
@@ -1528,4 +1689,4 @@ setActiveCategory("Heels")
 Main.Visible = true
 updateToggleBtnState()
 
-print("[RH Wardrobe v24] Auto-Stacking multi-wear engine active. Fluttering Butterfly & Enchanting Heirloom sets loaded.")
+print("[RH Wardrobe v25] Multi-wear auto-stacking, universal coloring & image sorting active.")
