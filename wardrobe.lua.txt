@@ -1,5 +1,5 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v29
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v32
 --
 -- NEW FIXES & FEATURES IN v28:
 -- 1. PRECISION CLOTHING SCANNER (ZERO HAIR CLONING):
@@ -23,6 +23,7 @@ local Players              = game:GetService("Players")
 local RunService           = game:GetService("RunService")
 local ContextActionService = game:GetService("ContextActionService")
 local ReplicatedStorage    = game:GetService("ReplicatedStorage")
+local UserInputService     = game:GetService("UserInputService")
 local lp                   = Players.LocalPlayer
 local pg                   = lp:WaitForChild("PlayerGui", 20)
 
@@ -127,41 +128,109 @@ local standardBodyParts = {
     ["RightUpperLeg"]=true,["RightLowerLeg"]=true,["RightFoot"]=true
 }
 
-local function unanchorCharacter()
+local function releasePlayerMovement()
     local char = lp.Character
-    if char then
-        local pp = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
-        if pp and pp.Anchored then pp.Anchored = false end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp and hrp.Anchored then hrp.Anchored = false end
+    if not char then return end
 
-        for _, part in ipairs(char:GetChildren()) do
-            if part:IsA("BasePart") and part.Anchored then
-                part.Anchored = false
+    -- 1. Unanchor all character parts and primary part
+    local pp = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
+    if pp and pp.Anchored then pp.Anchored = false end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp.Anchored then hrp.Anchored = false end
+
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") and part.Anchored then
+            part.Anchored = false
+        end
+    end
+
+    -- 2. Humanoid walkspeed, jumping, sitting, platformstand
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        if hum.PlatformStand then hum.PlatformStand = false end
+        if hum.Sit then hum.Sit = false end
+        if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+        if hum.JumpPower and hum.JumpPower < 50 then hum.JumpPower = 50 end
+        if hum.JumpHeight and hum.JumpHeight < 7.2 then hum.JumpHeight = 7.2 end
+
+        -- Stop forced idle or freeze animations
+        for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+            local tn = track.Animation and track.Animation.Name:lower() or ""
+            if tn:find("idle") or tn:find("stand") or tn:find("freeze") then
+                pcall(function() track:Stop(0.05) end)
             end
         end
+    end
 
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            if hum.PlatformStand then hum.PlatformStand = false end
-            if hum.Sit then hum.Sit = false end
-            if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+    -- 3. Unbind all 10 known ContextActionService freeze actions in Royale High
+    local freezeActions = {
+        "ControlsDisabled", "DisableControlsCutscene", "IntroScriptDisableControls",
+        "RH3CutsceneControlsDisabled", "FreezeMovement", "ShopFreeze", "TryOnFreeze",
+        "DisableMovement", "CharacterCreationFreeze", "TryOnControl"
+    }
+    for _, act in ipairs(freezeActions) do
+        pcall(function() ContextActionService:UnbindAction(act) end)
+    end
 
-            -- Auto-stop forced idle animation when walking
-            if hum.MoveDirection.Magnitude > 0 then
-                for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
-                    if track.Animation and (track.Animation.Name:lower():find("idle") or track.Animation.Name:lower():find("stand")) then
-                        pcall(function() track:Stop(0.1) end)
-                    end
+    -- 4. Enable Roblox PlayerModule controls
+    pcall(function()
+        local pm = lp.PlayerScripts:FindFirstChild("PlayerModule")
+        if pm then
+            local mod = require(pm)
+            if mod and mod.GetControls then
+                local ctrl = mod:GetControls()
+                if ctrl and ctrl.Enable then
+                    ctrl:Enable()
                 end
             end
         end
+    end)
+
+    -- 5. Terminate Royale High's internal try-on anchoring while-loop by firing ExitPreview
+    if exitPreviewRemote then
+        pcall(function() exitPreviewRemote:FireServer() end)
+    end
+
+    -- 6. Hide all TryOn billboard HUD elements
+    pcall(hideTryOnOverlays)
+end
+
+local function unanchorCharacter()
+    local char = lp.Character
+    if not char then return end
+
+    local pp = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
+    if pp and pp.Anchored then pp.Anchored = false end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp.Anchored then hrp.Anchored = false end
+
+    for _, part in ipairs(char:GetChildren()) do
+        if part:IsA("BasePart") and part.Anchored then
+            part.Anchored = false
+        end
+    end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        if hum.PlatformStand then hum.PlatformStand = false end
+        if hum.Sit then hum.Sit = false end
+        if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
     end
 end
 
 RunService.RenderStepped:Connect(unanchorCharacter)
 RunService.Stepped:Connect(unanchorCharacter)
 RunService.Heartbeat:Connect(unanchorCharacter)
+
+-- Instant unfreeze when tapping screen or moving joystick
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if input.UserInputType == Enum.UserInputType.Touch
+       or input.KeyCode == Enum.KeyCode.W or input.KeyCode == Enum.KeyCode.A
+       or input.KeyCode == Enum.KeyCode.S or input.KeyCode == Enum.KeyCode.D
+       or input.KeyCode == Enum.KeyCode.Space then
+        releasePlayerMovement()
+    end
+end)
 
 task.spawn(function()
     while task.wait(0.5) do
@@ -174,15 +243,18 @@ task.spawn(function()
             ContextActionService:UnbindAction("DisableMovement")
             ContextActionService:UnbindAction("CharacterCreationFreeze")
             ContextActionService:UnbindAction("TryOnControl")
+            ContextActionService:UnbindAction("ControlsDisabled")
+            ContextActionService:UnbindAction("RH3CutsceneControlsDisabled")
         end)
     end
 end)
 
 -- ============================================================
--- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v29)
+-- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v32)
 -- ============================================================
 local bakedLayersBackup = {}
 local defaultAvatarInstances = {}
+local findItemImage = nil -- Forward declaration for catalog thumbnail lookup
 
 local legPartNames = {
     "LeftLeg", "RightLeg", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
@@ -345,19 +417,30 @@ local function findRoyaleHighItemsOnAvatar()
 end
 
 -- 1:1 Single-Clone Layer Baker Engine: Clones exactly 1 instance per slot, matching relative CFrames & welds 1:1
-local function bakeItemToAvatar(sourceItem, category, customSlotKey)
+local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
     if not sourceItem then return nil end
     local char = lp.Character
     if not char then return nil end
 
     local cat = category or "Accessories"
-    local slotKey = customSlotKey or (
-        (cat == "Heels" or cat == "Skirts" or cat == "Bodices" or cat == "Wings" or cat == "Halos")
-        and cat
-        or ("Acc_" .. sourceItem.Name)
-    )
+    local slotKey = nil
+    if customSlotKey then
+        slotKey = customSlotKey
+    elseif cat == "Heels" or cat == "Skirts" or cat == "Bodices" or cat == "Wings" or cat == "Halos" then
+        slotKey = cat
+    else
+        -- Multi-Accessory Engine: Every accessory gets its own distinct slot key so you can wear unlimited accessories!
+        local accName = (itemData and itemData.name) or sourceItem.Name
+        if accName == "Accessory" or accName == "Model" or accName == "Folder" or accName == "Part" then
+            local sub = sourceItem:FindFirstChildWhichIsA("SpecialMesh", true) or sourceItem:FindFirstChildWhichIsA("MeshPart", true)
+            if sub and sub.Name ~= "MeshPart" and sub.Name ~= "Mesh" then
+                accName = sub.Name
+            end
+        end
+        slotKey = "Acc_" .. accName:gsub("%s+", "")
+    end
 
-    -- Ensure dedicated container under Character
+    -- Dedicated container under Character
     local bakedFolder = char:FindFirstChild("RH_BakedWardrobe")
     if not bakedFolder then
         bakedFolder = Instance.new("Folder")
@@ -365,7 +448,7 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey)
         bakedFolder.Parent = char
     end
 
-    -- Strict single-clone enforcement: destroy previous clone in this slot
+    -- Strict single-clone per slot: destroy old clone for THIS specific slot/accessory
     local existing = bakedFolder:FindFirstChild(slotKey)
     if existing then
         pcall(function() existing:Destroy() end)
@@ -380,106 +463,148 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey)
     end)
     if not ok or not clone then return nil end
 
+    local imgToStore = (itemData and itemData.img and itemData.img ~= "") and itemData.img or ""
+    if imgToStore == "" and findItemImage then
+        imgToStore = findItemImage(itemData and itemData.name or sourceItem.Name, cat)
+    end
+
     clone.Name = slotKey
     clone:SetAttribute("RH_BakedLayer", true)
     clone:SetAttribute("RH_Category", cat)
     clone:SetAttribute("RH_SlotKey", slotKey)
-    clone:SetAttribute("RH_ItemName", sourceItem.Name)
+    clone:SetAttribute("RH_ItemName", (itemData and itemData.name) or sourceItem.Name)
+    clone:SetAttribute("RH_Image", imgToStore)
+    clone:SetAttribute("RH_Price", (itemData and itemData.price) or "")
 
-    -- Collect parts
-    local sourceParts = {}
-    if sourceItem:IsA("BasePart") then
-        table.insert(sourceParts, sourceItem)
-    else
-        for _, p in ipairs(sourceItem:GetDescendants()) do
-            if p:IsA("BasePart") then table.insert(sourceParts, p) end
-        end
-    end
-
-    local cloneParts = {}
-    if clone:IsA("BasePart") then
-        table.insert(cloneParts, clone)
-    else
-        for _, p in ipairs(clone:GetDescendants()) do
-            if p:IsA("BasePart") then table.insert(cloneParts, p) end
-        end
-    end
-
-    -- Clear broken joints in clone
+    -- Clean old broken joints in clone
     for _, j in ipairs(clone:GetDescendants()) do
         if j:IsA("JointInstance") or j:IsA("WeldConstraint") then
             j:Destroy()
         end
     end
 
-    local function getTargetLimbForPart(sourcePart)
-        -- Check existing welds to character
-        for _, w in ipairs(sourceItem:GetDescendants()) do
-            if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) then
-                if w.Part0 == sourcePart and w.Part1 and w.Part1:IsDescendantOf(char) and w.Part1:IsA("BasePart") then
-                    return w.Part1
-                elseif w.Part1 == sourcePart and w.Part0 and w.Part0:IsDescendantOf(char) and w.Part0:IsA("BasePart") then
-                    return w.Part0
-                end
-            end
-        end
-
-        -- Category default limbs
-        if cat == "Skirts" then
-            return char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso")
-        elseif cat == "Bodices" then
-            return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
-        elseif cat == "Wings" then
-            return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
-        elseif cat == "Halos" then
-            return char:FindFirstChild("Head")
-        elseif cat == "Heels" then
-            local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("LowerTorso")
-            if hrp then
-                local isLeft = sourcePart.Position.X < hrp.Position.X
-                if isLeft then
-                    return char:FindFirstChild("LeftLowerLeg") or char:FindFirstChild("LeftUpperLeg") or char:FindFirstChild("Left Leg") or hrp
-                else
-                    return char:FindFirstChild("RightLowerLeg") or char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg") or hrp
-                end
-            end
-            return char:FindFirstChild("LowerTorso")
-        end
-
-        local closestLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char.PrimaryPart
-        local minD = 999
-        for _, limb in ipairs(char:GetChildren()) do
-            if limb:IsA("BasePart") and not limb:GetAttribute("RH_BakedLayer") then
-                local d = (limb.Position - sourcePart.Position).Magnitude
-                if d < minD then
-                    minD = d
-                    closestLimb = limb
-                end
-            end
-        end
-        return closestLimb
+    local zeroPhys = PhysicalProperties.new(0.01, 0, 0, 0, 0)
+    local function prepPart(p)
+        p.CanCollide = false
+        p.CanTouch   = false
+        p.CanQuery   = false
+        p.Anchored   = false
+        p.Massless   = true
+        pcall(function() p.CustomPhysicalProperties = zeroPhys end)
     end
 
-    -- Align 1:1 and rigid weld each part
-    for i, cPart in ipairs(cloneParts) do
-        local sPart = sourceParts[i]
-        cPart.CanCollide = false
-        cPart.CanTouch   = false
-        cPart.CanQuery   = false
-        cPart.Anchored   = false
-        cPart.Massless   = true
+    -- 1:1 Unified Rigid Movement Engine:
+    -- Binds all sub-parts of an item to ONE central root part so the entire dress/shoe moves as ONE unified piece without separating!
+    local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("LowerTorso")
 
-        if sPart and sPart.Parent then
-            local targetLimb = getTargetLimbForPart(sPart)
-            if targetLimb then
-                local relOffset = targetLimb.CFrame:ToObjectSpace(sPart.CFrame)
-                cPart.CFrame = targetLimb.CFrame * relOffset
+    if cat == "Heels" and hrp then
+        -- Heels: Unified Left Boot and Unified Right Boot
+        local leftLimb = char:FindFirstChild("LeftLowerLeg") or char:FindFirstChild("LeftUpperLeg") or char:FindFirstChild("Left Leg") or hrp
+        local rightLimb = char:FindFirstChild("RightLowerLeg") or char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg") or hrp
 
-                local wc = Instance.new("WeldConstraint")
-                wc.Name = "RH_1to1Weld"
-                wc.Part0 = targetLimb
-                wc.Part1 = cPart
-                wc.Parent = cPart
+        local leftParts = {}
+        local rightParts = {}
+
+        if clone:IsA("BasePart") then
+            if clone.Position.X < hrp.Position.X then table.insert(leftParts, clone) else table.insert(rightParts, clone) end
+        else
+            for _, p in ipairs(clone:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    if p.Position.X < hrp.Position.X then table.insert(leftParts, p) else table.insert(rightParts, p) end
+                end
+            end
+        end
+
+        local function rigBoot(partsList, targetLimb)
+            if #partsList == 0 then return end
+            -- Find largest part as root
+            local root = partsList[1]
+            local maxVol = 0
+            for _, p in ipairs(partsList) do
+                prepPart(p)
+                local vol = p.Size.X * p.Size.Y * p.Size.Z
+                if vol > maxVol then maxVol = vol; root = p end
+            end
+
+            -- Match root to limb 1:1
+            local relOffset = targetLimb.CFrame:ToObjectSpace(root.CFrame)
+            root.CFrame = targetLimb.CFrame * relOffset
+
+            local wc = Instance.new("WeldConstraint")
+            wc.Name = "RH_BootRootWeld"
+            wc.Part0 = targetLimb
+            wc.Part1 = root
+            wc.Parent = root
+
+            -- Weld all other parts rigidly to boot root so the boot never splits apart
+            for _, p in ipairs(partsList) do
+                if p ~= root then
+                    local pRel = root.CFrame:ToObjectSpace(p.CFrame)
+                    p.CFrame = root.CFrame * pRel
+
+                    local subWc = Instance.new("WeldConstraint")
+                    subWc.Name = "RH_BootSubWeld"
+                    subWc.Part0 = root
+                    subWc.Part1 = p
+                    subWc.Parent = p
+                end
+            end
+        end
+
+        rigBoot(leftParts, leftLimb)
+        rigBoot(rightParts, rightLimb)
+    else
+        -- Skirts, Bodices, Wings, Halos, and Accessories: Unified Root Weld
+        local targetLimb = nil
+        if cat == "Skirts" then
+            targetLimb = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso") or hrp
+        elseif cat == "Bodices" then
+            targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or hrp
+        elseif cat == "Wings" then
+            targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or hrp
+        elseif cat == "Halos" then
+            targetLimb = char:FindFirstChild("Head") or hrp
+        else
+            -- Accessories: find nearest or attached limb
+            targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Head") or char:FindFirstChild("LowerTorso") or hrp
+        end
+
+        local allParts = {}
+        if clone:IsA("BasePart") then
+            table.insert(allParts, clone)
+        else
+            for _, p in ipairs(clone:GetDescendants()) do
+                if p:IsA("BasePart") then table.insert(allParts, p) end
+            end
+        end
+
+        if #allParts > 0 and targetLimb then
+            -- Find primary root part
+            local root = clone.PrimaryPart or clone:FindFirstChild("Middle") or clone:FindFirstChild("Center") or clone:FindFirstChild("Handle") or allParts[1]
+            prepPart(root)
+
+            local relOffset = targetLimb.CFrame:ToObjectSpace(root.CFrame)
+            root.CFrame = targetLimb.CFrame * relOffset
+
+            local wc = Instance.new("WeldConstraint")
+            wc.Name = "RH_UnifiedRootWeld"
+            wc.Part0 = targetLimb
+            wc.Part1 = root
+            wc.Parent = root
+
+            -- Weld all sub-parts to root so the entire item moves together 1:1!
+            for _, p in ipairs(allParts) do
+                if p ~= root then
+                    prepPart(p)
+                    local pRel = root.CFrame:ToObjectSpace(p.CFrame)
+                    p.CFrame = root.CFrame * pRel
+
+                    local subWc = Instance.new("WeldConstraint")
+                    subWc.Name = "RH_UnifiedSubWeld"
+                    subWc.Part0 = root
+                    subWc.Part1 = p
+                    subWc.Parent = p
+                end
             end
         end
     end
@@ -506,22 +631,24 @@ end
 
 -- Lock avatar's current look into single-layer baked slots
 local isBakingDebounce = false
-local function lockCurrentAvatarLook(catHint)
+local function lockCurrentAvatarLook(catHint, itemData)
     if isBakingDebounce then return 0 end
-    isBakingDebounce = true
 
     local items = findRoyaleHighItemsOnAvatar()
+    if #items == 0 then return 0 end
+
+    isBakingDebounce = true
     local count = 0
     for _, item in ipairs(items) do
         local cat = catHint or "Accessories"
         if item.Parent and item.Parent.Parent and item.Parent.Parent.Name == "EquippedStorage" then
             cat = item.Parent.Name
         end
-        local b = bakeItemToAvatar(item, cat)
+        local b = bakeItemToAvatar(item, cat, nil, itemData)
         if b then count = count + 1 end
     end
 
-    task.delay(0.6, function()
+    task.delay(0.3, function()
         isBakingDebounce = false
     end)
     return count
@@ -531,17 +658,63 @@ end
 local function unequipWornItem(item)
     if not item then return end
     local char = lp.Character
+    local itemName = item.name or ""
+    local slotKey  = item.slotKey or ""
+    local cat      = item.cat or ""
 
+    -- 1. Remove from RH_BakedWardrobe
     if item.bakedInst and item.bakedInst.Parent then
         pcall(function() item.bakedInst:Destroy() end)
     end
-
-    local slotKey = item.slotKey
-    if slotKey and bakedLayersBackup[slotKey] then
-        bakedLayersBackup[slotKey] = nil
+    if char then
+        local bakedFolder = char:FindFirstChild("RH_BakedWardrobe")
+        if bakedFolder then
+            if slotKey ~= "" then
+                local b = bakedFolder:FindFirstChild(slotKey)
+                if b then pcall(function() b:Destroy() end) end
+            end
+            for _, c in ipairs(bakedFolder:GetChildren()) do
+                if c.Name == slotKey or c.Name == itemName or c:GetAttribute("RH_ItemName") == itemName or c:GetAttribute("RH_SlotKey") == slotKey then
+                    pcall(function() c:Destroy() end)
+                end
+            end
+        end
     end
 
-    if item.cat == "Heels" and char then
+    -- 2. Clear backup table
+    if slotKey ~= "" and bakedLayersBackup[slotKey] then
+        bakedLayersBackup[slotKey] = nil
+    end
+    if cat ~= "" and (cat == "Heels" or cat == "Skirts" or cat == "Bodices" or cat == "Wings" or cat == "Halos") then
+        bakedLayersBackup[cat] = nil
+    end
+
+    -- 3. Destroy live try-on instance if present
+    if item.liveInst and item.liveInst.Parent then
+        pcall(function() item.liveInst:Destroy() end)
+    end
+
+    -- 4. Purge from EquippedStorage and WornItems folders
+    for _, info in ipairs(getEquippedFolders()) do
+        for _, child in ipairs(info.folder:GetChildren()) do
+            if child.Name == itemName or child.Name:lower():find(itemName:lower(), 1, true) or itemName:lower():find(child.Name:lower(), 1, true) then
+                pcall(function() child:Destroy() end)
+            end
+        end
+    end
+
+    -- 5. Purge any matching models/folders on Character
+    if char then
+        for _, child in ipairs(char:GetChildren()) do
+            if (child:GetAttribute("RH_BakedLayer") or child.Name:find("RH_Baked") or child.Name == slotKey or child.Name == itemName)
+               and child.Name ~= "RH_BakedWardrobe" then
+                pcall(function() child:Destroy() end)
+            end
+        end
+    end
+
+    -- 6. Category specifics: restore legs transparency for heels
+    if cat == "Heels" and char then
         for _, lName in ipairs(legPartNames) do
             local limb = char:FindFirstChild(lName)
             if limb and limb:IsA("BasePart") then
@@ -550,23 +723,24 @@ local function unequipWornItem(item)
         end
     end
 
-    if item.cat == "Wings" and char then
+    -- 7. Destroy custom wings if Wings
+    if cat == "Wings" and char then
         for _, n in ipairs({"Wings_TRYON", "CustomWingRight", "CustomWingLeft"}) do
             local w = char:FindFirstChild(n)
             if w then pcall(function() w:Destroy() end) end
         end
     end
 
-    if item.liveInst and item.liveInst.Parent then
-        pcall(function() item.liveInst:Destroy() end)
+    -- 8. Fire ExitPreview to terminate server try-on
+    if exitPreviewRemote then
+        pcall(function() exitPreviewRemote:FireServer() end)
     end
 
-    if char then
-        local bakedFolder = char:FindFirstChild("RH_BakedWardrobe")
-        if bakedFolder and slotKey then
-            local obj = bakedFolder:FindFirstChild(slotKey)
-            if obj then pcall(function() obj:Destroy() end) end
-        end
+    -- 9. Release movement and refresh UI
+    releasePlayerMovement()
+    updateTabCounts()
+    if refreshGridRef then
+        refreshGridRef("Worn")
     end
 end
 
@@ -619,22 +793,30 @@ local function getWornItemsList()
     local char = lp.Character
     if not char then return wornList end
 
+    -- 1. Scan RH_BakedWardrobe (our primary baked layers)
     local bakedFolder = char:FindFirstChild("RH_BakedWardrobe")
     if bakedFolder then
         for _, clone in ipairs(bakedFolder:GetChildren()) do
             local itemName = clone:GetAttribute("RH_ItemName") or clone.Name:gsub("^RH_Baked_", "")
-            local cat = clone:GetAttribute("RH_Category") or "Custom"
+            local cat = clone:GetAttribute("RH_Category") or "Accessories"
             local slotKey = clone:GetAttribute("RH_SlotKey") or clone.Name
             local img = clone:GetAttribute("RH_Image") or ""
             local price = clone:GetAttribute("RH_Price") or ""
-            if not seen[slotKey] then
-                seen[slotKey] = true
+
+            if (not img or img == "") and findItemImage then
+                img = findItemImage(itemName, cat)
+            end
+
+            local cleanKey = (cat .. "_" .. itemName):lower():gsub("%s+", "")
+            if not seen[cleanKey] and not seen[slotKey:lower()] then
+                seen[cleanKey] = true
+                seen[slotKey:lower()] = true
                 table.insert(wornList, {
                     name = itemName,
                     cat = cat,
                     slotKey = slotKey,
                     img = img,
-                    price = price ~= "" and price or "Baked Layer",
+                    price = price ~= "" and price or "Equipped",
                     isWorn = true,
                     bakedInst = clone
                 })
@@ -642,17 +824,19 @@ local function getWornItemsList()
         end
     end
 
+    -- 2. Scan EquippedStorage & WornItems for any live items not yet baked
     for _, info in ipairs(getEquippedFolders()) do
         for _, child in ipairs(info.folder:GetChildren()) do
             if not isBaseAvatarObject(child) then
-                local slotKey = info.category .. "_" .. child.Name
-                if not seen[slotKey] then
-                    seen[slotKey] = true
+                local cleanKey = (info.category .. "_" .. child.Name):lower():gsub("%s+", "")
+                if not seen[cleanKey] and not seen[child.Name:lower()] then
+                    seen[cleanKey] = true
+                    local img = findItemImage and findItemImage(child.Name, info.category) or ""
                     table.insert(wornList, {
                         name = child.Name,
                         cat = info.category,
-                        slotKey = slotKey,
-                        img = "",
+                        slotKey = info.category .. "_" .. child.Name,
+                        img = img,
                         price = "Live Try-On",
                         isWorn = true,
                         liveInst = child
@@ -662,14 +846,17 @@ local function getWornItemsList()
         end
     end
 
+    -- 3. Custom wings
     local wingClone = char:FindFirstChild("Wings_TRYON") or char:FindFirstChild("CustomWingRight") or char:FindFirstChild("CustomWingLeft")
-    if wingClone and not seen["Wings"] then
-        seen["Wings"] = true
+    if wingClone and not seen["wings"] then
+        seen["wings"] = true
+        local wName = wingClone:GetAttribute("RH_ItemName") or "Custom Wings"
+        local img = findItemImage and findItemImage(wName, "Wings") or ""
         table.insert(wornList, {
-            name = wingClone:GetAttribute("RH_ItemName") or "Custom Wings",
+            name = wName,
             cat = "Wings",
             slotKey = "Wings",
-            img = "",
+            img = img,
             price = "Equipped Wings",
             isWorn = true,
             bakedInst = wingClone
@@ -762,9 +949,52 @@ local function addOrUpdateCatalogItem(cat, alias, assetName, price, img, isServe
         isServerImg = (isServerData and imgStr ~= "")
     }
     catalogItemByKey[key] = itemObj
+    if alias then
+        catalogItemByKey[alias:lower()] = itemObj
+        catalogItemByKey[alias:lower():gsub("%s+", "")] = itemObj
+    end
+    if assetName then
+        catalogItemByKey[assetName:lower()] = itemObj
+        catalogItemByKey[assetName:lower():gsub("%s+", "")] = itemObj
+    end
     if categories[cat] then
         table.insert(categories[cat], itemObj)
     end
+end
+
+-- Fast smart catalog thumbnail lookup
+findItemImage = function(name, cat)
+    if not name or name == "" then return "" end
+    local clean = name:lower():gsub("%s+", ""):gsub("[^%w]", "")
+
+    -- 1. Direct key
+    local direct = catalogItemByKey[clean] or catalogItemByKey[name:lower()]
+    if direct and direct.img and direct.img ~= "" then
+        return direct.img
+    end
+
+    -- 2. Scan category list if provided
+    local targetList = cat and categories[cat]
+    if targetList then
+        for _, it in ipairs(targetList) do
+            local itClean = it.name:lower():gsub("%s+", ""):gsub("[^%w]", "")
+            local itAssetClean = (it.assetName or ""):lower():gsub("%s+", ""):gsub("[^%w]", "")
+            if itClean == clean or itAssetClean == clean or clean:find(itClean, 1, true) or itClean:find(clean, 1, true) then
+                if it.img and it.img ~= "" then return it.img end
+            end
+        end
+    end
+
+    -- 3. Scan all catalog items
+    for _, it in pairs(catalogItemByKey) do
+        local itClean = it.name:lower():gsub("%s+", ""):gsub("[^%w]", "")
+        local itAssetClean = (it.assetName or ""):lower():gsub("%s+", ""):gsub("[^%w]", "")
+        if itClean == clean or itAssetClean == clean or clean:find(itClean, 1, true) or itClean:find(clean, 1, true) then
+            if it.img and it.img ~= "" then return it.img end
+        end
+    end
+
+    return ""
 end
 
 -- Curated Master Catalog (Includes Fluttering Butterfly & Enchanting Heirloom sets)
@@ -1131,7 +1361,7 @@ local function openItemColorAndToggles(item)
         end
     end)
 
-    -- 2. Open Royale High official ColorsGui with live recolor binding (supports classic items like Large Train Bow Skirt & Miss Lady Rose)
+    -- 2. Open Royale High official ColorsGui with 2-color palette & skin protection
     pcall(function()
         local cg = pg:FindFirstChild("ColorsGui")
         if not cg then return end
@@ -1143,7 +1373,7 @@ local function openItemColorAndToggles(item)
 
         local colorMod = require(co:WaitForChild("ColorOptionsModule"))
         if colorMod and colorMod.Appear then
-            local function onColorPicked(chosenColor, multiOptions)
+            local function onColorPicked(chosenColor, colorGroupIndex, multiOptions)
                 local c3 = nil
                 if typeof(chosenColor) == "Color3" then
                     c3 = chosenColor
@@ -1155,148 +1385,82 @@ local function openItemColorAndToggles(item)
                     end
                 end
 
+                if not c3 then return end
+                local group = (type(colorGroupIndex) == "number") and colorGroupIndex or 1
+
                 local char = lp.Character
-                if char and c3 then
-                    local targetLower = item.name:lower()
-                    local assetLower  = (item.assetName or ""):lower()
+                if not char then return end
 
-                    local function applyColorToModel(m)
-                        if not m then return end
-                        if m:IsA("BasePart") then m.Color = c3 end
-                        for _, p in ipairs(m:GetDescendants()) do
-                            if p:IsA("BasePart") then
+                local slotKey = (item.cat == "Heels" or item.cat == "Skirts" or item.cat == "Bodices" or item.cat == "Wings" or item.cat == "Halos")
+                                and item.cat
+                                or ("Acc_" .. (item.assetName or item.name):gsub("%s+", ""))
+
+                -- Separate Color 1 (main body/fabric) and Color 2 (trim/lace/ribbon/secondary)
+                local function partMatchesColorGroup(pName, pParentName)
+                    local n = (pName .. " " .. pParentName):lower()
+                    local isGroup2 = n:find("2") or n:find("trim") or n:find("lace") or n:find("accent")
+                                  or n:find("ribbon") or n:find("bow") or n:find("secondary") or n:find("buckle") or n:find("detail")
+                    if group == 2 then
+                        return isGroup2
+                    else
+                        return not isGroup2 or n:find("1") or n:find("main") or n:find("base")
+                    end
+                end
+
+                -- STRICT SKIN PROTECTION: ONLY color parts inside the target item model! NEVER avatar limbs!
+                local function applyColorToModelParts(m)
+                    if not m then return end
+                    for _, p in ipairs(m:GetDescendants()) do
+                        if p:IsA("BasePart") and not standardBodyParts[p.Name] and p.Name ~= "HumanoidRootPart" and p.Name ~= "Head" then
+                            if partMatchesColorGroup(p.Name, p.Parent.Name) then
                                 p.Color = c3
-                            elseif p:IsA("SpecialMesh") then
+                            end
+                        elseif p:IsA("SpecialMesh") then
+                            if partMatchesColorGroup(p.Name, p.Parent.Name) then
                                 pcall(function() p.VertexColor = Vector3.new(c3.R, c3.G, c3.B) end)
-                            end
-                        end
-                    end
-
-                    local function checkMatch(inst)
-                        local cln = inst.Name:lower()
-                        return (inst:GetAttribute("RH_AssetName") == item.assetName)
-                            or (inst:GetAttribute("RH_SlotKey") == item.cat)
-                            or cln:find(targetLower, 1, true) or targetLower:find(cln, 1, true)
-                            or (assetLower ~= "" and (cln:find(assetLower, 1, true) or assetLower:find(cln, 1, true)))
-                    end
-
-                    -- Recolor models in Character
-                    for _, child in ipairs(char:GetChildren()) do
-                        if checkMatch(child) then
-                            applyColorToModel(child)
-                        end
-                    end
-
-                    -- Recolor models in EquippedStorage
-                    for _, info in ipairs(getEquippedFolders()) do
-                        for _, child in ipairs(info.folder:GetChildren()) do
-                            if checkMatch(child) then
-                                applyColorToModel(child)
-                            end
-                        end
-                    end
-
-                    -- Update stored layer backup so stacked layers preserve the chosen color
-                    local slotKey = (item.cat == "Heels" or item.cat == "Skirts" or item.cat == "Bodices" or item.cat == "Wings") and item.cat or ("Acc_" .. (item.assetName or item.name))
-                    if savedWornLayers[slotKey] and savedWornLayers[slotKey].items then
-                        for _, bkp in ipairs(savedWornLayers[slotKey].items) do
-                            if bkp:IsA("BasePart") then
-                                bkp.Color = c3
-                            end
-                            for _, p in ipairs(bkp:GetDescendants()) do
-                                if p:IsA("BasePart") then
-                                    p.Color = c3
-                                elseif p:IsA("SpecialMesh") then
-                                    pcall(function() p.VertexColor = Vector3.new(c3.R, c3.G, c3.B) end)
-                                end
                             end
                         end
                     end
                 end
 
-                -- Sync with server if EquipItem remote exists
+                -- Recolor baked item in RH_BakedWardrobe
+                local bakedFolder = char:FindFirstChild("RH_BakedWardrobe")
+                if bakedFolder then
+                    local bakedModel = bakedFolder:FindFirstChild(slotKey)
+                    if bakedModel then
+                        applyColorToModelParts(bakedModel)
+                    end
+                end
+
+                -- Recolor in EquippedStorage
+                for _, info in ipairs(getEquippedFolders()) do
+                    for _, child in ipairs(info.folder:GetChildren()) do
+                        if child.Name == item.name or child.Name == (item.assetName or item.name) then
+                            applyColorToModelParts(child)
+                        end
+                    end
+                end
+
+                -- Sync with Royale High server recolor remote
                 pcall(function()
                     local inv = ReplicatedStorage:FindFirstChild("Inventory")
                     local eq = inv and inv:FindFirstChild("EquipItem")
                     if eq and eq:IsA("RemoteFunction") then
-                        eq:InvokeServer(item.assetName or item.name, item.cat, chosenColor, multiOptions, true)
+                        eq:InvokeServer(item.assetName or item.name, item.cat, chosenColor, group, true)
                     end
                 end)
             end
 
-            pcall(function() colorMod:RememberSelectionKey(assetName) end)
-            colorMod:Appear(onColorPicked, true, false, "Generic", 4, false)
-            if co:FindFirstChild("99Colors") then
-                co["99Colors"].Visible = true
-            end
+            -- Open ColorOptionsModule with 2 Color Groups (Color 1 & Color 2 tabs)
+            colorMod:SetItemToUnequip(item.assetName or item.name, item.cat)
+            pcall(function() colorMod:RememberSelectionKey(item.assetName or item.name) end)
+            colorMod:Appear(onColorPicked, true, false, "Generic", 2, false)
+            pcall(function() colorMod:SetNames("Color 1", "Color 2") end)
             opened = true
         end
     end)
 
     return opened
-end
-
-local function equipWings(item)
-    local char = lp.Character
-    if not char then return "No character" end
-    local assetName = item.assetName or item.name
-
-    for _, c in ipairs(char:GetChildren()) do
-        if c.Name == "Wings_TRYON" or c.Name:find("CustomWing") or c:GetAttribute("RH_SlotKey") == "Wings" then
-            pcall(function() c:Destroy() end)
-        end
-    end
-
-    local net = ReplicatedStorage:FindFirstChild("Network")
-    local fn  = net and net:FindFirstChild("Functions") and net.Functions:FindFirstChild("Gui")
-    if fn and fn:FindFirstChild("Wings") and fn.Wings:FindFirstChild("TryOn") then
-        local ok, res = pcall(function()
-            return fn.Wings.TryOn:InvokeServer(assetName)
-        end)
-        if ok and res then
-            local chest = res.Chest or res:FindFirstChild("Chest") or res
-            if chest then
-                chest.Name = "Wings_TRYON"
-                local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
-                local center = chest:FindFirstChild("Center") or chest.PrimaryPart or chest:FindFirstChildWhichIsA("BasePart")
-                if torso and center then
-                    for _, p in ipairs(chest:GetDescendants()) do
-                        if p:IsA("BasePart") then
-                            p.Anchored = false
-                            p.CanCollide = false
-                        end
-                    end
-                    local weld = Instance.new("WeldConstraint")
-                    weld.Name = "CustomWingWeld"
-                    weld.Part0 = torso
-                    weld.Part1 = center
-                    weld.Parent = torso
-                    chest.Parent = char
-                    chest:SetAttribute("CustomSavedLayer", true)
-                    chest:SetAttribute("RH_SlotKey", "Wings")
-                    chest:SetAttribute("RH_Category", "Wings")
-                    chest:SetAttribute("RH_AssetName", assetName)
-                    savedWornLayers["Wings"] = {
-                        items     = { deepClone(chest) },
-                        names     = { "Wings_TRYON" },
-                        category  = "Wings",
-                        assetName = assetName
-                    }
-                    hideTryOnOverlays()
-                    return "OK"
-                end
-            end
-        end
-    end
-
-    local btn = findShopTryonButton(item.name) or findShopTryonButton(assetName)
-    if btn then
-        clickButtonVIM(btn)
-        hideTryOnOverlays()
-        return "OK"
-    end
-    hideTryOnOverlays()
-    return "OK"
 end
 
 local function equipItem(item)
@@ -1325,17 +1489,26 @@ local function equipItem(item)
         end
     end)
 
-    -- Auto-bake the newly spawned item into a permanent layer after it replicates
+    -- 3. Dynamic Smart Polling: Auto-bakes as soon as meshes replicate, then immediately unfreezes
     task.spawn(function()
         disableFreezeOnlyConnections()
         hideTryOnOverlays()
 
-        -- Wait for server replication
-        task.wait(1.0)
-        lockCurrentAvatarLook(itemCat)
+        local startTick = tick()
+        local bakedCount = 0
+        while tick() - startTick < 3.2 do
+            task.wait(0.12)
+            local items = findRoyaleHighItemsOnAvatar()
+            if #items > 0 then
+                bakedCount = lockCurrentAvatarLook(itemCat, item)
+                if bakedCount and bakedCount > 0 then
+                    break
+                end
+            end
+        end
 
-        disableFreezeOnlyConnections()
-        hideTryOnOverlays()
+        -- Immediately release all movement freezes & terminate try-on anchoring
+        releasePlayerMovement()
         updateTabCounts()
         if refreshGridRef then refreshGridRef() end
     end)
@@ -2028,7 +2201,8 @@ colorBtn.Activated:Connect(handleColor)
 
 bakeBtn.Activated:Connect(function()
 	local cat = selectedItem and selectedItem.cat or "Accessories"
-	local n = lockCurrentAvatarLook(cat)
+	local n = lockCurrentAvatarLook(cat, selectedItem)
+	releasePlayerMovement()
 	if n > 0 then
 		setStatus("Layer Locked & Saved!", C.text)
 	else
@@ -2243,4 +2417,4 @@ setActiveCategory("Heels")
 Main.Visible = true
 updateToggleBtnState()
 
-print("[RH Wardrobe v29] 1:1 single-clone layer baker, Worn section & Visual Stat Spoofer active.")
+print("[RH Wardrobe v32] 1:1 Unified item movement, Color 1 & 2 palette with skin protection active.")
