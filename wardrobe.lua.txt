@@ -1,5 +1,5 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v42
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v43
 --
 -- NEW FIXES & FEATURES IN v28:
 -- 1. PRECISION CLOTHING SCANNER (ZERO HAIR CLONING):
@@ -121,10 +121,10 @@ local function isOverheadTryOnBillboard(inst)
     local bb = (inst:IsA("BillboardGui") or inst:IsA("SurfaceGui")) and inst or inst:FindFirstAncestorWhichIsA("BillboardGui") or inst:FindFirstAncestorWhichIsA("SurfaceGui")
     if not bb then return false end
     local nl = inst.Name:lower()
-    if nl:find("tryon") or nl:find("try_on") then return true end
+    if nl:find("tryon") or nl:find("try_on") or nl:find("try on") then return true end
     if (inst:IsA("TextLabel") or inst:IsA("TextButton")) then
         local tl = (inst.Text or ""):lower()
-        if tl == "try on" or tl:find("trying on") or tl:find("tryon") then return true end
+        if tl:find("try on") or tl:find("trying on") or tl:find("tryon") then return true end
     end
     return false
 end
@@ -155,6 +155,17 @@ local function hideTryOnOverlays()
                 end
             end
         end
+        for _, gui in ipairs(pg:GetChildren()) do
+            if gui.Name ~= "RH_Wardrobe_v43" and gui.Name ~= "Shop" then
+                for _, bb in ipairs(gui:GetDescendants()) do
+                    if bb:IsA("BillboardGui") then
+                        for _, d in ipairs(bb:GetDescendants()) do
+                            if isOverheadTryOnBillboard(d) then suppressGuiObj(bb) break end
+                        end
+                    end
+                end
+            end
+        end
     end)
 end
 
@@ -178,6 +189,7 @@ local function hookCharOverheadTryOn(char)
     local function checkPart(p)
         if p:IsA("BillboardGui") or p:IsA("SurfaceGui") then
             task.defer(function()
+                if isOverheadTryOnBillboard(p) then suppressGuiObj(p) return end
                 for _, d in ipairs(p:GetDescendants()) do
                     if isOverheadTryOnBillboard(d) then suppressGuiObj(p) break end
                 end
@@ -185,8 +197,13 @@ local function hookCharOverheadTryOn(char)
         end
     end
     char.ChildAdded:Connect(checkPart)
-    local head = char:FindFirstChild("Head")
-    if head then head.ChildAdded:Connect(checkPart) end
+    for _, limbName in ipairs({"Head", "UpperTorso", "Torso", "HumanoidRootPart"}) do
+        local limb = char:FindFirstChild(limbName)
+        if limb then
+            limb.ChildAdded:Connect(checkPart)
+            for _, ch in ipairs(limb:GetChildren()) do checkPart(ch) end
+        end
+    end
 end
 if lp.Character then hookCharOverheadTryOn(lp.Character) end
 lp.CharacterAdded:Connect(hookCharOverheadTryOn)
@@ -340,7 +357,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v42)
+-- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v43)
 -- ============================================================
 local bakedLayersBackup = {}
 local defaultAvatarInstances = {}
@@ -3370,6 +3387,8 @@ local function equipItem(item)
     task.spawn(function()
         disableFreezeOnlyConnections()
         hideTryOnOverlays()
+        task.delay(0.35, hideTryOnOverlays)
+        task.delay(1.0, hideTryOnOverlays)
 
         local startTick = tick()
         local baked = nil
@@ -3840,12 +3859,13 @@ local function rebuildStatLabelCache(force)
 
 	cachedStatLabels = { Diamonds = {}, Level = {}, Candy = {}, Cash = {} }
 	local roots = {}
-	for _, rn in ipairs({"HUD", "MermaidShopDiamondCount", "Journal", "PlayerJournal"}) do
-		local r = pg:FindFirstChild(rn)
-		if r then table.insert(roots, r) end
+	for _, gui in ipairs(pg:GetChildren()) do
+		if gui.Name == "Shop" then
+			if gui:FindFirstChild("Header") then table.insert(roots, gui.Header) end
+		elseif gui.Name ~= "RH_Wardrobe_v43" then
+			table.insert(roots, gui)
+		end
 	end
-	local shop = pg:FindFirstChild("Shop")
-	if shop and shop:FindFirstChild("Header") then table.insert(roots, shop.Header) end
 	for _, root in ipairs(roots) do
 	for _, d in ipairs(root:GetDescendants()) do
 		if d:IsA("TextLabel") then
@@ -3909,8 +3929,8 @@ local function updateLevel(val)
 				pcall(function() d.Text = "Level: " .. rawNumStr end)
 			elseif txt:match("^Level%s+[%d,]+") then
 				pcall(function() d.Text = "Level " .. val end)
-			elseif txt:match("^Lv%.?%s*%d+") then
-				pcall(function() d.Text = "Lv. " .. rawNumStr end)
+			elseif txt:match("^[Ll][Vv][Ll]?%.?%s*[%d,]+") then
+				pcall(function() d.Text = "Lv. " .. val end)
 			elseif tonumber(txt:gsub("[^%d]", "")) then
 				pcall(function() d.Text = val end)
 			end
@@ -3977,8 +3997,9 @@ task.spawn(function()
 			hookedPurchaseGui = true
 			local function hookCurrencyFail(failFrame, statKey, updateFn)
 				if not failFrame then return end
+				local animBusy = false
 				failFrame:GetPropertyChangedSignal("Visible"):Connect(function()
-					if not failFrame.Visible then return end
+					if not failFrame.Visible or animBusy then return end
 					local spoofStr = activeSpoofs[statKey]
 					if not spoofStr or spoofStr == "" then return end
 					local spoofBal = tonumber((spoofStr:gsub("[^%d]", ""))) or 0
@@ -3989,55 +4010,100 @@ task.spawn(function()
 					local priceNum = priceLbl and tonumber((priceLbl.Text:gsub("[^%d]", ""))) or 0
 					if spoofBal < priceNum then return end
 
+					animBusy = true
 					failFrame.Visible = false
-					local newBal = math.max(0, spoofBal - priceNum)
-					local formattedNew = formatCommas(tostring(newBal))
-					activeSpoofs[statKey] = formattedNew
-					updateFn(formattedNew)
 
-					pcall(function()
-						local s = pGui:FindFirstChild("Success") or pGuiRoot:FindFirstChild("Success", true)
-						if s and s:IsA("Sound") then s:Play() end
-					end)
+					task.spawn(function()
+						local newBal = math.max(0, spoofBal - priceNum)
+						local formattedNew = formatCommas(tostring(newBal))
+						activeSpoofs[statKey] = formattedNew
+						updateFn(formattedNew)
 
-					local pAcc = pGui:FindFirstChild("PurchaseAccepted")
-					if pAcc then
-						pAcc.Visible = true
-						if pAcc:FindFirstChild("MainText") then
-							pAcc.MainText.Text = "Card Accepted!"
-						end
-						for i = 1, 5 do
-							local f = pAcc:FindFirstChild(tostring(i))
-							if f and f:IsA("GuiObject") then f.Visible = true end
-							if i > 1 then
-								local prev = pAcc:FindFirstChild(tostring(i - 1))
-								if prev and prev:IsA("GuiObject") then prev.Visible = false end
-							end
-							task.wait(0.16)
-						end
-						if pAcc:FindFirstChild("MainText") then
-							pAcc.MainText.Text = "Purchase Complete!"
-						end
-					end
-
-					pcall(function()
-						local cSnd = pGui:FindFirstChild("Complete") or pGuiRoot:FindFirstChild("Complete", true)
-						if cSnd and cSnd:IsA("Sound") then cSnd:Play() end
-					end)
-
-					local receipt = pGui:FindFirstChild("Receipt")
-					if receipt then
-						receipt.Visible = true
+						-- Update client-side "Owned: X" visual badge in Shop if visible
 						pcall(function()
-							receipt:TweenPosition(UDim2.new(0, 0, 0.72, 0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.45, true)
+							local itemNameLbl = pGui:FindFirstChild("ItemName", true) or (pGui:FindFirstChild("Receipt") and pGui.Receipt:FindFirstChild("ItemName", true))
+							local boughtName = itemNameLbl and itemNameLbl:IsA("TextLabel") and itemNameLbl.Text or ""
+							local shop = pg:FindFirstChild("Shop")
+							if shop and boughtName ~= "" then
+								for _, lbl in ipairs(shop:GetDescendants()) do
+									if lbl:IsA("TextLabel") and lbl.Visible then
+										local tl = (lbl.Text or ""):lower()
+										if tl:match("^owned:?%s*%d+") or tl == "not owned" then
+											local card = lbl.Parent
+											local hasMatch = false
+											for _ = 1, 4 do
+												if not card then break end
+												for _, ch in ipairs(card:GetDescendants()) do
+													if ch:IsA("TextLabel") and ch.Text == boughtName then
+														hasMatch = true
+														break
+													end
+												end
+												if hasMatch then break end
+												card = card.Parent
+											end
+											if hasMatch then
+												local curOwned = tonumber((tl:gsub("[^%d]", ""))) or 0
+												lbl.Text = "Owned: " .. tostring(curOwned + 1)
+											end
+										end
+									end
+								end
+							end
 						end)
-					end
 
-					task.delay(3.0, function()
+						pcall(function()
+							local s = pGui:FindFirstChild("Success") or pGuiRoot:FindFirstChild("Success", true)
+							if s and s:IsA("Sound") then s:Play() end
+						end)
+
+						local pAcc = pGui:FindFirstChild("PurchaseAccepted")
+						if pAcc then
+							pAcc.Visible = true
+							if pAcc:FindFirstChild("MainText") then
+								pAcc.MainText.Text = "Card Accepted!"
+							end
+							for i = 1, 5 do
+								local f = pAcc:FindFirstChild(tostring(i))
+								if f and f:IsA("GuiObject") then f.Visible = true end
+								if i > 1 then
+									local prev = pAcc:FindFirstChild(tostring(i - 1))
+									if prev and prev:IsA("GuiObject") then prev.Visible = false end
+								end
+								task.wait(0.15)
+							end
+							if pAcc:FindFirstChild("MainText") then
+								pAcc.MainText.Text = "Purchase Complete!"
+							end
+						end
+
+						pcall(function()
+							local cSnd = pGui:FindFirstChild("Complete") or pGuiRoot:FindFirstChild("Complete", true)
+							if cSnd and cSnd:IsA("Sound") then cSnd:Play() end
+						end)
+
+						local receipt = pGui:FindFirstChild("Receipt")
+						if receipt then
+							receipt.Position = UDim2.new(0, 0, 0.275, 0)
+							receipt.Visible = true
+							pcall(function()
+								receipt:TweenPosition(UDim2.new(0, 0, 0.72, 0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.45, true)
+							end)
+						end
+
+						task.wait(2.5)
 						if pAcc then pAcc.Visible = false end
+						if receipt then
+							receipt.Visible = false
+							receipt.Position = UDim2.new(0, 0, 0.275, 0)
+						end
+						if pGui:FindFirstChild("PurchaseScreen") then
+							pGui.PurchaseScreen.Visible = true
+						end
 						if pGuiRoot and pGuiRoot:IsA("ScreenGui") then
 							pGuiRoot.Enabled = false
 						end
+						animBusy = false
 					end)
 				end)
 			end
