@@ -1,5 +1,5 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v38
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v40
 --
 -- NEW FIXES & FEATURES IN v28:
 -- 1. PRECISION CLOTHING SCANNER (ZERO HAIR CLONING):
@@ -98,21 +98,63 @@ local function disableFreezeOnlyConnections()
     end
 end
 
+local function isTryOnGuiInstance(inst)
+    if not inst then return false end
+    -- Never hide our own wardrobe GUI
+    local p = inst
+    while p do
+        if p.Name == "RH_Wardrobe_v40" then return false end
+        p = p.Parent
+    end
+    local nl = inst.Name:lower()
+    if nl:find("exittryon") or nl == "tryon" or nl:find("tryon") or nl:find("try_on") then
+        return true
+    end
+    if inst:IsA("TextLabel") or inst:IsA("TextButton") then
+        local tl = (inst.Text or ""):lower()
+        if tl == "try on" or tl:find("trying on") or tl:find("exit try on") or tl:find("tryon") then
+            return true
+        end
+    end
+    return false
+end
+
+local function suppressGuiObj(desc)
+    if desc:IsA("BillboardGui") or desc:IsA("SurfaceGui") or desc:IsA("ScreenGui") then
+        desc.Enabled = false
+        pcall(function()
+            desc:GetPropertyChangedSignal("Enabled"):Connect(function()
+                if desc.Enabled then desc.Enabled = false end
+            end)
+        end)
+    elseif desc:IsA("GuiObject") then
+        desc.Visible = false
+        pcall(function()
+            desc:GetPropertyChangedSignal("Visible"):Connect(function()
+                if desc.Visible then desc.Visible = false end
+            end)
+        end)
+    end
+end
+
 local function hideTryOnOverlays()
     pcall(function()
-        local hud = pg:FindFirstChild("HUD")
-        if hud then
-            for _, desc in ipairs(hud:GetDescendants()) do
-                if desc:IsA("GuiObject") and (desc.Name:find("ExitTryOn") or desc.Name == "TryOn") then
-                    desc.Visible = false
-                end
+        -- 1. Hide TryOn / ExitTryOn UI in PlayerGui (including BillboardGuis adorned to Character)
+        for _, desc in ipairs(pg:GetDescendants()) do
+            if isTryOnGuiInstance(desc) then
+                suppressGuiObj(desc)
+                local bb = desc:FindFirstAncestorWhichIsA("BillboardGui")
+                if bb then suppressGuiObj(bb) end
             end
         end
-        local shop = pg:FindFirstChild("Shop")
-        if shop then
-            for _, desc in ipairs(shop:GetDescendants()) do
-                if desc:IsA("GuiObject") and desc.Name == "ExitTryOnNonWings" then
-                    desc.Visible = false
+        -- 2. Hide overhead TryOn BillboardGuis / SurfaceGuis directly inside Character
+        local char = lp.Character
+        if char then
+            for _, desc in ipairs(char:GetDescendants()) do
+                if isTryOnGuiInstance(desc) then
+                    suppressGuiObj(desc)
+                    local bb = desc:FindFirstAncestorWhichIsA("BillboardGui") or desc:FindFirstAncestorWhichIsA("SurfaceGui")
+                    if bb then suppressGuiObj(bb) end
                 end
             end
         end
@@ -123,15 +165,29 @@ disableFreezeOnlyConnections()
 hideTryOnOverlays()
 
 pg.DescendantAdded:Connect(function(desc)
-    if desc:IsA("GuiObject") and (desc.Name:find("ExitTryOn") or desc.Name == "TryOn") then
-        desc.Visible = false
-        pcall(function()
-            desc:GetPropertyChangedSignal("Visible"):Connect(function()
-                if desc.Visible then desc.Visible = false end
-            end)
-        end)
-    end
+    task.defer(function()
+        if desc.Parent and isTryOnGuiInstance(desc) then
+            suppressGuiObj(desc)
+            local bb = desc:FindFirstAncestorWhichIsA("BillboardGui")
+            if bb then suppressGuiObj(bb) end
+        end
+    end)
 end)
+
+local function hookCharOverheadTryOn(char)
+    if not char then return end
+    char.DescendantAdded:Connect(function(desc)
+        task.defer(function()
+            if desc.Parent and isTryOnGuiInstance(desc) then
+                suppressGuiObj(desc)
+                local bb = desc:FindFirstAncestorWhichIsA("BillboardGui") or desc:FindFirstAncestorWhichIsA("SurfaceGui")
+                if bb then suppressGuiObj(bb) end
+            end
+        end)
+    end)
+end
+if lp.Character then hookCharOverheadTryOn(lp.Character) end
+lp.CharacterAdded:Connect(hookCharOverheadTryOn)
 
 -- Continuous triple-engine unanchoring
 local standardBodyParts = {
@@ -279,7 +335,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v38)
+-- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v40)
 -- ============================================================
 local bakedLayersBackup = {}
 local defaultAvatarInstances = {}
@@ -3800,7 +3856,8 @@ local function updateLevel(val)
 		if d:IsA("TextLabel") then
 			local nl = d.Name:lower()
 			local txt = d.Text or ""
-			if (nl:find("level") and not nl:find("quality") and not nl:find("volume")) then
+			local fn = d:GetFullName():lower()
+			if ((nl:find("level") or fn:find("level")) and not fn:find("quality") and not fn:find("volume") and not fn:find("unlock") and not fn:find("rh_wardrobe")) then
 				if txt:match("^Grade Level:%s*%d+") then
 					pcall(function() d.Text = "Grade Level: " .. rawNumStr end)
 				elseif txt:match("^Level:%s*%d+") then
@@ -3878,8 +3935,8 @@ task.spawn(function()
 	local hookedPurchaseGui = false
 	while not hookedPurchaseGui do
 		local pGuiRoot = pg:FindFirstChild("PurchaseGui")
-		local pGui = pGuiRoot and pGuiRoot:FindFirstChild("PurchaseGui")
-		local pFailed = pGui and pGui:FindFirstChild("PurchaseFailed")
+		local pFailed = pGuiRoot and pGuiRoot:FindFirstChild("PurchaseFailed", true)
+		local pGui = pFailed and pFailed.Parent
 		if pGui and pFailed then
 			hookedPurchaseGui = true
 			pFailed:GetPropertyChangedSignal("Visible"):Connect(function()
@@ -4261,6 +4318,152 @@ local function makeCard(item, order)
 	return card
 end
 
+-- ============================================================
+-- 6. SAVED OUTFITS / CLOSET SYSTEM (Save & Wear All At Once)
+-- ============================================================
+local HttpService = game:GetService("HttpService")
+local OUTFIT_FILE = "RH_SavedOutfits_v1.json"
+_G.RH_SavedOutfits = _G.RH_SavedOutfits or {}
+_G.RH_OutfitMeshCache = _G.RH_OutfitMeshCache or {}
+
+local function loadSavedOutfitsFromDisk()
+	if #_G.RH_SavedOutfits > 0 then return end
+	if readfile and isfile then
+		pcall(function()
+			if isfile(OUTFIT_FILE) then
+				local raw = readfile(OUTFIT_FILE)
+				local decoded = HttpService:JSONDecode(raw)
+				if type(decoded) == "table" then
+					_G.RH_SavedOutfits = decoded
+				end
+			end
+		end)
+	end
+end
+pcall(loadSavedOutfitsFromDisk)
+
+local function persistSavedOutfitsToDisk()
+	if writefile then
+		pcall(function()
+			writefile(OUTFIT_FILE, HttpService:JSONEncode(_G.RH_SavedOutfits))
+		end)
+	end
+end
+
+local function captureItemColors(inst)
+	local colors = {}
+	if not inst then return colors end
+	for _, d in ipairs(inst:GetDescendants()) do
+		if d:IsA("BasePart") then
+			colors[d.Name] = {d.Color.R, d.Color.G, d.Color.B}
+		end
+	end
+	return colors
+end
+
+local function applySavedColors(inst, colors)
+	if not inst or type(colors) ~= "table" then return end
+	for _, d in ipairs(inst:GetDescendants()) do
+		if d:IsA("BasePart") and colors[d.Name] then
+			local c = colors[d.Name]
+			if type(c) == "table" and #c >= 3 then
+				d.Color = Color3.new(c[1], c[2], c[3])
+			end
+		end
+	end
+end
+
+local function saveCurrentOutfitToCloset()
+	local worn = getWornItemsList()
+	if #worn == 0 then
+		if setStatusRef then setStatusRef("Nothing worn to save!", C.muted) end
+		return false
+	end
+
+	local entries = {}
+	for _, w in ipairs(worn) do
+		local cacheKey = (w.slotKey or w.cat or "Acc") .. "_" .. (w.name or "Item")
+		local inst = w.bakedInst or w.liveInst
+		if inst then
+			local cloned = deepClone(inst)
+			if cloned then
+				_G.RH_OutfitMeshCache[cacheKey] = cloned
+			end
+		end
+		table.insert(entries, {
+			name = w.name,
+			assetName = w.name,
+			cat = w.cat,
+			slotKey = w.slotKey,
+			img = w.img or "",
+			price = w.price or "",
+			cacheKey = cacheKey,
+			colors = captureItemColors(inst)
+		})
+	end
+
+	local outfitName = "Outfit " .. tostring(#_G.RH_SavedOutfits + 1)
+	table.insert(_G.RH_SavedOutfits, {
+		name = outfitName,
+		items = entries
+	})
+	persistSavedOutfitsToDisk()
+	if setStatusRef then setStatusRef("Saved " .. outfitName .. " (" .. #entries .. " items)!", C.text) end
+	if refreshGridRef then refreshGridRef("Worn") end
+	return true
+end
+
+local function wearSavedOutfit(outfit)
+	if not outfit or type(outfit.items) ~= "table" or #outfit.items == 0 then return end
+	if setStatusRef then setStatusRef("Loading " .. (outfit.name or "Outfit") .. "...", C.sub) end
+
+	task.spawn(function()
+		clearAllWornLayers()
+		task.wait(0.15)
+
+		for _, entry in ipairs(outfit.items) do
+			local cachedModel = entry.cacheKey and _G.RH_OutfitMeshCache[entry.cacheKey]
+			if cachedModel then
+				local baked = bakeItemToAvatar(cachedModel, entry.cat, entry.slotKey, entry)
+				if baked and entry.colors then
+					applySavedColors(baked, entry.colors)
+				end
+			else
+				-- Re-equip via server preview & wait for it to bake before moving to the next item
+				local itemObj = {
+					name = entry.name,
+					assetName = entry.assetName or entry.name,
+					cat = entry.cat,
+					img = entry.img or "",
+					price = entry.price or ""
+				}
+				equipItem(itemObj)
+				-- Wait up to 4.2s for this slot to appear in RH_BakedWardrobe before equipping the next item
+				local waitStart = tick()
+				local char = lp.Character
+				local targetSlot = entry.slotKey or entry.cat
+				while tick() - waitStart < 4.2 do
+					task.wait(0.15)
+					char = lp.Character
+					local bf = char and char:FindFirstChild("RH_BakedWardrobe")
+					if bf and targetSlot and bf:FindFirstChild(targetSlot) then
+						if entry.colors then
+							applySavedColors(bf:FindFirstChild(targetSlot), entry.colors)
+						end
+						break
+					end
+				end
+			end
+			task.wait(0.10)
+		end
+
+		releasePlayerMovement()
+		updateTabCounts()
+		if refreshGridRef then refreshGridRef() end
+		if setStatusRef then setStatusRef("Wore " .. (outfit.name or "Outfit") .. "!", C.text) end
+	end)
+end
+
 local function refreshGrid()
 	for _, card in pairs(cardInstances) do card:Destroy() end
 	cardInstances = {}
@@ -4283,10 +4486,100 @@ local function refreshGrid()
 	end
 
 	if currentCat == "Worn" then
+		-- Closet / Saved Outfits Bar at top of Worn tab
+		local closetHeader = mk("Frame", {
+			Name             = "ClosetSaveBar",
+			Size             = UDim2.new(1, -8, 0, 26),
+			BackgroundColor3 = C.panel,
+			BorderSizePixel  = 0,
+			LayoutOrder      = -100,
+			ZIndex           = 13,
+		}, GridScroll)
+		corner(4, closetHeader)
+		stroke(1, C.borderHi, closetHeader)
+		cardInstances[closetHeader] = closetHeader
+
+		local saveBtn = mk("TextButton", {
+			Size             = UDim2.new(1, -8, 1, -6),
+			Position         = UDim2.new(0, 4, 0, 3),
+			BackgroundColor3 = C.accent,
+			Text             = "+ SAVE CURRENT OUTFIT TO CLOSET",
+			TextColor3       = C.accentTxt,
+			Font             = Enum.Font.GothamBold,
+			TextSize         = 7.5,
+			BorderSizePixel  = 0,
+			ZIndex           = 14,
+		}, closetHeader)
+		corner(3, saveBtn)
+		saveBtn.Activated:Connect(saveCurrentOutfitToCloset)
+
+		-- Render each saved outfit row
+		for idx, outfit in ipairs(_G.RH_SavedOutfits) do
+			local oRow = mk("Frame", {
+				Name             = "SavedOutfit_" .. idx,
+				Size             = UDim2.new(1, -8, 0, 28),
+				BackgroundColor3 = C.card,
+				BorderSizePixel  = 0,
+				LayoutOrder      = -90 + idx,
+				ZIndex           = 13,
+			}, GridScroll)
+			corner(4, oRow)
+			stroke(1, C.border, oRow)
+			cardInstances[oRow] = oRow
+
+			mk("TextLabel", {
+				Size               = UDim2.new(1, -84, 1, 0),
+				Position           = UDim2.new(0, 6, 0, 0),
+				BackgroundTransparency = 1,
+				Text               = (outfit.name or ("Outfit " .. idx)) .. " (" .. #(outfit.items or {}) .. " items)",
+				TextColor3         = C.text,
+				Font               = Enum.Font.GothamBold,
+				TextSize           = 7.5,
+				TextXAlignment     = Enum.TextXAlignment.Left,
+				TextTruncate       = Enum.TextTruncate.AtEnd,
+				ZIndex             = 14,
+			}, oRow)
+
+			local wearAllBtn = mk("TextButton", {
+				Size             = UDim2.new(0, 46, 0, 20),
+				Position         = UDim2.new(1, -76, 0.5, -10),
+				BackgroundColor3 = C.accent,
+				Text             = "WEAR",
+				TextColor3       = C.accentTxt,
+				Font             = Enum.Font.GothamBold,
+				TextSize         = 7,
+				BorderSizePixel  = 0,
+				ZIndex           = 14,
+			}, oRow)
+			corner(3, wearAllBtn)
+			wearAllBtn.Activated:Connect(function()
+				wearSavedOutfit(outfit)
+			end)
+
+			local delBtn = mk("TextButton", {
+				Size             = UDim2.new(0, 22, 0, 20),
+				Position         = UDim2.new(1, -26, 0.5, -10),
+				BackgroundColor3 = C.panel,
+				Text             = "X",
+				TextColor3       = C.sub,
+				Font             = Enum.Font.GothamBold,
+				TextSize         = 7.5,
+				BorderSizePixel  = 0,
+				ZIndex           = 14,
+			}, oRow)
+			corner(3, delBtn)
+			stroke(1, C.border, delBtn)
+			delBtn.Activated:Connect(function()
+				table.remove(_G.RH_SavedOutfits, idx)
+				persistSavedOutfitsToDisk()
+				refreshGrid()
+			end)
+		end
+
 		if #filtered == 0 then
 			local emptyCard = mk("Frame", {
 				Name             = "EmptyNotice",
-				Size             = UDim2.new(1, -8, 0, 80),
+				Size             = UDim2.new(1, -8, 0, 64),
 				BackgroundColor3 = C.card,
 				BorderSizePixel  = 0,
 				LayoutOrder      = 1,
@@ -4299,7 +4592,7 @@ local function refreshGrid()
 				Size               = UDim2.new(1, -12, 1, 0),
 				Position           = UDim2.new(0, 6, 0, 0),
 				BackgroundTransparency = 1,
-				Text               = "NO ITEMS WORN\n\nEquip items from Heels, Skirts, or Bodices to wear and stack them!",
+				Text               = "NO ITEMS WORN\nEquip items from Heels, Skirts, or Bodices, then tap + SAVE CURRENT OUTFIT!",
 				TextColor3         = C.sub,
 				Font               = Enum.Font.Gotham,
 				TextSize           = 7.5,
