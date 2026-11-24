@@ -1,5 +1,5 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v33
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v36
 --
 -- NEW FIXES & FEATURES IN v28:
 -- 1. PRECISION CLOTHING SCANNER (ZERO HAIR CLONING):
@@ -169,10 +169,10 @@ local function releasePlayerMovement()
         if hum.JumpPower and hum.JumpPower < 50 then hum.JumpPower = 50 end
         if hum.JumpHeight and hum.JumpHeight < 7.2 then hum.JumpHeight = 7.2 end
 
-        -- Stop forced idle or freeze animations
+        -- Stop only forced freeze animations (preserve item idle/hold/pose animations!)
         for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
             local tn = track.Animation and track.Animation.Name:lower() or ""
-            if tn:find("idle") or tn:find("stand") or tn:find("freeze") then
+            if tn:find("freeze") then
                 pcall(function() track:Stop(0.05) end)
             end
         end
@@ -220,6 +220,7 @@ local function releasePlayerMovement()
     pcall(hideTryOnOverlays)
 end
 
+local enforceHiddenBodyParts = nil
 local function unanchorCharacter()
     local char = lp.Character
     if not char then return end
@@ -240,6 +241,9 @@ local function unanchorCharacter()
         if hum.PlatformStand then hum.PlatformStand = false end
         if hum.Sit then hum.Sit = false end
         if hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+    end
+    if enforceHiddenBodyParts then
+        pcall(enforceHiddenBodyParts)
     end
 end
 
@@ -275,7 +279,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v33)
+-- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v36)
 -- ============================================================
 local bakedLayersBackup = {}
 local defaultAvatarInstances = {}
@@ -285,6 +289,54 @@ local legPartNames = {
     "LeftLeg", "RightLeg", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
     "RightUpperLeg", "RightLowerLeg", "RightFoot"
 }
+
+local hiddenBodyPartsBySlot = {}
+
+enforceHiddenBodyParts = function()
+    local char = lp.Character
+    if not char then return end
+    local bakedFolder = char:FindFirstChild("RH_BakedWardrobe")
+    if not bakedFolder then return end
+
+    for slotKey, partsMap in pairs(hiddenBodyPartsBySlot) do
+        if bakedFolder:FindFirstChild(slotKey) then
+            for partName, _ in pairs(partsMap) do
+                if partName ~= "HumanoidRootPart" and partName ~= "Head" then
+                    local limb = char:FindFirstChild(partName)
+                    if limb and limb:IsA("BasePart") and limb.Transparency < 0.99 then
+                        limb.Transparency = 1
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function restoreUnhiddenBodyParts(removedPartsMap)
+    local char = lp.Character
+    if not char or not removedPartsMap then return end
+    local bakedFolder = char:FindFirstChild("RH_BakedWardrobe")
+
+    for partName, _ in pairs(removedPartsMap) do
+        if partName ~= "HumanoidRootPart" and partName ~= "Head" then
+            local stillHidden = false
+            if bakedFolder then
+                for slotKey, partsMap in pairs(hiddenBodyPartsBySlot) do
+                    if bakedFolder:FindFirstChild(slotKey) and partsMap[partName] then
+                        stillHidden = true
+                        break
+                    end
+                end
+            end
+            if not stillHidden then
+                local limb = char:FindFirstChild(partName)
+                if limb and limb:IsA("BasePart") then
+                    limb.Transparency = 0
+                end
+            end
+        end
+    end
+end
 
 local function registerDefaultAvatar()
     local char = lp.Character
@@ -397,7 +449,7 @@ local function findRoyaleHighItemsOnAvatar()
     -- 2. Scan Character hierarchy for custom models/folders/items
     for _, d in ipairs(char:GetChildren()) do
         if not isBaseAvatarObject(d) and d.Name ~= "RH_BakedWardrobe" then
-            if d:IsA("Model") or d:IsA("Folder") or d:IsA("Accessory") or d:IsA("MeshPart") then
+            if d:IsA("Model") or d:IsA("Folder") or d:IsA("Accessory") or d:IsA("MeshPart") or d:IsA("Tool") then
                 addItem(d)
             end
         end
@@ -494,7 +546,7 @@ local function findSpecificItemOnAvatar(itemName, cat, beforeSet)
     -- 2. Check Character direct children (excluding RH_BakedWardrobe)
     for _, d in ipairs(char:GetChildren()) do
         if not isBaseAvatarObject(d) and d.Name ~= "RH_BakedWardrobe" then
-            if d:IsA("Model") or d:IsA("Folder") or d:IsA("Accessory") or d:IsA("MeshPart") then
+            if d:IsA("Model") or d:IsA("Folder") or d:IsA("Accessory") or d:IsA("MeshPart") or d:IsA("Tool") then
                 if matchesName(d) then
                     return d, cat
                 end
@@ -521,7 +573,6 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
     elseif cat == "Heels" or cat == "Skirts" or cat == "Bodices" or cat == "Wings" or cat == "Halos" then
         slotKey = cat
     else
-        -- Multi-Accessory Engine: Every accessory gets its own distinct slot key so you can wear unlimited accessories!
         local accName = (itemData and itemData.name) or sourceItem.Name
         if accName == "Accessory" or accName == "Model" or accName == "Folder" or accName == "Part" then
             local sub = sourceItem:FindFirstChildWhichIsA("SpecialMesh", true) or sourceItem:FindFirstChildWhichIsA("MeshPart", true)
@@ -530,6 +581,43 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
             end
         end
         slotKey = "Acc_" .. accName:gsub("%s+", "")
+    end
+
+    -- Inspect sourceItem's existing joints BEFORE cloning to find the exact character limb it was attached to (e.g. RightHand for a sword)
+    local detectedLimb = nil
+    local charLimbs = {}
+    for _, limb in ipairs(char:GetChildren()) do
+        if limb:IsA("BasePart") and standardBodyParts[limb.Name] then
+            charLimbs[limb] = true
+        end
+    end
+
+    local function scanForCharLimb(rootInst)
+        for _, j in ipairs(rootInst:GetDescendants()) do
+            if j:IsA("Weld") or j:IsA("WeldConstraint") or j:IsA("Motor6D") then
+                if j.Part0 and charLimbs[j.Part0] then return j.Part0 end
+                if j.Part1 and charLimbs[j.Part1] then return j.Part1 end
+            end
+        end
+        return nil
+    end
+
+    detectedLimb = scanForCharLimb(sourceItem)
+    if not detectedLimb then
+        -- Also check joints stored under char that point into sourceItem
+        for _, j in ipairs(char:GetDescendants()) do
+            if j:IsA("Weld") or j:IsA("WeldConstraint") or j:IsA("Motor6D") then
+                if j.Part0 and j.Part1 then
+                    if charLimbs[j.Part0] and (j.Part1 == sourceItem or j.Part1:IsDescendantOf(sourceItem)) then
+                        detectedLimb = j.Part0
+                        break
+                    elseif charLimbs[j.Part1] and (j.Part0 == sourceItem or j.Part0:IsDescendantOf(sourceItem)) then
+                        detectedLimb = j.Part1
+                        break
+                    end
+                end
+            end
+        end
     end
 
     -- Dedicated container under Character
@@ -555,6 +643,19 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
     end)
     if not ok or not clone then return nil end
 
+    -- If sourceItem was a Tool, convert to Model so it wears passively without equipping as a tool
+    if clone:IsA("Tool") then
+        local m = Instance.new("Model")
+        m.Name = clone.Name
+        for _, ch in ipairs(clone:GetChildren()) do
+            if not ch:IsA("Script") and not ch:IsA("LocalScript") then
+                ch.Parent = m
+            end
+        end
+        clone:Destroy()
+        clone = m
+    end
+
     local imgToStore = (itemData and itemData.img and itemData.img ~= "") and itemData.img or ""
     if imgToStore == "" and findItemImage then
         imgToStore = findItemImage(itemData and itemData.name or sourceItem.Name, cat)
@@ -568,10 +669,17 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
     clone:SetAttribute("RH_Image", imgToStore)
     clone:SetAttribute("RH_Price", (itemData and itemData.price) or "")
 
-    -- Clean old broken joints in clone
+    -- Preserve internal Motor6Ds, Bones, AnimationControllers, & VFX for 1:1 animations;
+    -- only remove external joints pointing outside the clone or BodyMovers
     for _, j in ipairs(clone:GetDescendants()) do
-        if j:IsA("JointInstance") or j:IsA("WeldConstraint") then
-            j:Destroy()
+        if j:IsA("BodyMover") or j:IsA("Script") then
+            pcall(function() j:Destroy() end)
+        elseif j:IsA("JointInstance") or j:IsA("WeldConstraint") then
+            local p0ok = j.Part0 and (j.Part0 == clone or j.Part0:IsDescendantOf(clone))
+            local p1ok = j.Part1 and (j.Part1 == clone or j.Part1:IsDescendantOf(clone))
+            if not (p0ok and p1ok) then
+                pcall(function() j:Destroy() end)
+            end
         end
     end
 
@@ -585,12 +693,23 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
         pcall(function() p.CustomPhysicalProperties = zeroPhys end)
     end
 
-    -- 1:1 Unified Rigid Movement Engine:
-    -- Binds all sub-parts of an item to ONE central root part so the entire dress/shoe moves as ONE unified piece without separating!
+    -- Parent clone into Workspace (bakedFolder) FIRST so all Welds activate immediately!
+    clone.Parent = bakedFolder
+
+    local function weldRigid(part0, part1, weldName)
+        local w = Instance.new("Weld")
+        w.Name = weldName or "RH_RigidWeld"
+        w.Part0 = part0
+        w.Part1 = part1
+        w.C0 = part0.CFrame:ToObjectSpace(part1.CFrame)
+        w.C1 = CFrame.new()
+        w.Parent = part1
+        return w
+    end
+
     local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("LowerTorso")
 
     if cat == "Heels" and hrp then
-        -- Heels: Unified Left Boot and Unified Right Boot
         local leftLimb = char:FindFirstChild("LeftLowerLeg") or char:FindFirstChild("LeftUpperLeg") or char:FindFirstChild("Left Leg") or hrp
         local rightLimb = char:FindFirstChild("RightLowerLeg") or char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg") or hrp
 
@@ -598,47 +717,40 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
         local rightParts = {}
 
         if clone:IsA("BasePart") then
+            prepPart(clone)
             if hrp.CFrame:PointToObjectSpace(clone.Position).X < 0 then table.insert(leftParts, clone) else table.insert(rightParts, clone) end
         else
             for _, p in ipairs(clone:GetDescendants()) do
                 if p:IsA("BasePart") then
+                    prepPart(p)
                     if hrp.CFrame:PointToObjectSpace(p.Position).X < 0 then table.insert(leftParts, p) else table.insert(rightParts, p) end
                 end
             end
         end
 
         local function rigBoot(partsList, targetLimb)
-            if #partsList == 0 then return end
-            -- Find largest part as root
+            if #partsList == 0 or not targetLimb then return end
             local root = partsList[1]
-            local maxVol = 0
+            local maxVol = -1
             for _, p in ipairs(partsList) do
-                prepPart(p)
                 local vol = p.Size.X * p.Size.Y * p.Size.Z
                 if vol > maxVol then maxVol = vol; root = p end
             end
 
-            -- Match root to limb 1:1
-            local relOffset = targetLimb.CFrame:ToObjectSpace(root.CFrame)
-            root.CFrame = targetLimb.CFrame * relOffset
-
-            local wc = Instance.new("WeldConstraint")
-            wc.Name = "RH_BootRootWeld"
-            wc.Part0 = targetLimb
-            wc.Part1 = root
-            wc.Parent = root
-
-            -- Weld all other parts rigidly to boot root so the boot never splits apart
+            weldRigid(targetLimb, root, "RH_BootRootWeld")
             for _, p in ipairs(partsList) do
                 if p ~= root then
-                    local pRel = root.CFrame:ToObjectSpace(p.CFrame)
-                    p.CFrame = root.CFrame * pRel
-
-                    local subWc = Instance.new("WeldConstraint")
-                    subWc.Name = "RH_BootSubWeld"
-                    subWc.Part0 = root
-                    subWc.Part1 = p
-                    subWc.Parent = p
+                    local hasInternalJoint = false
+                    for _, d in ipairs(clone:GetDescendants()) do
+                        if (d:IsA("Motor6D") or d:IsA("Weld") or d:IsA("WeldConstraint"))
+                           and (d.Part0 == p or d.Part1 == p) then
+                            hasInternalJoint = true
+                            break
+                        end
+                    end
+                    if not hasInternalJoint then
+                        weldRigid(root, p, "RH_BootSubWeld")
+                    end
                 end
             end
         end
@@ -646,93 +758,144 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
         rigBoot(leftParts, leftLimb)
         rigBoot(rightParts, rightLimb)
     else
-        -- Skirts, Bodices, Wings, Halos, and Accessories: Unified Root Weld
-        local targetLimb = nil
-        if cat == "Skirts" then
-            targetLimb = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso") or hrp
-        elseif cat == "Bodices" then
-            targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or hrp
-        elseif cat == "Wings" then
-            targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or hrp
-        elseif cat == "Halos" then
-            targetLimb = char:FindFirstChild("Head") or hrp
-        else
-            -- Accessories: resolve target limb from Attachment inside accessory, or fallback to UpperTorso/Head
-            local att = clone:FindFirstChildWhichIsA("Attachment", true)
-            if att then
-                local an = att.Name:lower()
-                if an:find("hat") or an:find("face") or an:find("hair") or an:find("head") then
-                    targetLimb = char:FindFirstChild("Head")
-                elseif an:find("waist") then
-                    targetLimb = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso")
-                elseif an:find("rightgrip") or an:find("righthand") then
-                    targetLimb = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
-                elseif an:find("leftgrip") or an:find("lefthand") then
-                    targetLimb = char:FindFirstChild("LeftHand") or char:FindFirstChild("Left Arm")
-                elseif an:find("rightshoulder") then
-                    targetLimb = char:FindFirstChild("RightUpperArm") or char:FindFirstChild("Right Arm")
-                elseif an:find("leftshoulder") then
-                    targetLimb = char:FindFirstChild("LeftUpperArm") or char:FindFirstChild("Left Arm")
-                else
-                    targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+        local targetLimb = detectedLimb
+        if not targetLimb then
+            if cat == "Skirts" then
+                targetLimb = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso") or hrp
+            elseif cat == "Bodices" or cat == "Wings" then
+                targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or hrp
+            elseif cat == "Halos" then
+                targetLimb = char:FindFirstChild("Head") or hrp
+            else
+                -- Accessories: check attachments, then nearest character limb
+                local att = clone:FindFirstChildWhichIsA("Attachment", true)
+                if att then
+                    local an = att.Name:lower()
+                    if an:find("hat") or an:find("face") or an:find("hair") or an:find("head") then
+                        targetLimb = char:FindFirstChild("Head")
+                    elseif an:find("waist") then
+                        targetLimb = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso")
+                    elseif an:find("rightgrip") or an:find("righthand") then
+                        targetLimb = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
+                    elseif an:find("leftgrip") or an:find("lefthand") then
+                        targetLimb = char:FindFirstChild("LeftHand") or char:FindFirstChild("Left Arm")
+                    elseif an:find("rightshoulder") then
+                        targetLimb = char:FindFirstChild("RightUpperArm") or char:FindFirstChild("Right Arm")
+                    elseif an:find("leftshoulder") then
+                        targetLimb = char:FindFirstChild("LeftUpperArm") or char:FindFirstChild("Left Arm")
+                    elseif an:find("body") or an:find("back") or an:find("neck") or an:find("collar") then
+                        targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+                    end
                 end
-            end
-            if not targetLimb then
-                targetLimb = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Head") or char:FindFirstChild("LowerTorso") or hrp
             end
         end
 
         local allParts = {}
         if clone:IsA("BasePart") then
+            prepPart(clone)
             table.insert(allParts, clone)
         else
             for _, p in ipairs(clone:GetDescendants()) do
-                if p:IsA("BasePart") then table.insert(allParts, p) end
+                if p:IsA("BasePart") then
+                    prepPart(p)
+                    table.insert(allParts, p)
+                end
             end
         end
 
-        if #allParts > 0 and targetLimb then
-            -- Find primary root part
-            local root = clone.PrimaryPart or clone:FindFirstChild("Middle") or clone:FindFirstChild("Center") or clone:FindFirstChild("Handle") or allParts[1]
-            prepPart(root)
+        if #allParts > 0 then
+            -- Safe PrimaryPart check (never access .PrimaryPart on Folder/Accessory!)
+            local root = (clone:IsA("Model") and clone.PrimaryPart)
+                      or clone:FindFirstChild("Middle")
+                      or clone:FindFirstChild("Center")
+                      or clone:FindFirstChild("Handle")
+                      or allParts[1]
 
-            local relOffset = targetLimb.CFrame:ToObjectSpace(root.CFrame)
-            root.CFrame = targetLimb.CFrame * relOffset
+            -- If targetLimb still unknown, pick nearest character limb to root
+            if not targetLimb then
+                local bestDist = math.huge
+                for limb, _ in pairs(charLimbs) do
+                    if limb.Name ~= "HumanoidRootPart" then
+                        local dist = (limb.Position - root.Position).Magnitude
+                        if dist < bestDist then
+                            bestDist = dist
+                            targetLimb = limb
+                        end
+                    end
+                end
+                targetLimb = targetLimb or char:FindFirstChild("UpperTorso") or hrp
+            end
 
-            local wc = Instance.new("WeldConstraint")
-            wc.Name = "RH_UnifiedRootWeld"
-            wc.Part0 = targetLimb
-            wc.Part1 = root
-            wc.Parent = root
-
-            -- Weld all sub-parts to root so the entire item moves together 1:1!
-            for _, p in ipairs(allParts) do
-                if p ~= root then
-                    prepPart(p)
-                    local pRel = root.CFrame:ToObjectSpace(p.CFrame)
-                    p.CFrame = root.CFrame * pRel
-
-                    local subWc = Instance.new("WeldConstraint")
-                    subWc.Name = "RH_UnifiedSubWeld"
-                    subWc.Part0 = root
-                    subWc.Part1 = p
-                    subWc.Parent = p
+            if targetLimb then
+                weldRigid(targetLimb, root, "RH_UnifiedRootWeld")
+                for _, p in ipairs(allParts) do
+                    if p ~= root then
+                        -- Keep animated Motor6D / internal joint chains moving 1:1 instead of overriding them with a static Weld
+                        local hasInternalJoint = false
+                        for _, d in ipairs(clone:GetDescendants()) do
+                            if (d:IsA("Motor6D") or d:IsA("Weld") or d:IsA("WeldConstraint"))
+                               and (d.Part0 == p or d.Part1 == p) then
+                                hasInternalJoint = true
+                                break
+                            end
+                        end
+                        if not hasInternalJoint then
+                            weldRigid(root, p, "RH_UnifiedSubWeld")
+                        end
+                    end
                 end
             end
         end
     end
 
-    -- Keep ALL baked clones strictly inside RH_BakedWardrobe so multi-accessory stacking & unequipping always work 1:1
-    clone.Parent = bakedFolder
-
-    if cat == "Heels" then
-        for _, lName in ipairs(legPartNames) do
-            local limb = char:FindFirstChild(lName)
-            if limb and limb:IsA("BasePart") then
-                limb.Transparency = 1
+    -- Snapshot & lock any base avatar body parts hidden by this morph (corset torso, heel legs, sleeve arms, etc.)
+    local hiddenMap = {}
+    for _, limb in ipairs(char:GetChildren()) do
+        if limb:IsA("BasePart") and standardBodyParts[limb.Name] and limb.Name ~= "HumanoidRootPart" and limb.Name ~= "Head" then
+            if limb.Transparency >= 0.95 then
+                hiddenMap[limb.Name] = true
             end
         end
     end
+    if cat == "Heels" then
+        for _, lName in ipairs(legPartNames) do
+            hiddenMap[lName] = true
+        end
+    elseif cat == "Bodices" then
+        -- If the bodice contains custom torso replacement meshes or HideTorso marker, keep original torso hidden
+        local hasCustomTorso = sourceItem:FindFirstChild("UpperTorso", true)
+                            or sourceItem:FindFirstChild("LowerTorso", true)
+                            or sourceItem:FindFirstChild("Torso", true)
+                            or sourceItem:FindFirstChild("HideTorso", true)
+        if hasCustomTorso then
+            hiddenMap["UpperTorso"] = true
+            hiddenMap["LowerTorso"] = true
+            hiddenMap["Torso"] = true
+        end
+    end
+    if next(hiddenMap) ~= nil then
+        hiddenBodyPartsBySlot[slotKey] = hiddenMap
+        enforceHiddenBodyParts()
+    end
+
+    -- Replay any internal item animations (e.g., animated halos, wings, swaying ribbons, pets) 1:1
+    task.spawn(function()
+        pcall(function()
+            local animCtrl = clone:FindFirstChildWhichIsA("AnimationController", true)
+            local animator = animCtrl and (animCtrl:FindFirstChildWhichIsA("Animator") or Instance.new("Animator", animCtrl))
+            if animator then
+                for _, anim in ipairs(clone:GetDescendants()) do
+                    if anim:IsA("Animation") and anim.AnimationId ~= "" then
+                        pcall(function()
+                            local track = animator:LoadAnimation(anim)
+                            track.Looped = true
+                            track:Play()
+                        end)
+                    end
+                end
+            end
+        end)
+    end)
 
     bakedLayersBackup[slotKey] = deepClone(clone)
     return clone
@@ -822,14 +985,22 @@ local function unequipWornItem(item)
         end
     end
 
-    -- 6. Category specifics: restore legs transparency for heels
-    if cat == "Heels" and char then
+    -- 6. Restore any base body parts hidden by this slot (if no other active slot still hides them)
+    local removedMap = hiddenBodyPartsBySlot[slotKey]
+    if slotKey ~= "" then
+        hiddenBodyPartsBySlot[slotKey] = nil
+    end
+    if cat == "Heels" then
+        removedMap = removedMap or {}
         for _, lName in ipairs(legPartNames) do
-            local limb = char:FindFirstChild(lName)
-            if limb and limb:IsA("BasePart") then
-                limb.Transparency = 0
-            end
+            removedMap[lName] = true
         end
+        hiddenBodyPartsBySlot["Heels"] = nil
+    elseif cat == "Bodices" then
+        hiddenBodyPartsBySlot["Bodices"] = nil
+    end
+    if removedMap then
+        restoreUnhiddenBodyParts(removedMap)
     end
 
     -- 7. Destroy custom wings if Wings
@@ -881,14 +1052,17 @@ local function clearAllWornLayers()
             end
         end
 
-        for _, lName in ipairs(legPartNames) do
-            local limb = char:FindFirstChild(lName)
-            if limb and limb:IsA("BasePart") then
-                limb.Transparency = 0
+        for partName, _ in pairs(standardBodyParts) do
+            if partName ~= "HumanoidRootPart" then
+                local limb = char:FindFirstChild(partName)
+                if limb and limb:IsA("BasePart") then
+                    limb.Transparency = 0
+                end
             end
         end
     end
 
+    hiddenBodyPartsBySlot = {}
     bakedLayersBackup = {}
     if exitPreviewRemote then
         pcall(function() exitPreviewRemote:FireServer() end)
@@ -3464,6 +3638,7 @@ end
 
 local function updateDiamonds(val)
 	if val == "" then return end
+	local num = tonumber((val:gsub("[^%d]", "")))
 	pcall(function() pg.Shop.Header.diamondamount.Text = val end)
 	pcall(function() pg.HUD.Frame.Middle.DiamondsFrame.DiamondAmount.Text = val end)
 	pcall(function() pg.MermaidShopDiamondCount.Frame.DiamondAmount.Text = val end)
@@ -3472,13 +3647,55 @@ local function updateDiamonds(val)
 			pcall(function() d.Text = val end)
 		end
 	end
+	if num then
+		pcall(function()
+			local ls = lp:FindFirstChild("leaderstats")
+			if ls and ls:FindFirstChild("Diamonds") then ls.Diamonds.Value = num end
+		end)
+		for _, v in ipairs(lp:GetDescendants()) do
+			if (v:IsA("IntValue") or v:IsA("NumberValue")) and v.Name:lower() == "diamonds" then
+				pcall(function() v.Value = num end)
+			end
+		end
+	end
 end
 
 local function updateLevel(val)
 	if val == "" then return end
+	local rawNumStr = val:gsub("[^%d]", "")
+	local num = tonumber(rawNumStr)
+	if num then
+		pcall(function()
+			local ls = lp:FindFirstChild("leaderstats")
+			if ls and ls:FindFirstChild("Level") then ls.Level.Value = num end
+		end)
+		for _, v in ipairs(lp:GetDescendants()) do
+			if (v:IsA("IntValue") or v:IsA("NumberValue")) and (v.Name:lower() == "level" or v.Name:lower() == "playerlevel") then
+				pcall(function() v.Value = num end)
+			end
+		end
+	end
 	for _, d in ipairs(pg:GetDescendants()) do
-		if d:IsA("TextLabel") and (d.Name:lower():find("levelnumber") or (d.Name:lower() == "level" and tonumber(d.Text:gsub("[^%d]", "")))) then
-			pcall(function() d.Text = val end)
+		if d:IsA("TextLabel") then
+			local nl = d.Name:lower()
+			local txt = d.Text or ""
+			if (nl:find("level") and not nl:find("quality") and not nl:find("volume")) then
+				if txt:match("^Grade Level:%s*%d+") then
+					pcall(function() d.Text = "Grade Level: " .. rawNumStr end)
+				elseif txt:match("^Level:%s*%d+") then
+					pcall(function() d.Text = "Level: " .. rawNumStr end)
+				elseif txt:match("^Level%s+%d+") then
+					pcall(function() d.Text = "Level " .. rawNumStr end)
+				elseif txt:match("^Lv%.?%s*%d+") then
+					pcall(function() d.Text = "Lv. " .. rawNumStr end)
+				elseif tonumber(txt:gsub("[^%d]", "")) then
+					pcall(function() d.Text = val end)
+				end
+			elseif txt:match("^Grade Level:%s*%d+$") then
+				pcall(function() d.Text = "Grade Level: " .. rawNumStr end)
+			elseif txt:match("^Level%s+%d+$") then
+				pcall(function() d.Text = "Level " .. rawNumStr end)
+			end
 		end
 	end
 end
