@@ -1,20 +1,19 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v25
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v26
 --
--- NEW FIXES & FEATURES IN v25:
--- 1. BULLETPROOF AUTO-STACKING MULTI-WEAR ENGINE:
---    - Differential child snapshot ensures ONLY new server items are captured.
---    - Cloned client layers preserve all previous items when server replaces try-on.
---    - Wear Heels + Skirt + Bodice + Wings + Halos + Accessories all together!
---    - Category slots replace their own category; accessories stack infinitely.
+-- NEW FIXES & FEATURES IN v26:
+-- 1. EQUIPPEDSTORAGE MULTI-WEAR ENGINE (OPTION 1):
+--    - Scans and captures real 3D models from workspace.EquippedStorage (Heels, Skirts,
+--      Accessories, Wings) & Character.WornItems.
+--    - Clones and welds worn models to your rig limbs (LowerTorso, UpperTorso, legs)
+--      preserving limb-target welds with Massless = true and CanCollide = false.
+--    - Client-protected layers prevent the server try-on cleanup from deleting your previous pieces.
+--    - Wear Heels + Skirt + Bodice + Wings + Halos + Accessories all simultaneously!
 -- 2. UNIVERSAL COLORING SYSTEM (CLASSIC & MODERN ITEMS):
---    - Full interactive color support for classic skirts (Large Train Bow Skirt,
---      Miss Lady Rose, etc.) and all toggled/non-toggled items.
---    - Direct binding with ColorOptionsModule:Appear + live MeshPart recoloring.
---    - Persists custom colors across stacked layers.
+--    - Live recoloring on workspace.EquippedStorage & Character models.
+--    - Supports Large Train Bow Skirt, Miss Lady Rose, and all classic/modern items.
 -- 3. GRID IMAGE PRIORITY SORTING:
---    - Items with valid images always appear first.
---    - Items missing images are cleanly sorted to the very bottom of the scroll list.
+--    - Items with valid images always appear first; missing images pushed to bottom.
 -- 4. CHARACTER RESPAWN & LEG TRANSPARENCY:
 --    - Restores stacked layers on CharacterAdded.
 --    - Automatically manages leg transparency for heels and restores on Clear All.
@@ -180,7 +179,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. AUTO-STACKING MULTI-WEAR ENGINE (v25)
+-- 2. EQUIPPEDSTORAGE MULTI-WEAR ENGINE (v26 - Option 1)
 -- ============================================================
 local savedWornLayers = {}
 
@@ -196,6 +195,39 @@ local function deepClone(inst)
         return inst:Clone()
     end)
     return ok and result or nil
+end
+
+-- Resolve all Royale High equipped clothing folders for the local player
+local function getEquippedFolders()
+    local list = {}
+    local es = workspace:FindFirstChild("EquippedStorage")
+    local char = lp.Character
+    local categories = {"Heels", "Skirts", "Accessories", "Wings", "Hair"}
+
+    if es then
+        for _, cat in ipairs(categories) do
+            local cf = es:FindFirstChild(cat)
+            local pf = cf and cf:FindFirstChild(lp.Name)
+            if pf then
+                table.insert(list, {folder = pf, category = cat})
+            end
+        end
+    end
+
+    if char then
+        local wi = char:FindFirstChild("WornItems")
+        if wi then
+            for _, cat in ipairs(categories) do
+                local cf = wi:FindFirstChild(cat)
+                local pf = cf and cf:FindFirstChild(lp.Name)
+                if pf then
+                    table.insert(list, {folder = pf, category = cat})
+                end
+            end
+        end
+    end
+
+    return list
 end
 
 local function attachModelToCharacter(char, model, cat)
@@ -226,29 +258,46 @@ local function attachModelToCharacter(char, model, cat)
         end
     end
 
-    local rootPart = model.PrimaryPart
-                  or model:FindFirstChild("Center")
-                  or model:FindFirstChild("Middle")
-                  or model:FindFirstChild("Handle")
-                  or model:FindFirstChildWhichIsA("BasePart")
-
-    if rootPart then
-        local hasWeld = false
-        for _, w in ipairs(model:GetDescendants()) do
-            if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) then
-                if w.Part0 == targetLimb or w.Part1 == targetLimb then
-                    hasWeld = true
-                    break
+    -- Re-connect any welds that had a saved TargetLimb
+    local reconnectedLimbWeld = false
+    for _, w in ipairs(model:GetDescendants()) do
+        if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) then
+            local tName = w:GetAttribute("TargetLimb")
+            if tName then
+                local limb = char:FindFirstChild(tName)
+                if limb then
+                    w.Part0 = limb
+                    reconnectedLimbWeld = true
                 end
             end
         end
+    end
 
-        if not hasWeld then
-            local wc = Instance.new("WeldConstraint")
-            wc.Name = "CustomAutoStackWeld"
-            wc.Part0 = targetLimb
-            wc.Part1 = rootPart
-            wc.Parent = rootPart
+    if not reconnectedLimbWeld then
+        local rootPart = model.PrimaryPart
+                      or model:FindFirstChild("Center")
+                      or model:FindFirstChild("Middle")
+                      or model:FindFirstChild("Handle")
+                      or model:FindFirstChildWhichIsA("BasePart")
+
+        if rootPart then
+            local hasWeld = false
+            for _, w in ipairs(model:GetDescendants()) do
+                if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) then
+                    if w.Part0 == targetLimb or w.Part1 == targetLimb then
+                        hasWeld = true
+                        break
+                    end
+                end
+            end
+
+            if not hasWeld then
+                local wc = Instance.new("WeldConstraint")
+                wc.Name = "CustomAutoStackWeld"
+                wc.Part0 = targetLimb
+                wc.Part1 = rootPart
+                wc.Parent = rootPart
+            end
         end
     end
 
@@ -262,10 +311,24 @@ local function restoreAllSavedLayers()
 
     for slotKey, data in pairs(savedWornLayers) do
         local isPresent = false
-        for _, c in ipairs(char:GetChildren()) do
-            if c:GetAttribute("RH_SlotKey") == slotKey then
-                isPresent = true
-                break
+        -- Check EquippedStorage folders:
+        for _, info in ipairs(getEquippedFolders()) do
+            for _, c in ipairs(info.folder:GetChildren()) do
+                if c:GetAttribute("RH_SlotKey") == slotKey then
+                    isPresent = true
+                    break
+                end
+            end
+            if isPresent then break end
+        end
+
+        -- Check Character:
+        if not isPresent then
+            for _, c in ipairs(char:GetChildren()) do
+                if c:GetAttribute("RH_SlotKey") == slotKey then
+                    isPresent = true
+                    break
+                end
             end
         end
 
@@ -314,6 +377,19 @@ end)
 
 local function clearAllWornLayers()
     local char = lp.Character
+    -- Destroy from EquippedStorage folders
+    for _, info in ipairs(getEquippedFolders()) do
+        for _, c in ipairs(info.folder:GetChildren()) do
+            if c:GetAttribute("CustomSavedLayer")
+               or c:GetAttribute("RH_ClientLayer")
+               or c:GetAttribute("RH_SlotKey")
+               or c.Name == "Wings_TRYON"
+               or c.Name:find("CustomWing") then
+                pcall(function() c:Destroy() end)
+            end
+        end
+    end
+    -- Destroy from Character
     if char then
         for _, c in ipairs(char:GetChildren()) do
             if c:GetAttribute("CustomSavedLayer")
@@ -796,23 +872,38 @@ local function openItemColorAndToggles(item)
                     local targetLower = item.name:lower()
                     local assetLower  = (item.assetName or ""):lower()
 
-                    for _, child in ipairs(char:GetChildren()) do
-                        local cln = child.Name:lower()
-                        local isMatch = (child:GetAttribute("RH_AssetName") == item.assetName)
-                                     or (child:GetAttribute("RH_SlotKey") == item.cat)
-                                     or cln:find(targetLower, 1, true) or targetLower:find(cln, 1, true)
-                                     or (assetLower ~= "" and (cln:find(assetLower, 1, true) or assetLower:find(cln, 1, true)))
-
-                        if isMatch then
-                            if child:IsA("BasePart") then
-                                child.Color = c3
+                    local function applyColorToModel(m)
+                        if not m then return end
+                        if m:IsA("BasePart") then m.Color = c3 end
+                        for _, p in ipairs(m:GetDescendants()) do
+                            if p:IsA("BasePart") then
+                                p.Color = c3
+                            elseif p:IsA("SpecialMesh") then
+                                pcall(function() p.VertexColor = Vector3.new(c3.R, c3.G, c3.B) end)
                             end
-                            for _, p in ipairs(child:GetDescendants()) do
-                                if p:IsA("BasePart") then
-                                    p.Color = c3
-                                elseif p:IsA("SpecialMesh") then
-                                    pcall(function() p.VertexColor = Vector3.new(c3.R, c3.G, c3.B) end)
-                                end
+                        end
+                    end
+
+                    local function checkMatch(inst)
+                        local cln = inst.Name:lower()
+                        return (inst:GetAttribute("RH_AssetName") == item.assetName)
+                            or (inst:GetAttribute("RH_SlotKey") == item.cat)
+                            or cln:find(targetLower, 1, true) or targetLower:find(cln, 1, true)
+                            or (assetLower ~= "" and (cln:find(assetLower, 1, true) or assetLower:find(cln, 1, true)))
+                    end
+
+                    -- Recolor models in Character
+                    for _, child in ipairs(char:GetChildren()) do
+                        if checkMatch(child) then
+                            applyColorToModel(child)
+                        end
+                    end
+
+                    -- Recolor models in EquippedStorage
+                    for _, info in ipairs(getEquippedFolders()) do
+                        for _, child in ipairs(info.folder:GetChildren()) do
+                            if checkMatch(child) then
+                                applyColorToModel(child)
                             end
                         end
                     end
@@ -934,7 +1025,14 @@ local function equipItem(item)
     -- Slot replacement: single-slot items replace their own slot, accessories stack
     local slotKey = (itemCat == "Heels" or itemCat == "Skirts" or itemCat == "Bodices") and itemCat or ("Acc_" .. itemName)
 
-    -- Destroy old instances of this slot from character
+    -- Destroy old instances of this slot from EquippedStorage and Character
+    for _, info in ipairs(getEquippedFolders()) do
+        for _, c in ipairs(info.folder:GetChildren()) do
+            if c:GetAttribute("RH_SlotKey") == slotKey then
+                pcall(function() c:Destroy() end)
+            end
+        end
+    end
     for _, c in ipairs(char:GetChildren()) do
         if c:GetAttribute("RH_SlotKey") == slotKey then
             pcall(function() c:Destroy() end)
@@ -950,8 +1048,13 @@ local function equipItem(item)
         end
     end
 
-    -- Snapshot pre-existing children so we only capture NEW server instances
+    -- Snapshot pre-existing children across EquippedStorage AND Character
     local preExisting = {}
+    for _, info in ipairs(getEquippedFolders()) do
+        for _, c in ipairs(info.folder:GetChildren()) do
+            preExisting[c] = true
+        end
+    end
     for _, c in ipairs(char:GetChildren()) do
         preExisting[c] = true
     end
@@ -971,28 +1074,43 @@ local function equipItem(item)
         end
     end)
 
-    -- Capture replication & protect layer
+    -- Capture replication from EquippedStorage & Character
     task.spawn(function()
         disableFreezeOnlyConnections()
         hideTryOnOverlays()
 
         local newlyAdded = {}
         local startT = tick()
-        while tick() - startT < 2.5 do
+        while tick() - startT < 3.0 do
             task.wait(0.08)
             char = lp.Character
-            if not char then break end
-            for _, c in ipairs(char:GetChildren()) do
-                if not preExisting[c] and not c:GetAttribute("RH_ClientLayer") then
-                    if not standardBodyParts[c.Name] and c.Name ~= "Humanoid" and c.Name ~= "Animate" then
+
+            -- Scan EquippedStorage folders
+            for _, info in ipairs(getEquippedFolders()) do
+                for _, c in ipairs(info.folder:GetChildren()) do
+                    if not preExisting[c] and not c:GetAttribute("RH_ClientLayer") then
                         if not table.find(newlyAdded, c) then
                             table.insert(newlyAdded, c)
                         end
                     end
                 end
             end
+
+            -- Scan Character directly
+            if char then
+                for _, c in ipairs(char:GetChildren()) do
+                    if not preExisting[c] and not c:GetAttribute("RH_ClientLayer") then
+                        if not standardBodyParts[c.Name] and c.Name ~= "Humanoid" and c.Name ~= "Animate" then
+                            if not table.find(newlyAdded, c) then
+                                table.insert(newlyAdded, c)
+                            end
+                        end
+                    end
+                end
+            end
+
             if #newlyAdded > 0 then
-                task.wait(0.15)
+                task.wait(0.2)
                 break
             end
         end
@@ -1006,6 +1124,21 @@ local function equipItem(item)
                 inst:SetAttribute("RH_SlotKey", slotKey)
                 inst:SetAttribute("RH_Category", itemCat)
                 inst:SetAttribute("RH_AssetName", itemName)
+
+                -- Save TargetLimb for any weld attached to the character rig
+                char = lp.Character
+                if char then
+                    for _, w in ipairs(inst:GetDescendants()) do
+                        if (w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D")) then
+                            if w.Part0 and w.Part0.Parent == char then
+                                w:SetAttribute("TargetLimb", w.Part0.Name)
+                            elseif w.Part1 and w.Part1.Parent == char then
+                                w:SetAttribute("TargetLimb", w.Part1.Name)
+                            end
+                        end
+                    end
+                end
+
                 table.insert(backups, deepClone(inst))
                 table.insert(names, inst.Name)
             end)
@@ -1026,10 +1159,24 @@ local function equipItem(item)
             local hum = char:FindFirstChildOfClass("Humanoid")
             for sk, data in pairs(otherLayers) do
                 local isPresent = false
-                for _, c in ipairs(char:GetChildren()) do
-                    if c:GetAttribute("RH_SlotKey") == sk then
-                        isPresent = true
-                        break
+                -- Check EquippedStorage folders:
+                for _, info in ipairs(getEquippedFolders()) do
+                    for _, c in ipairs(info.folder:GetChildren()) do
+                        if c:GetAttribute("RH_SlotKey") == sk then
+                            isPresent = true
+                            break
+                        end
+                    end
+                    if isPresent then break end
+                end
+
+                -- Check Character:
+                if not isPresent then
+                    for _, c in ipairs(char:GetChildren()) do
+                        if c:GetAttribute("RH_SlotKey") == sk then
+                            isPresent = true
+                            break
+                        end
                     end
                 end
 
@@ -1689,4 +1836,4 @@ setActiveCategory("Heels")
 Main.Visible = true
 updateToggleBtnState()
 
-print("[RH Wardrobe v25] Multi-wear auto-stacking, universal coloring & image sorting active.")
+print("[RH Wardrobe v26] Multi-wear auto-stacking, universal coloring & image sorting active.")
