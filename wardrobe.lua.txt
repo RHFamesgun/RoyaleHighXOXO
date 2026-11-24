@@ -1,5 +1,5 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v37
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v38
 --
 -- NEW FIXES & FEATURES IN v28:
 -- 1. PRECISION CLOTHING SCANNER (ZERO HAIR CLONING):
@@ -279,11 +279,12 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v37)
+-- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v38)
 -- ============================================================
 local bakedLayersBackup = {}
 local defaultAvatarInstances = {}
 local findItemImage = nil -- Forward declaration for catalog thumbnail lookup
+local setStatusRef = nil
 
 local legPartNames = {
     "LeftLeg", "RightLeg", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
@@ -564,6 +565,51 @@ local function findSpecificItemOnAvatar(itemName, cat, beforeSet)
                 end
                 if beforeSet and not beforeSet[d] then
                     return d, cat
+                end
+            end
+        end
+    end
+
+    -- 3. Universal Weld-to-Limb Scan across char & EquippedStorage (catches ANY folder name Royale High uses!)
+    local charLimbs = {}
+    for _, limb in ipairs(char:GetChildren()) do
+        if limb:IsA("BasePart") and standardBodyParts[limb.Name] then
+            charLimbs[limb] = true
+        end
+    end
+    local es = workspace:FindFirstChild("EquippedStorage")
+    local searchRoots = { char }
+    if es then table.insert(searchRoots, es) end
+
+    for _, root in ipairs(searchRoots) do
+        for _, w in ipairs(root:GetDescendants()) do
+            if w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D") then
+                local otherPart = nil
+                if charLimbs[w.Part0] and w.Part1 and not charLimbs[w.Part1] then
+                    otherPart = w.Part1
+                elseif charLimbs[w.Part1] and w.Part0 and not charLimbs[w.Part0] then
+                    otherPart = w.Part0
+                end
+                if otherPart and not isBaseAvatarObject(otherPart) then
+                    local bakedFolder = char:FindFirstChild("RH_BakedWardrobe")
+                    if not (bakedFolder and otherPart:IsDescendantOf(bakedFolder)) then
+                        local container = otherPart
+                        while container.Parent
+                              and container.Parent ~= char
+                              and container.Parent ~= workspace
+                              and container.Parent ~= es
+                              and not container.Parent:IsA("Workspace") do
+                            if container.Parent.Name == lp.Name or container.Parent.Name == tostring(lp.UserId) then
+                                break
+                            end
+                            container = container.Parent
+                        end
+                        if not isBaseAvatarObject(container) and container.Name ~= "RH_BakedWardrobe" and countBaseParts(container) > 0 then
+                            if matchesName(container) or (beforeSet and not beforeSet[container]) then
+                                return container, cat
+                            end
+                        end
+                    end
                 end
             end
         end
@@ -1167,6 +1213,30 @@ local function getWornItemsList()
 
     return wornList
 end
+
+-- Watchdog: if Royale High replaces/clears Character children while equipping another item, immediately restore any missing baked slots
+task.spawn(function()
+    while task.wait(0.35) do
+        local char = lp.Character
+        if char and next(bakedLayersBackup) ~= nil then
+            local bakedFolder = char:FindFirstChild("RH_BakedWardrobe")
+            for slotKey, bkp in pairs(bakedLayersBackup) do
+                if not bakedFolder or not bakedFolder:FindFirstChild(slotKey) then
+                    pcall(function()
+                        local clone = deepClone(bkp)
+                        if clone then
+                            local cat = clone:GetAttribute("RH_Category") or "Accessories"
+                            local iName = clone:GetAttribute("RH_ItemName") or slotKey
+                            local iImg = clone:GetAttribute("RH_Image") or ""
+                            local iPrice = clone:GetAttribute("RH_Price") or ""
+                            bakeItemToAvatar(clone, cat, slotKey, {name = iName, img = iImg, price = iPrice, cat = cat})
+                        end
+                    end)
+                end
+            end
+        end
+    end
+end)
 
 -- Auto-restore baked layers upon character respawn
 lp.CharacterAdded:Connect(function(newChar)
@@ -3256,10 +3326,28 @@ local function equipItem(item)
             end
         end
 
+        -- Fallback: if named match missed, bake any non-base item currently on avatar not already in beforeSet
+        if not baked then
+            local fallbackItems = findRoyaleHighItemsOnAvatar()
+            for _, fi in ipairs(fallbackItems) do
+                if not beforeSet[fi] and countBaseParts(fi) > 0 then
+                    baked = bakeItemToAvatar(fi, itemCat, nil, item)
+                    if baked then break end
+                end
+            end
+        end
+
         -- Release client movement freezes WITHOUT cancelling server preview prematurely
         releasePlayerMovement()
         updateTabCounts()
         if refreshGridRef then refreshGridRef() end
+        if setStatusRef then
+            if baked then
+                setStatusRef("Cloned & Locked!", C.text)
+            else
+                setStatusRef("Previewing (tap Bake/Lock)", C.sub)
+            end
+        end
     end)
 
     return "OK"
@@ -3785,6 +3873,84 @@ task.spawn(function()
 	end
 end)
 
+-- Client-side visual "Card Accepted!" + Receipt animation when PurchaseFailed pops up under active Diamond spoof
+task.spawn(function()
+	local hookedPurchaseGui = false
+	while not hookedPurchaseGui do
+		local pGuiRoot = pg:FindFirstChild("PurchaseGui")
+		local pGui = pGuiRoot and pGuiRoot:FindFirstChild("PurchaseGui")
+		local pFailed = pGui and pGui:FindFirstChild("PurchaseFailed")
+		if pGui and pFailed then
+			hookedPurchaseGui = true
+			pFailed:GetPropertyChangedSignal("Visible"):Connect(function()
+				if not pFailed.Visible then return end
+				local spoofStr = activeSpoofs["Diamonds"]
+				if not spoofStr or spoofStr == "" then return end
+				local spoofBal = tonumber((spoofStr:gsub("[^%d]", ""))) or 0
+
+				local priceLbl = pGui:FindFirstChild("Receipt")
+				             and pGui.Receipt:FindFirstChild("PriceSplit")
+				             and pGui.Receipt.PriceSplit:FindFirstChild("Price")
+				local priceNum = priceLbl and tonumber((priceLbl.Text:gsub("[^%d]", ""))) or 0
+				if spoofBal < priceNum then return end
+
+				-- Visually deduct from spoofed diamond display & show Card Accepted + Receipt (client visual only)
+				pFailed.Visible = false
+				local newBal = math.max(0, spoofBal - priceNum)
+				local formattedNew = formatCommas(tostring(newBal))
+				activeSpoofs["Diamonds"] = formattedNew
+				updateDiamonds(formattedNew)
+
+				pcall(function()
+					local s = pGui:FindFirstChild("Success") or pGuiRoot:FindFirstChild("Success", true)
+					if s and s:IsA("Sound") then s:Play() end
+				end)
+
+				local pAcc = pGui:FindFirstChild("PurchaseAccepted")
+				if pAcc then
+					pAcc.Visible = true
+					if pAcc:FindFirstChild("MainText") then
+						pAcc.MainText.Text = "Card Accepted!"
+					end
+					for i = 1, 5 do
+						local f = pAcc:FindFirstChild(tostring(i))
+						if f and f:IsA("GuiObject") then f.Visible = true end
+						if i > 1 then
+							local prev = pAcc:FindFirstChild(tostring(i - 1))
+							if prev and prev:IsA("GuiObject") then prev.Visible = false end
+						end
+						task.wait(0.16)
+					end
+					if pAcc:FindFirstChild("MainText") then
+						pAcc.MainText.Text = "Purchase Complete!"
+					end
+				end
+
+				pcall(function()
+					local cSnd = pGui:FindFirstChild("Complete") or pGuiRoot:FindFirstChild("Complete", true)
+					if cSnd and cSnd:IsA("Sound") then cSnd:Play() end
+				end)
+
+				local receipt = pGui:FindFirstChild("Receipt")
+				if receipt then
+					receipt.Visible = true
+					pcall(function()
+						receipt:TweenPosition(UDim2.new(0, 0, 0.72, 0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.45, true)
+					end)
+				end
+
+				task.delay(3.0, function()
+					if pAcc then pAcc.Visible = false end
+					if pGuiRoot and pGuiRoot:IsA("ScreenGui") then
+						pGuiRoot.Enabled = false
+					end
+				end)
+			end)
+		end
+		task.wait(1)
+	end
+end)
+
 -- Slide-up Inspector (140px height)
 local InspHeight = 140
 local Inspector = mk("Frame", {
@@ -3880,6 +4046,7 @@ local function setStatus(msg, col)
 		if inspStatus.Text == msg then inspStatus.Text = "" end
 	end)
 end
+setStatusRef = setStatus
 
 -- Row 1: WEAR / STACK (left) and COLOR / TOGGLE (right)
 local equipBtn = mk("TextButton", {
@@ -3988,7 +4155,7 @@ local function handleWearOrRemove()
 		setStatus("Stacking...", C.sub)
 		local res = equipItem(selectedItem)
 		if res == "OK" then
-			setStatus("Layer Stacked!", C.text)
+			setStatus("Cloning & Stacking...", C.sub)
 		else
 			setStatus("Failed", C.muted)
 		end
