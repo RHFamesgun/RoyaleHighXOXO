@@ -1,5 +1,5 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v40
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v41
 --
 -- NEW FIXES & FEATURES IN v28:
 -- 1. PRECISION CLOTHING SCANNER (ZERO HAIR CLONING):
@@ -103,7 +103,7 @@ local function isTryOnGuiInstance(inst)
     -- Never hide our own wardrobe GUI
     local p = inst
     while p do
-        if p.Name == "RH_Wardrobe_v40" then return false end
+        if p.Name == "RH_Wardrobe_v41" then return false end
         p = p.Parent
     end
     local nl = inst.Name:lower()
@@ -303,9 +303,13 @@ local function unanchorCharacter()
     end
 end
 
-RunService.RenderStepped:Connect(unanchorCharacter)
-RunService.Stepped:Connect(unanchorCharacter)
-RunService.Heartbeat:Connect(unanchorCharacter)
+local lastUnanchorTick = 0
+RunService.Heartbeat:Connect(function()
+    local now = tick()
+    if now - lastUnanchorTick < 0.12 then return end
+    lastUnanchorTick = now
+    unanchorCharacter()
+end)
 
 -- Instant unfreeze when tapping screen or moving joystick
 UserInputService.InputBegan:Connect(function(input, gpe)
@@ -318,9 +322,8 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 end)
 
 task.spawn(function()
-    while task.wait(0.5) do
+    while task.wait(1.5) do
         disableFreezeOnlyConnections()
-        hideTryOnOverlays()
         pcall(function()
             ContextActionService:UnbindAction("FreezeMovement")
             ContextActionService:UnbindAction("ShopFreeze")
@@ -335,7 +338,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v40)
+-- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v41)
 -- ============================================================
 local bakedLayersBackup = {}
 local defaultAvatarInstances = {}
@@ -3813,32 +3816,59 @@ local function createStatRow(labelText, defaultVal, callback)
 	end)
 end
 
+local cachedStatLabels = { Diamonds = {}, Level = {}, Candy = {}, Cash = {} }
+local lastStatScanTick = 0
+
+local function rebuildStatLabelCache(force)
+	local now = tick()
+	if not force and (now - lastStatScanTick) < 10 then return end
+	lastStatScanTick = now
+
+	cachedStatLabels = { Diamonds = {}, Level = {}, Candy = {}, Cash = {} }
+	for _, d in ipairs(pg:GetDescendants()) do
+		if d:IsA("TextLabel") then
+			local nl = d.Name:lower()
+			local fn = d:GetFullName():lower()
+			if not fn:find("rh_wardrobe") then
+				if nl:find("diamondamount") or nl:find("diamondcount") then
+					table.insert(cachedStatLabels.Diamonds, d)
+				elseif nl:find("candyamount") or nl:find("candycount") then
+					table.insert(cachedStatLabels.Candy, d)
+				elseif nl:find("cashamount") or nl:find("cloudcash") or nl:find("dailyloginrewardscurrency") then
+					table.insert(cachedStatLabels.Cash, d)
+				elseif (nl:find("level") or fn:find("level")) and not fn:find("quality") and not fn:find("volume") and not fn:find("unlock") then
+					table.insert(cachedStatLabels.Level, d)
+				end
+			end
+		end
+	end
+end
+task.spawn(function()
+	task.wait(0.5)
+	pcall(rebuildStatLabelCache, true)
+end)
+
 local function updateDiamonds(val)
 	if val == "" then return end
+	rebuildStatLabelCache(false)
 	local num = tonumber((val:gsub("[^%d]", "")))
 	pcall(function() pg.Shop.Header.diamondamount.Text = val end)
 	pcall(function() pg.HUD.Frame.Middle.DiamondsFrame.DiamondAmount.Text = val end)
 	pcall(function() pg.MermaidShopDiamondCount.Frame.DiamondAmount.Text = val end)
-	for _, d in ipairs(pg:GetDescendants()) do
-		if d:IsA("TextLabel") and (d.Name:lower():find("diamondamount") or d.Name:lower():find("diamondcount")) then
-			pcall(function() d.Text = val end)
-		end
+	for _, d in ipairs(cachedStatLabels.Diamonds) do
+		if d and d.Parent then pcall(function() d.Text = val end) end
 	end
 	if num then
 		pcall(function()
 			local ls = lp:FindFirstChild("leaderstats")
 			if ls and ls:FindFirstChild("Diamonds") then ls.Diamonds.Value = num end
 		end)
-		for _, v in ipairs(lp:GetDescendants()) do
-			if (v:IsA("IntValue") or v:IsA("NumberValue")) and v.Name:lower() == "diamonds" then
-				pcall(function() v.Value = num end)
-			end
-		end
 	end
 end
 
 local function updateLevel(val)
 	if val == "" then return end
+	rebuildStatLabelCache(false)
 	local rawNumStr = val:gsub("[^%d]", "")
 	local num = tonumber(rawNumStr)
 	if num then
@@ -3846,34 +3876,19 @@ local function updateLevel(val)
 			local ls = lp:FindFirstChild("leaderstats")
 			if ls and ls:FindFirstChild("Level") then ls.Level.Value = num end
 		end)
-		for _, v in ipairs(lp:GetDescendants()) do
-			if (v:IsA("IntValue") or v:IsA("NumberValue")) and (v.Name:lower() == "level" or v.Name:lower() == "playerlevel") then
-				pcall(function() v.Value = num end)
-			end
-		end
 	end
-	for _, d in ipairs(pg:GetDescendants()) do
-		if d:IsA("TextLabel") then
-			local nl = d.Name:lower()
+	for _, d in ipairs(cachedStatLabels.Level) do
+		if d and d.Parent then
 			local txt = d.Text or ""
-			local fn = d:GetFullName():lower()
-			if ((nl:find("level") or fn:find("level")) and not fn:find("quality") and not fn:find("volume") and not fn:find("unlock") and not fn:find("rh_wardrobe")) then
-				if txt:match("^Grade Level:%s*%d+") then
-					pcall(function() d.Text = "Grade Level: " .. rawNumStr end)
-				elseif txt:match("^Level:%s*%d+") then
-					pcall(function() d.Text = "Level: " .. rawNumStr end)
-				elseif txt:match("^Level%s+%d+") then
-					pcall(function() d.Text = "Level " .. rawNumStr end)
-				elseif txt:match("^Lv%.?%s*%d+") then
-					pcall(function() d.Text = "Lv. " .. rawNumStr end)
-				elseif tonumber(txt:gsub("[^%d]", "")) then
-					pcall(function() d.Text = val end)
-				end
-			elseif txt:match("^Grade Level:%s*%d+$") then
+			if txt:match("^Grade Level:%s*%d+") then
 				pcall(function() d.Text = "Grade Level: " .. rawNumStr end)
-			elseif txt:match("^Level%s+[%d,]+$") then
+			elseif txt:match("^Level:%s*%d+") then
+				pcall(function() d.Text = "Level: " .. rawNumStr end)
+			elseif txt:match("^Level%s+[%d,]+") then
 				pcall(function() d.Text = "Level " .. val end)
-			elseif d.Parent and d.Parent.Name:lower():find("level") and tonumber(txt:gsub("[^%d]", "")) then
+			elseif txt:match("^Lv%.?%s*%d+") then
+				pcall(function() d.Text = "Lv. " .. rawNumStr end)
+			elseif tonumber(txt:gsub("[^%d]", "")) then
 				pcall(function() d.Text = val end)
 			end
 		end
@@ -3897,21 +3912,19 @@ end
 
 local function updateCandy(val)
 	if val == "" then return end
+	rebuildStatLabelCache(false)
 	pcall(function() pg.Shop.Header.candyamount.Text = val end)
 	pcall(function() pg.HUD.Frame.HalloweenCandy.CandyAmount.Text = val end)
-	for _, d in ipairs(pg:GetDescendants()) do
-		if d:IsA("TextLabel") and (d.Name:lower():find("candyamount") or d.Name:lower():find("candycount")) then
-			pcall(function() d.Text = val end)
-		end
+	for _, d in ipairs(cachedStatLabels.Candy) do
+		if d and d.Parent then pcall(function() d.Text = val end) end
 	end
 end
 
 local function updateCash(val)
 	if val == "" then return end
-	for _, d in ipairs(pg:GetDescendants()) do
-		if d:IsA("TextLabel") and (d.Name:lower():find("cashamount") or d.Name:lower():find("cloudcash")) then
-			pcall(function() d.Text = val end)
-		end
+	rebuildStatLabelCache(false)
+	for _, d in ipairs(cachedStatLabels.Cash) do
+		if d and d.Parent then pcall(function() d.Text = val end) end
 	end
 end
 
@@ -3922,7 +3935,7 @@ createStatRow("Cloud Cash", "10,000",    updateCash)
 
 task.spawn(function()
 	while true do
-		task.wait(0.5)
+		task.wait(0.8)
 		if activeSpoofs["Diamonds"]   then updateDiamonds(activeSpoofs["Diamonds"])   end
 		if activeSpoofs["Level"]      then updateLevel(activeSpoofs["Level"])          end
 		if activeSpoofs["Candy"]      then updateCandy(activeSpoofs["Candy"])          end
@@ -3930,79 +3943,85 @@ task.spawn(function()
 	end
 end)
 
--- Client-side visual "Card Accepted!" + Receipt animation when PurchaseFailed pops up under active Diamond spoof
+-- Client-side visual "Card Accepted!" + Receipt animation for Diamonds, Candy, and Cloud Cash
 task.spawn(function()
 	local hookedPurchaseGui = false
 	while not hookedPurchaseGui do
 		local pGuiRoot = pg:FindFirstChild("PurchaseGui")
-		local pFailed = pGuiRoot and pGuiRoot:FindFirstChild("PurchaseFailed", true)
-		local pGui = pFailed and pFailed.Parent
-		if pGui and pFailed then
+		local pFailedDiag = pGuiRoot and pGuiRoot:FindFirstChild("PurchaseFailed", true)
+		local pGui = pFailedDiag and pFailedDiag.Parent
+		if pGui then
 			hookedPurchaseGui = true
-			pFailed:GetPropertyChangedSignal("Visible"):Connect(function()
-				if not pFailed.Visible then return end
-				local spoofStr = activeSpoofs["Diamonds"]
-				if not spoofStr or spoofStr == "" then return end
-				local spoofBal = tonumber((spoofStr:gsub("[^%d]", ""))) or 0
+			local function hookCurrencyFail(failFrame, statKey, updateFn)
+				if not failFrame then return end
+				failFrame:GetPropertyChangedSignal("Visible"):Connect(function()
+					if not failFrame.Visible then return end
+					local spoofStr = activeSpoofs[statKey]
+					if not spoofStr or spoofStr == "" then return end
+					local spoofBal = tonumber((spoofStr:gsub("[^%d]", ""))) or 0
 
-				local priceLbl = pGui:FindFirstChild("Receipt")
-				             and pGui.Receipt:FindFirstChild("PriceSplit")
-				             and pGui.Receipt.PriceSplit:FindFirstChild("Price")
-				local priceNum = priceLbl and tonumber((priceLbl.Text:gsub("[^%d]", ""))) or 0
-				if spoofBal < priceNum then return end
+					local priceLbl = pGui:FindFirstChild("Receipt")
+					             and pGui.Receipt:FindFirstChild("PriceSplit")
+					             and pGui.Receipt.PriceSplit:FindFirstChild("Price")
+					local priceNum = priceLbl and tonumber((priceLbl.Text:gsub("[^%d]", ""))) or 0
+					if spoofBal < priceNum then return end
 
-				-- Visually deduct from spoofed diamond display & show Card Accepted + Receipt (client visual only)
-				pFailed.Visible = false
-				local newBal = math.max(0, spoofBal - priceNum)
-				local formattedNew = formatCommas(tostring(newBal))
-				activeSpoofs["Diamonds"] = formattedNew
-				updateDiamonds(formattedNew)
+					failFrame.Visible = false
+					local newBal = math.max(0, spoofBal - priceNum)
+					local formattedNew = formatCommas(tostring(newBal))
+					activeSpoofs[statKey] = formattedNew
+					updateFn(formattedNew)
 
-				pcall(function()
-					local s = pGui:FindFirstChild("Success") or pGuiRoot:FindFirstChild("Success", true)
-					if s and s:IsA("Sound") then s:Play() end
-				end)
-
-				local pAcc = pGui:FindFirstChild("PurchaseAccepted")
-				if pAcc then
-					pAcc.Visible = true
-					if pAcc:FindFirstChild("MainText") then
-						pAcc.MainText.Text = "Card Accepted!"
-					end
-					for i = 1, 5 do
-						local f = pAcc:FindFirstChild(tostring(i))
-						if f and f:IsA("GuiObject") then f.Visible = true end
-						if i > 1 then
-							local prev = pAcc:FindFirstChild(tostring(i - 1))
-							if prev and prev:IsA("GuiObject") then prev.Visible = false end
-						end
-						task.wait(0.16)
-					end
-					if pAcc:FindFirstChild("MainText") then
-						pAcc.MainText.Text = "Purchase Complete!"
-					end
-				end
-
-				pcall(function()
-					local cSnd = pGui:FindFirstChild("Complete") or pGuiRoot:FindFirstChild("Complete", true)
-					if cSnd and cSnd:IsA("Sound") then cSnd:Play() end
-				end)
-
-				local receipt = pGui:FindFirstChild("Receipt")
-				if receipt then
-					receipt.Visible = true
 					pcall(function()
-						receipt:TweenPosition(UDim2.new(0, 0, 0.72, 0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.45, true)
+						local s = pGui:FindFirstChild("Success") or pGuiRoot:FindFirstChild("Success", true)
+						if s and s:IsA("Sound") then s:Play() end
 					end)
-				end
 
-				task.delay(3.0, function()
-					if pAcc then pAcc.Visible = false end
-					if pGuiRoot and pGuiRoot:IsA("ScreenGui") then
-						pGuiRoot.Enabled = false
+					local pAcc = pGui:FindFirstChild("PurchaseAccepted")
+					if pAcc then
+						pAcc.Visible = true
+						if pAcc:FindFirstChild("MainText") then
+							pAcc.MainText.Text = "Card Accepted!"
+						end
+						for i = 1, 5 do
+							local f = pAcc:FindFirstChild(tostring(i))
+							if f and f:IsA("GuiObject") then f.Visible = true end
+							if i > 1 then
+								local prev = pAcc:FindFirstChild(tostring(i - 1))
+								if prev and prev:IsA("GuiObject") then prev.Visible = false end
+							end
+							task.wait(0.16)
+						end
+						if pAcc:FindFirstChild("MainText") then
+							pAcc.MainText.Text = "Purchase Complete!"
+						end
 					end
+
+					pcall(function()
+						local cSnd = pGui:FindFirstChild("Complete") or pGuiRoot:FindFirstChild("Complete", true)
+						if cSnd and cSnd:IsA("Sound") then cSnd:Play() end
+					end)
+
+					local receipt = pGui:FindFirstChild("Receipt")
+					if receipt then
+						receipt.Visible = true
+						pcall(function()
+							receipt:TweenPosition(UDim2.new(0, 0, 0.72, 0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.45, true)
+						end)
+					end
+
+					task.delay(3.0, function()
+						if pAcc then pAcc.Visible = false end
+						if pGuiRoot and pGuiRoot:IsA("ScreenGui") then
+							pGuiRoot.Enabled = false
+						end
+					end)
 				end)
-			end)
+			end
+
+			hookCurrencyFail(pGui:FindFirstChild("PurchaseFailed"), "Diamonds", updateDiamonds)
+			hookCurrencyFail(pGui:FindFirstChild("PurchaseFailedCandy"), "Candy", updateCandy)
+			hookCurrencyFail(pGui:FindFirstChild("PurchaseFailedDailyLoginRewards"), "Cloud Cash", updateCash)
 		end
 		task.wait(1)
 	end
