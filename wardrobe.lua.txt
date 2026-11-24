@@ -1,5 +1,5 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v41
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v42
 --
 -- NEW FIXES & FEATURES IN v28:
 -- 1. PRECISION CLOTHING SCANNER (ZERO HAIR CLONING):
@@ -36,21 +36,21 @@ local itemPreviewNetwork = ReplicatedStorage:WaitForChild("ItemPreviewNetwork", 
 local previewItemRemote  = itemPreviewNetwork and itemPreviewNetwork:FindFirstChild("PreviewItem")
 local exitPreviewRemote  = itemPreviewNetwork and itemPreviewNetwork:FindFirstChild("ExitPreview")
 
--- Anti-Anchor Metatable Hook: Blocks Royale High's internal try-on script from ever anchoring the player
-pcall(function()
-    if hookmetamethod and checkcaller then
-        local oldNewIndex
-        oldNewIndex = hookmetamethod(game, "__newindex", function(self, key, value)
-            if not checkcaller() and key == "Anchored" and value == true then
-                local char = lp.Character
-                if char and (self == char or self:IsDescendantOf(char)) then
-                    return
-                end
-            end
-            return oldNewIndex(self, key, value)
-        end)
-    end
-end)
+-- Zero-overhead Anti-Anchor guard (watches only HumanoidRootPart instead of hooking global __newindex)
+local function bindHrpAntiAnchor(char)
+    if not char then return end
+    task.spawn(function()
+        local hrp = char:WaitForChild("HumanoidRootPart", 10)
+        if hrp then
+            hrp:GetPropertyChangedSignal("Anchored"):Connect(function()
+                if hrp.Anchored then hrp.Anchored = false end
+            end)
+            if hrp.Anchored then hrp.Anchored = false end
+        end
+    end)
+end
+if lp.Character then bindHrpAntiAnchor(lp.Character) end
+lp.CharacterAdded:Connect(bindHrpAntiAnchor)
 
 local function getGuiParent()
     if gethui then return gethui() end
@@ -98,27 +98,6 @@ local function disableFreezeOnlyConnections()
     end
 end
 
-local function isTryOnGuiInstance(inst)
-    if not inst then return false end
-    -- Never hide our own wardrobe GUI
-    local p = inst
-    while p do
-        if p.Name == "RH_Wardrobe_v41" then return false end
-        p = p.Parent
-    end
-    local nl = inst.Name:lower()
-    if nl:find("exittryon") or nl == "tryon" or nl:find("tryon") or nl:find("try_on") then
-        return true
-    end
-    if inst:IsA("TextLabel") or inst:IsA("TextButton") then
-        local tl = (inst.Text or ""):lower()
-        if tl == "try on" or tl:find("trying on") or tl:find("exit try on") or tl:find("tryon") then
-            return true
-        end
-    end
-    return false
-end
-
 local function suppressGuiObj(desc)
     if desc:IsA("BillboardGui") or desc:IsA("SurfaceGui") or desc:IsA("ScreenGui") then
         desc.Enabled = false
@@ -137,23 +116,41 @@ local function suppressGuiObj(desc)
     end
 end
 
+local function isOverheadTryOnBillboard(inst)
+    if not inst then return false end
+    local bb = (inst:IsA("BillboardGui") or inst:IsA("SurfaceGui")) and inst or inst:FindFirstAncestorWhichIsA("BillboardGui") or inst:FindFirstAncestorWhichIsA("SurfaceGui")
+    if not bb then return false end
+    local nl = inst.Name:lower()
+    if nl:find("tryon") or nl:find("try_on") then return true end
+    if (inst:IsA("TextLabel") or inst:IsA("TextButton")) then
+        local tl = (inst.Text or ""):lower()
+        if tl == "try on" or tl:find("trying on") or tl:find("tryon") then return true end
+    end
+    return false
+end
+
 local function hideTryOnOverlays()
     pcall(function()
-        -- 1. Hide TryOn / ExitTryOn UI in PlayerGui (including BillboardGuis adorned to Character)
-        for _, desc in ipairs(pg:GetDescendants()) do
-            if isTryOnGuiInstance(desc) then
-                suppressGuiObj(desc)
-                local bb = desc:FindFirstAncestorWhichIsA("BillboardGui")
-                if bb then suppressGuiObj(bb) end
+        -- Only hide ExitTryOn buttons in HUD/Shop (never touch Shop's "Try On" buttons!)
+        local hud = pg:FindFirstChild("HUD")
+        if hud then
+            for _, ch in ipairs(hud:GetChildren()) do
+                if ch:IsA("GuiObject") and ch.Name:find("ExitTryOn") then
+                    suppressGuiObj(ch)
+                end
             end
         end
-        -- 2. Hide overhead TryOn BillboardGuis / SurfaceGuis directly inside Character
+        local shop = pg:FindFirstChild("Shop")
+        if shop then
+            local ex = shop:FindFirstChild("ExitTryOnNonWings", true)
+            if ex and ex:IsA("GuiObject") then suppressGuiObj(ex) end
+        end
+        -- Hide overhead TryOn BillboardGuis on Character (Head/Torso)
         local char = lp.Character
         if char then
-            for _, desc in ipairs(char:GetDescendants()) do
-                if isTryOnGuiInstance(desc) then
-                    suppressGuiObj(desc)
-                    local bb = desc:FindFirstAncestorWhichIsA("BillboardGui") or desc:FindFirstAncestorWhichIsA("SurfaceGui")
+            for _, d in ipairs(char:GetDescendants()) do
+                if isOverheadTryOnBillboard(d) then
+                    local bb = (d:IsA("BillboardGui") or d:IsA("SurfaceGui")) and d or d:FindFirstAncestorWhichIsA("BillboardGui") or d:FindFirstAncestorWhichIsA("SurfaceGui")
                     if bb then suppressGuiObj(bb) end
                 end
             end
@@ -164,27 +161,32 @@ end
 disableFreezeOnlyConnections()
 hideTryOnOverlays()
 
-pg.DescendantAdded:Connect(function(desc)
-    task.defer(function()
-        if desc.Parent and isTryOnGuiInstance(desc) then
-            suppressGuiObj(desc)
-            local bb = desc:FindFirstAncestorWhichIsA("BillboardGui")
-            if bb then suppressGuiObj(bb) end
-        end
-    end)
+-- Lightweight listeners (only HUD ExitTryOn & Character Head/root BillboardGuis, zero full-PlayerGui lag!)
+task.spawn(function()
+    local hud = pg:WaitForChild("HUD", 10)
+    if hud then
+        hud.ChildAdded:Connect(function(ch)
+            if ch:IsA("GuiObject") and ch.Name:find("ExitTryOn") then
+                suppressGuiObj(ch)
+            end
+        end)
+    end
 end)
 
 local function hookCharOverheadTryOn(char)
     if not char then return end
-    char.DescendantAdded:Connect(function(desc)
-        task.defer(function()
-            if desc.Parent and isTryOnGuiInstance(desc) then
-                suppressGuiObj(desc)
-                local bb = desc:FindFirstAncestorWhichIsA("BillboardGui") or desc:FindFirstAncestorWhichIsA("SurfaceGui")
-                if bb then suppressGuiObj(bb) end
-            end
-        end)
-    end)
+    local function checkPart(p)
+        if p:IsA("BillboardGui") or p:IsA("SurfaceGui") then
+            task.defer(function()
+                for _, d in ipairs(p:GetDescendants()) do
+                    if isOverheadTryOnBillboard(d) then suppressGuiObj(p) break end
+                end
+            end)
+        end
+    end
+    char.ChildAdded:Connect(checkPart)
+    local head = char:FindFirstChild("Head")
+    if head then head.ChildAdded:Connect(checkPart) end
 end
 if lp.Character then hookCharOverheadTryOn(lp.Character) end
 lp.CharacterAdded:Connect(hookCharOverheadTryOn)
@@ -338,7 +340,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v41)
+-- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v42)
 -- ============================================================
 local bakedLayersBackup = {}
 local defaultAvatarInstances = {}
@@ -981,20 +983,32 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
             end
         end
     end
+    -- Detect any custom body-limb replacements inside sourceItem (custom arms, custom torso, custom legs)
+    local armPartNames = {
+        "LeftUpperArm", "LeftLowerArm", "LeftHand", "Left Arm",
+        "RightUpperArm", "RightLowerArm", "RightHand", "Right Arm"
+    }
+    local torsoPartNames = { "UpperTorso", "LowerTorso", "Torso" }
+
     if cat == "Heels" then
-        for _, lName in ipairs(legPartNames) do
-            hiddenMap[lName] = true
+        for _, lName in ipairs(legPartNames) do hiddenMap[lName] = true end
+    end
+    for _, tName in ipairs(torsoPartNames) do
+        if sourceItem:FindFirstChild(tName, true) or sourceItem:FindFirstChild("HideTorso", true) then
+            for _, x in ipairs(torsoPartNames) do hiddenMap[x] = true end
+            break
         end
-    elseif cat == "Bodices" then
-        -- If the bodice contains custom torso replacement meshes or HideTorso marker, keep original torso hidden
-        local hasCustomTorso = sourceItem:FindFirstChild("UpperTorso", true)
-                            or sourceItem:FindFirstChild("LowerTorso", true)
-                            or sourceItem:FindFirstChild("Torso", true)
-                            or sourceItem:FindFirstChild("HideTorso", true)
-        if hasCustomTorso then
-            hiddenMap["UpperTorso"] = true
-            hiddenMap["LowerTorso"] = true
-            hiddenMap["Torso"] = true
+    end
+    for _, aName in ipairs(armPartNames) do
+        if sourceItem:FindFirstChild(aName, true) or sourceItem:FindFirstChild("HideArms", true) then
+            for _, x in ipairs(armPartNames) do hiddenMap[x] = true end
+            break
+        end
+    end
+    for _, lName in ipairs(legPartNames) do
+        if sourceItem:FindFirstChild(lName, true) or sourceItem:FindFirstChild("HideLegs", true) then
+            for _, x in ipairs(legPartNames) do hiddenMap[x] = true end
+            break
         end
     end
     if next(hiddenMap) ~= nil then
@@ -3344,13 +3358,13 @@ local function equipItem(item)
         end)
     end
 
-    -- 2. Parallel Shop TryOn Button Click
-    task.spawn(function()
-        local btn = findShopTryonButton(item.name) or findShopTryonButton(itemName)
-        if btn then
-            clickButtonVIM(btn)
-        end
-    end)
+    -- 2. Fallback Shop TryOn Button Click only if PreviewItem remote wasn't found
+    if not previewItemRemote then
+        task.spawn(function()
+            local btn = findShopTryonButton(item.name) or findShopTryonButton(itemName)
+            if btn then clickButtonVIM(btn) end
+        end)
+    end
 
     -- 3. Targeted Auto-Bake Polling: Waits specifically for THIS new item to replicate, then bakes it 1:1
     task.spawn(function()
@@ -3825,7 +3839,15 @@ local function rebuildStatLabelCache(force)
 	lastStatScanTick = now
 
 	cachedStatLabels = { Diamonds = {}, Level = {}, Candy = {}, Cash = {} }
-	for _, d in ipairs(pg:GetDescendants()) do
+	local roots = {}
+	for _, rn in ipairs({"HUD", "MermaidShopDiamondCount", "Journal", "PlayerJournal"}) do
+		local r = pg:FindFirstChild(rn)
+		if r then table.insert(roots, r) end
+	end
+	local shop = pg:FindFirstChild("Shop")
+	if shop and shop:FindFirstChild("Header") then table.insert(roots, shop.Header) end
+	for _, root in ipairs(roots) do
+	for _, d in ipairs(root:GetDescendants()) do
 		if d:IsA("TextLabel") then
 			local nl = d.Name:lower()
 			local fn = d:GetFullName():lower()
@@ -3841,6 +3863,7 @@ local function rebuildStatLabelCache(force)
 				end
 			end
 		end
+	end
 	end
 end
 task.spawn(function()
@@ -4022,6 +4045,17 @@ task.spawn(function()
 			hookCurrencyFail(pGui:FindFirstChild("PurchaseFailed"), "Diamonds", updateDiamonds)
 			hookCurrencyFail(pGui:FindFirstChild("PurchaseFailedCandy"), "Candy", updateCandy)
 			hookCurrencyFail(pGui:FindFirstChild("PurchaseFailedDailyLoginRewards"), "Cloud Cash", updateCash)
+			-- Also catch generic currency fail frames if named differently
+			for _, ch in ipairs(pGui:GetChildren()) do
+				local cnl = ch.Name:lower()
+				if cnl:find("purchasefailed") and ch.Name ~= "PurchaseFailed" and ch.Name ~= "PurchaseFailedCandy" and ch.Name ~= "PurchaseFailedDailyLoginRewards" then
+					if cnl:find("candy") then
+						hookCurrencyFail(ch, "Candy", updateCandy)
+					elseif cnl:find("cash") or cnl:find("cloud") or cnl:find("daily") then
+						hookCurrencyFail(ch, "Cloud Cash", updateCash)
+					end
+				end
+			end
 		end
 		task.wait(1)
 	end
@@ -4337,152 +4371,6 @@ local function makeCard(item, order)
 	return card
 end
 
--- ============================================================
--- 6. SAVED OUTFITS / CLOSET SYSTEM (Save & Wear All At Once)
--- ============================================================
-local HttpService = game:GetService("HttpService")
-local OUTFIT_FILE = "RH_SavedOutfits_v1.json"
-_G.RH_SavedOutfits = _G.RH_SavedOutfits or {}
-_G.RH_OutfitMeshCache = _G.RH_OutfitMeshCache or {}
-
-local function loadSavedOutfitsFromDisk()
-	if #_G.RH_SavedOutfits > 0 then return end
-	if readfile and isfile then
-		pcall(function()
-			if isfile(OUTFIT_FILE) then
-				local raw = readfile(OUTFIT_FILE)
-				local decoded = HttpService:JSONDecode(raw)
-				if type(decoded) == "table" then
-					_G.RH_SavedOutfits = decoded
-				end
-			end
-		end)
-	end
-end
-pcall(loadSavedOutfitsFromDisk)
-
-local function persistSavedOutfitsToDisk()
-	if writefile then
-		pcall(function()
-			writefile(OUTFIT_FILE, HttpService:JSONEncode(_G.RH_SavedOutfits))
-		end)
-	end
-end
-
-local function captureItemColors(inst)
-	local colors = {}
-	if not inst then return colors end
-	for _, d in ipairs(inst:GetDescendants()) do
-		if d:IsA("BasePart") then
-			colors[d.Name] = {d.Color.R, d.Color.G, d.Color.B}
-		end
-	end
-	return colors
-end
-
-local function applySavedColors(inst, colors)
-	if not inst or type(colors) ~= "table" then return end
-	for _, d in ipairs(inst:GetDescendants()) do
-		if d:IsA("BasePart") and colors[d.Name] then
-			local c = colors[d.Name]
-			if type(c) == "table" and #c >= 3 then
-				d.Color = Color3.new(c[1], c[2], c[3])
-			end
-		end
-	end
-end
-
-local function saveCurrentOutfitToCloset()
-	local worn = getWornItemsList()
-	if #worn == 0 then
-		if setStatusRef then setStatusRef("Nothing worn to save!", C.muted) end
-		return false
-	end
-
-	local entries = {}
-	for _, w in ipairs(worn) do
-		local cacheKey = (w.slotKey or w.cat or "Acc") .. "_" .. (w.name or "Item")
-		local inst = w.bakedInst or w.liveInst
-		if inst then
-			local cloned = deepClone(inst)
-			if cloned then
-				_G.RH_OutfitMeshCache[cacheKey] = cloned
-			end
-		end
-		table.insert(entries, {
-			name = w.name,
-			assetName = w.name,
-			cat = w.cat,
-			slotKey = w.slotKey,
-			img = w.img or "",
-			price = w.price or "",
-			cacheKey = cacheKey,
-			colors = captureItemColors(inst)
-		})
-	end
-
-	local outfitName = "Outfit " .. tostring(#_G.RH_SavedOutfits + 1)
-	table.insert(_G.RH_SavedOutfits, {
-		name = outfitName,
-		items = entries
-	})
-	persistSavedOutfitsToDisk()
-	if setStatusRef then setStatusRef("Saved " .. outfitName .. " (" .. #entries .. " items)!", C.text) end
-	if refreshGridRef then refreshGridRef("Worn") end
-	return true
-end
-
-local function wearSavedOutfit(outfit)
-	if not outfit or type(outfit.items) ~= "table" or #outfit.items == 0 then return end
-	if setStatusRef then setStatusRef("Loading " .. (outfit.name or "Outfit") .. "...", C.sub) end
-
-	task.spawn(function()
-		clearAllWornLayers()
-		task.wait(0.15)
-
-		for _, entry in ipairs(outfit.items) do
-			local cachedModel = entry.cacheKey and _G.RH_OutfitMeshCache[entry.cacheKey]
-			if cachedModel then
-				local baked = bakeItemToAvatar(cachedModel, entry.cat, entry.slotKey, entry)
-				if baked and entry.colors then
-					applySavedColors(baked, entry.colors)
-				end
-			else
-				-- Re-equip via server preview & wait for it to bake before moving to the next item
-				local itemObj = {
-					name = entry.name,
-					assetName = entry.assetName or entry.name,
-					cat = entry.cat,
-					img = entry.img or "",
-					price = entry.price or ""
-				}
-				equipItem(itemObj)
-				-- Wait up to 4.2s for this slot to appear in RH_BakedWardrobe before equipping the next item
-				local waitStart = tick()
-				local char = lp.Character
-				local targetSlot = entry.slotKey or entry.cat
-				while tick() - waitStart < 4.2 do
-					task.wait(0.15)
-					char = lp.Character
-					local bf = char and char:FindFirstChild("RH_BakedWardrobe")
-					if bf and targetSlot and bf:FindFirstChild(targetSlot) then
-						if entry.colors then
-							applySavedColors(bf:FindFirstChild(targetSlot), entry.colors)
-						end
-						break
-					end
-				end
-			end
-			task.wait(0.10)
-		end
-
-		releasePlayerMovement()
-		updateTabCounts()
-		if refreshGridRef then refreshGridRef() end
-		if setStatusRef then setStatusRef("Wore " .. (outfit.name or "Outfit") .. "!", C.text) end
-	end)
-end
-
 local function refreshGrid()
 	for _, card in pairs(cardInstances) do card:Destroy() end
 	cardInstances = {}
@@ -4505,96 +4393,6 @@ local function refreshGrid()
 	end
 
 	if currentCat == "Worn" then
-		-- Closet / Saved Outfits Bar at top of Worn tab
-		local closetHeader = mk("Frame", {
-			Name             = "ClosetSaveBar",
-			Size             = UDim2.new(1, -8, 0, 26),
-			BackgroundColor3 = C.panel,
-			BorderSizePixel  = 0,
-			LayoutOrder      = -100,
-			ZIndex           = 13,
-		}, GridScroll)
-		corner(4, closetHeader)
-		stroke(1, C.borderHi, closetHeader)
-		cardInstances[closetHeader] = closetHeader
-
-		local saveBtn = mk("TextButton", {
-			Size             = UDim2.new(1, -8, 1, -6),
-			Position         = UDim2.new(0, 4, 0, 3),
-			BackgroundColor3 = C.accent,
-			Text             = "+ SAVE CURRENT OUTFIT TO CLOSET",
-			TextColor3       = C.accentTxt,
-			Font             = Enum.Font.GothamBold,
-			TextSize         = 7.5,
-			BorderSizePixel  = 0,
-			ZIndex           = 14,
-		}, closetHeader)
-		corner(3, saveBtn)
-		saveBtn.Activated:Connect(saveCurrentOutfitToCloset)
-
-		-- Render each saved outfit row
-		for idx, outfit in ipairs(_G.RH_SavedOutfits) do
-			local oRow = mk("Frame", {
-				Name             = "SavedOutfit_" .. idx,
-				Size             = UDim2.new(1, -8, 0, 28),
-				BackgroundColor3 = C.card,
-				BorderSizePixel  = 0,
-				LayoutOrder      = -90 + idx,
-				ZIndex           = 13,
-			}, GridScroll)
-			corner(4, oRow)
-			stroke(1, C.border, oRow)
-			cardInstances[oRow] = oRow
-
-			mk("TextLabel", {
-				Size               = UDim2.new(1, -84, 1, 0),
-				Position           = UDim2.new(0, 6, 0, 0),
-				BackgroundTransparency = 1,
-				Text               = (outfit.name or ("Outfit " .. idx)) .. " (" .. #(outfit.items or {}) .. " items)",
-				TextColor3         = C.text,
-				Font               = Enum.Font.GothamBold,
-				TextSize           = 7.5,
-				TextXAlignment     = Enum.TextXAlignment.Left,
-				TextTruncate       = Enum.TextTruncate.AtEnd,
-				ZIndex             = 14,
-			}, oRow)
-
-			local wearAllBtn = mk("TextButton", {
-				Size             = UDim2.new(0, 46, 0, 20),
-				Position         = UDim2.new(1, -76, 0.5, -10),
-				BackgroundColor3 = C.accent,
-				Text             = "WEAR",
-				TextColor3       = C.accentTxt,
-				Font             = Enum.Font.GothamBold,
-				TextSize         = 7,
-				BorderSizePixel  = 0,
-				ZIndex           = 14,
-			}, oRow)
-			corner(3, wearAllBtn)
-			wearAllBtn.Activated:Connect(function()
-				wearSavedOutfit(outfit)
-			end)
-
-			local delBtn = mk("TextButton", {
-				Size             = UDim2.new(0, 22, 0, 20),
-				Position         = UDim2.new(1, -26, 0.5, -10),
-				BackgroundColor3 = C.panel,
-				Text             = "X",
-				TextColor3       = C.sub,
-				Font             = Enum.Font.GothamBold,
-				TextSize         = 7.5,
-				BorderSizePixel  = 0,
-				ZIndex           = 14,
-			}, oRow)
-			corner(3, delBtn)
-			stroke(1, C.border, delBtn)
-			delBtn.Activated:Connect(function()
-				table.remove(_G.RH_SavedOutfits, idx)
-				persistSavedOutfitsToDisk()
-				refreshGrid()
-			end)
-		end
-
 		if #filtered == 0 then
 			local emptyCard = mk("Frame", {
 				Name             = "EmptyNotice",
