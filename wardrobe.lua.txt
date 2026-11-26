@@ -1,5 +1,5 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v48
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v49
 --
 -- NEW FIXES & FEATURES IN v28:
 -- 1. PRECISION CLOTHING SCANNER (ZERO HAIR CLONING):
@@ -173,7 +173,7 @@ local function hideTryOnOverlays()
             end
         end
         for _, gui in ipairs(pg:GetChildren()) do
-            if gui.Name ~= "RH_Wardrobe_v48" and gui.Name ~= "Shop" then
+            if gui.Name ~= "RH_Wardrobe_v49" and gui.Name ~= "Shop" then
                 for _, bb in ipairs(gui:GetDescendants()) do
                     if bb:IsA("BillboardGui") then
                         for _, d in ipairs(bb:GetDescendants()) do
@@ -294,18 +294,25 @@ local function releasePlayerMovement()
         end
     end)
 
-    -- 5. Terminate Royale High's CLIENT-SIDE try-on anchoring loop locally WITHOUT firing ExitPreview:FireServer()
-    if exitPreviewRemote then
-        if firesignal then
-            pcall(function() firesignal(exitPreviewRemote.OnClientEvent) end)
-        end
-        if getconnections then
-            pcall(function()
-                for _, conn in ipairs(getconnections(exitPreviewRemote.OnClientEvent)) do
+    -- 5. Only trigger ExitPreview.OnClientEvent connections that handle anchoring (NEVER close PreviewTogglesFrame or ColorsGui!)
+    if exitPreviewRemote and getconnections then
+        pcall(function()
+            for _, conn in ipairs(getconnections(exitPreviewRemote.OnClientEvent)) do
+                local fn = conn.Function
+                local isAnchorReset = false
+                if getconstants and fn then
+                    for _, c in ipairs(getconstants(fn)) do
+                        if c == "PrimaryPart" or c == "Anchored" or c == "ExitTryOnNonWings" then
+                            isAnchorReset = true
+                            break
+                        end
+                    end
+                end
+                if isAnchorReset then
                     pcall(function() conn:Fire() end)
                 end
-            end)
-        end
+            end
+        end)
     end
 
     -- 6. Hide all TryOn billboard HUD elements
@@ -444,7 +451,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v48)
+-- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v49)
 -- ============================================================
 local bakedLayersBackup = {}
 local defaultAvatarInstances = {}
@@ -570,17 +577,20 @@ local function isBaseAvatarObject(inst)
     if inst.Name == "Humanoid" or inst.Name == "Animate" or inst.Name == "Head" then return true end
     if standardBodyParts[inst.Name] then return true end
 
-    -- Check if it's avatar hair
-    if inst:IsA("Accessory") then
-        local handle = inst:FindFirstChild("Handle")
-        if handle then
-            if handle:FindFirstChild("HairAttachment") then return true end
-        end
-        local ln = inst.Name:lower()
-        if ln:find("hair") or ln:find("wig") or ln:find("bangs") or ln:find("curl")
-           or ln:find("ponytail") or ln:find("pigtail") or ln:find("afro") or ln:find("braid")
-           or ln:find("locs") or ln:find("bun") or ln:find("fade") or ln:find("extension") then
-            return true
+    -- Check if it's avatar hair (Accessory, Model, Folder, or BasePart with HairAttachment or hair keywords)
+    local char = lp.Character
+    local inEquippedStorage = workspace:FindFirstChild("EquippedStorage") and inst:IsDescendantOf(workspace.EquippedStorage)
+    if not inEquippedStorage then
+        if inst:IsA("Accessory") or (char and inst.Parent == char and (inst:IsA("Model") or inst:IsA("Folder"))) then
+            if inst:FindFirstChild("HairAttachment", true) or inst:FindFirstChild("Hair", true) then
+                return true
+            end
+            local ln = inst.Name:lower()
+            if ln:find("hair") or ln:find("wig") or ln:find("bangs") or ln:find("curl")
+               or ln:find("ponytail") or ln:find("pigtail") or ln:find("afro") or ln:find("braid")
+               or ln:find("locs") or ln:find("bun") or ln:find("fade") or ln:find("extension") then
+                return true
+            end
         end
     end
 
@@ -1089,10 +1099,11 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
         end
     end
     -- Detect any custom body-limb replacements inside sourceItem (custom arms, custom torso, custom legs)
-    local armPartNames = {
-        "LeftUpperArm", "LeftLowerArm", "LeftHand", "Left Arm",
-        "RightUpperArm", "RightLowerArm", "RightHand", "Right Arm"
+    local armSleeveNames = {
+        "LeftUpperArm", "LeftLowerArm", "Left Arm",
+        "RightUpperArm", "RightLowerArm", "Right Arm"
     }
+    local handPartNames = { "LeftHand", "RightHand" }
     local torsoPartNames = { "UpperTorso", "LowerTorso", "Torso" }
 
     if cat == "Heels" then
@@ -1104,16 +1115,20 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
             break
         end
     end
-    for _, aName in ipairs(armPartNames) do
+    -- Only hide individual arm segments (never hide LeftHand / RightHand unless the item actually has custom hands!)
+    for _, aName in ipairs(armSleeveNames) do
         if sourceItem:FindFirstChild(aName, true) or sourceItem:FindFirstChild("HideArms", true) then
-            for _, x in ipairs(armPartNames) do hiddenMap[x] = true end
-            break
+            hiddenMap[aName] = true
+        end
+    end
+    for _, hName in ipairs(handPartNames) do
+        if sourceItem:FindFirstChild("HideHands", true) then
+            hiddenMap[hName] = true
         end
     end
     for _, lName in ipairs(legPartNames) do
         if sourceItem:FindFirstChild(lName, true) or sourceItem:FindFirstChild("HideLegs", true) then
-            for _, x in ipairs(legPartNames) do hiddenMap[x] = true end
-            break
+            hiddenMap[lName] = true
         end
     end
     if next(hiddenMap) ~= nil then
@@ -3640,15 +3655,98 @@ local function openItemColorAndToggles(item)
                 end
             end
 
+            local numGroups = 2
+            pcall(function()
+                local inv = ReplicatedStorage:FindFirstChild("Inventory")
+                local gn = inv and inv:FindFirstChild("GetNumColorGroups")
+                if gn and gn:IsA("RemoteFunction") then
+                    local res = gn:InvokeServer(assetName)
+                    if type(res) == "number" and res >= 1 and res <= 8 then
+                        numGroups = res
+                    end
+                end
+            end)
             colorMod:SetItemToUnequip(assetName, item.cat)
             pcall(function() colorMod:RememberSelectionKey(assetName) end)
-            colorMod:Appear(onColorPicked, true, false, "Generic", 2, false)
-            pcall(function() colorMod:SetNames("Color 1", "Color 2") end)
+            colorMod:Appear(onColorPicked, true, false, "Generic", numGroups, false)
+            local names = {}
+            for idx = 1, numGroups do names[idx] = "Color " .. tostring(idx) end
+            pcall(function() colorMod:SetNames(unpack(names)) end)
             opened = true
         end
     end)
 
     return opened
+end
+
+local function equipWings(item)
+    local char = lp.Character
+    if not char then return "No character" end
+    local itemName = item.assetName or item.name
+
+    task.spawn(function()
+        disableFreezeOnlyConnections()
+        local wingInst = nil
+
+        -- 1. Official Royale High Wings TryOn Remote
+        pcall(function()
+            local net = ReplicatedStorage:FindFirstChild("Network")
+            local fn = net and net:FindFirstChild("Functions") and net.Functions:FindFirstChild("Gui")
+            local wFolder = fn and fn:FindFirstChild("Wings")
+            local tryOnFn = wFolder and wFolder:FindFirstChild("TryOn")
+            if tryOnFn and tryOnFn:IsA("RemoteFunction") then
+                local wModel = tryOnFn:InvokeServer(itemName)
+                if typeof(wModel) == "Instance" then
+                    wingInst = wModel:FindFirstChild("Chest") or wModel
+                end
+            end
+        end)
+
+        -- 2. Check character/EquippedStorage or fallback to GetWingModel directly
+        if not wingInst or countBaseParts(wingInst) == 0 then
+            task.wait(0.25)
+            wingInst = char:FindFirstChild("Wings_TRYON")
+            if not wingInst then
+                for _, info in ipairs(getEquippedFolders()) do
+                    if info.category == "Wings" then
+                        local fCh = info.folder:GetChildren()
+                        if #fCh > 0 then wingInst = fCh[#fCh] break end
+                    end
+                end
+            end
+        end
+
+        if not wingInst or countBaseParts(wingInst) == 0 then
+            pcall(function()
+                local getWingFn = ReplicatedStorage:FindFirstChild("GetWingModel")
+                if getWingFn and getWingFn:IsA("RemoteFunction") then
+                    local wm = getWingFn:InvokeServer(itemName)
+                    if typeof(wm) == "Instance" then
+                        wingInst = wm:FindFirstChild("Chest") or wm
+                    end
+                end
+            end)
+        end
+
+        local baked = nil
+        if wingInst and countBaseParts(wingInst) > 0 then
+            baked = bakeItemToAvatar(wingInst, "Wings", "Wings", item)
+        end
+
+        hideTryOnOverlays()
+        releasePlayerMovement()
+        updateTabCounts()
+        if refreshGridRef then refreshGridRef() end
+        if setStatusRef then
+            if baked then
+                setStatusRef("Wings Equipped!", C.text)
+            else
+                setStatusRef("Wings Failed", C.muted)
+            end
+        end
+    end)
+
+    return "OK"
 end
 
 local function equipItem(item)
@@ -3701,16 +3799,15 @@ local function equipItem(item)
             task.wait(0.10)
             local targetInst, foundCat = findSpecificItemOnAvatar(itemName, itemCat, beforeSet)
             if targetInst then
-                -- Wait until child BasePart count stabilizes so ALL meshes of the bodice/dress/heels replicate before cloning
                 local lastCount = countBaseParts(targetInst)
                 local stableChecks = 0
                 local settleStart = tick()
-                while tick() - settleStart < 1.2 do
+                while tick() - settleStart < 1.4 do
                     task.wait(0.10)
                     local curCount = countBaseParts(targetInst)
-                    if curCount > 0 and curCount == lastCount then
+                    if curCount > 0 and curCount == lastCount and (tick() - settleStart) >= 0.45 then
                         stableChecks = stableChecks + 1
-                        if stableChecks >= 2 then break end
+                        if stableChecks >= 3 then break end
                     else
                         lastCount = curCount
                         stableChecks = 0
@@ -3718,6 +3815,18 @@ local function equipItem(item)
                 end
                 baked = bakeItemToAvatar(targetInst, itemCat or foundCat, nil, item)
                 if baked then
+                    -- Background catchup: if more meshes stream in on mobile 1.0s-2.0s later, silently update the clone 1:1
+                    local initialParts = countBaseParts(baked)
+                    local trackedSource = targetInst
+                    task.spawn(function()
+                        for _, delaySec in ipairs({1.0, 1.2}) do
+                            task.wait(delaySec)
+                            if trackedSource and trackedSource.Parent and countBaseParts(trackedSource) > initialParts then
+                                local updated = bakeItemToAvatar(trackedSource, itemCat or foundCat, nil, item)
+                                if updated then initialParts = countBaseParts(updated) end
+                            end
+                        end
+                    end)
                     break
                 end
             end
@@ -4167,7 +4276,7 @@ local function rebuildStatLabelCache(force)
 	for _, gui in ipairs(pg:GetChildren()) do
 		if gui.Name == "Shop" then
 			if gui:FindFirstChild("Header") then table.insert(roots, gui.Header) end
-		elseif gui.Name ~= "RH_Wardrobe_v48" then
+		elseif gui.Name ~= "RH_Wardrobe_v49" then
 			table.insert(roots, gui)
 		end
 	end
@@ -4302,9 +4411,14 @@ task.spawn(function()
 			hookedPurchaseGui = true
 			local function hookCurrencyFail(failFrame, statKey, updateFn)
 				if not failFrame then return end
-				local animBusy = false
+				local animGen = 0
+				local lastTriggerTick = 0
 				failFrame:GetPropertyChangedSignal("Visible"):Connect(function()
-					if not failFrame.Visible or animBusy then return end
+					if not failFrame.Visible then return end
+					local now = tick()
+					if (now - lastTriggerTick) < 0.25 then return end
+					lastTriggerTick = now
+
 					local spoofStr = activeSpoofs[statKey]
 					if not spoofStr or spoofStr == "" then return end
 					local spoofBal = tonumber((spoofStr:gsub("[^%d]", ""))) or 0
@@ -4315,7 +4429,8 @@ task.spawn(function()
 					local priceNum = priceLbl and tonumber((priceLbl.Text:gsub("[^%d]", ""))) or 0
 					if spoofBal < priceNum then return end
 
-					animBusy = true
+					animGen = animGen + 1
+					local myGen = animGen
 					failFrame.Visible = false
 
 					task.spawn(function()
@@ -4396,7 +4511,8 @@ task.spawn(function()
 							end)
 						end
 
-						task.wait(2.5)
+						task.wait(2.2)
+						if animGen ~= myGen then return end
 						if pAcc then pAcc.Visible = false end
 						if receipt then
 							receipt.Visible = false
@@ -4408,7 +4524,6 @@ task.spawn(function()
 						if pGuiRoot and pGuiRoot:IsA("ScreenGui") then
 							pGuiRoot.Enabled = false
 						end
-						animBusy = false
 					end)
 				end)
 			end
@@ -4645,127 +4760,13 @@ local function handleWearOrRemove()
 end
 equipBtn.Activated:Connect(handleWearOrRemove)
 
-local activeColorGroup = 1
-local BuiltInColorBar = mk("Frame", {
-	Name             = "BuiltInColorBar",
-	Size             = UDim2.new(1, -12, 0, 56),
-	Position         = UDim2.new(0, 6, 1, -198),
-	BackgroundColor3 = C.panel,
-	BorderSizePixel  = 0,
-	Visible          = false,
-	ZIndex           = 35,
-}, Main)
-corner(5, BuiltInColorBar)
-stroke(1, C.borderHi, BuiltInColorBar)
-
-local g1Btn = mk("TextButton", {
-	Size             = UDim2.new(0, 52, 0, 18),
-	Position         = UDim2.new(0, 4, 0, 4),
-	BackgroundColor3 = C.accent,
-	Text             = "Color 1",
-	TextColor3       = C.accentTxt,
-	Font             = Enum.Font.GothamBold,
-	TextSize         = 7.5,
-	BorderSizePixel  = 0,
-	ZIndex           = 36,
-}, BuiltInColorBar)
-corner(3, g1Btn)
-
-local g2Btn = mk("TextButton", {
-	Size             = UDim2.new(0, 52, 0, 18),
-	Position         = UDim2.new(0, 60, 0, 4),
-	BackgroundColor3 = C.card,
-	Text             = "Color 2",
-	TextColor3       = C.sub,
-	Font             = Enum.Font.GothamBold,
-	TextSize         = 7.5,
-	BorderSizePixel  = 0,
-	ZIndex           = 36,
-}, BuiltInColorBar)
-corner(3, g2Btn)
-
-local closeColorBarBtn = mk("TextButton", {
-	Size             = UDim2.new(0, 20, 0, 18),
-	Position         = UDim2.new(1, -24, 0, 4),
-	BackgroundColor3 = C.card,
-	Text             = "X",
-	TextColor3       = C.sub,
-	Font             = Enum.Font.GothamBold,
-	TextSize         = 7.5,
-	BorderSizePixel  = 0,
-	ZIndex           = 36,
-}, BuiltInColorBar)
-corner(3, closeColorBarBtn)
-closeColorBarBtn.Activated:Connect(function() BuiltInColorBar.Visible = false end)
-
-local function setColorGroupTab(g)
-	activeColorGroup = g
-	if g == 1 then
-		g1Btn.BackgroundColor3 = C.accent; g1Btn.TextColor3 = C.accentTxt
-		g2Btn.BackgroundColor3 = C.card;   g2Btn.TextColor3 = C.sub
-	else
-		g2Btn.BackgroundColor3 = C.accent; g2Btn.TextColor3 = C.accentTxt
-		g1Btn.BackgroundColor3 = C.card;   g1Btn.TextColor3 = C.sub
-	end
-end
-g1Btn.Activated:Connect(function() setColorGroupTab(1) end)
-g2Btn.Activated:Connect(function() setColorGroupTab(2) end)
-
-local swatchRow = mk("Frame", {
-	Size               = UDim2.new(1, -8, 0, 26),
-	Position           = UDim2.new(0, 4, 0, 26),
-	BackgroundTransparency = 1,
-	ZIndex             = 36,
-}, BuiltInColorBar)
-mk("UIListLayout", {
-	FillDirection = Enum.FillDirection.Horizontal,
-	Padding       = UDim.new(0, 3),
-	VerticalAlignment = Enum.VerticalAlignment.Center,
-}, swatchRow)
-
-local swatches = {
-	Color3.fromRGB(255, 255, 255),
-	Color3.fromRGB(180, 180, 180),
-	Color3.fromRGB(25, 25, 25),
-	Color3.fromRGB(255, 182, 213),
-	Color3.fromRGB(255, 65, 145),
-	Color3.fromRGB(220, 45, 55),
-	Color3.fromRGB(255, 165, 65),
-	Color3.fromRGB(255, 235, 100),
-	Color3.fromRGB(120, 235, 175),
-	Color3.fromRGB(60, 180, 110),
-	Color3.fromRGB(125, 210, 255),
-	Color3.fromRGB(55, 110, 240),
-	Color3.fromRGB(190, 140, 255),
-	Color3.fromRGB(120, 55, 185),
-}
-for _, swCol in ipairs(swatches) do
-	local sb = mk("TextButton", {
-		Size             = UDim2.new(0, 15, 0, 22),
-		BackgroundColor3 = swCol,
-		Text             = "",
-		BorderSizePixel  = 0,
-		ZIndex           = 37,
-	}, swatchRow)
-	corner(3, sb)
-	stroke(1, C.border, sb)
-	sb.Activated:Connect(function()
-		if not selectedItem then return end
-		local ok = applyDirectColorToItem(selectedItem, swCol, activeColorGroup)
-		if ok then
-			setStatus("Colored Group " .. tostring(activeColorGroup) .. "!", C.text)
-		else
-			setStatus("Wear/Clone item first to color", C.muted)
-		end
-	end)
-end
-
 local function handleColor()
 	if not selectedItem then return end
-	BuiltInColorBar.Visible = not BuiltInColorBar.Visible
-	openItemColorAndToggles(selectedItem)
-	if BuiltInColorBar.Visible then
-		setStatus("Pick Color 1 or Color 2", C.text)
+	local ok = openItemColorAndToggles(selectedItem)
+	if ok then
+		setStatus("Royale High Colors opened!", C.text)
+	else
+		setStatus("Colors/Toggles opened", C.sub)
 	end
 end
 colorBtn.Activated:Connect(handleColor)
@@ -4820,15 +4821,67 @@ local function makeCard(item, order)
 	corner(3, img)
 
 	if not item.img or item.img == "" then
-		mk("TextLabel", {
-			Size               = UDim2.new(1, 0, 1, 0),
-			BackgroundTransparency = 1,
-			Text               = item.isWorn and "WORN" or "NO IMG",
-			TextColor3         = item.isWorn and C.text or C.muted,
-			Font               = Enum.Font.GothamBold,
-			TextSize           = 7,
-			ZIndex             = 15,
-		}, img)
+		if item.cat == "Wings" then
+			_G.RH_WingModelCache = _G.RH_WingModelCache or {}
+			local phLbl = mk("TextLabel", {
+				Size               = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = 1,
+				Text               = "...",
+				TextColor3         = C.muted,
+				Font               = Enum.Font.GothamBold,
+				TextSize           = 7,
+				ZIndex             = 15,
+			}, img)
+			task.spawn(function()
+				local wingKey = item.assetName or item.name
+				local tmpl = _G.RH_WingModelCache[wingKey]
+				if tmpl == nil then
+					local getWingFn = ReplicatedStorage:FindFirstChild("GetWingModel")
+					if getWingFn and getWingFn:IsA("RemoteFunction") then
+						local ok, res = pcall(function() return getWingFn:InvokeServer(wingKey) end)
+						tmpl = (ok and typeof(res) == "Instance") and res or false
+						_G.RH_WingModelCache[wingKey] = tmpl
+					else
+						_G.RH_WingModelCache[wingKey] = false
+					end
+				end
+				if tmpl and typeof(tmpl) == "Instance" and img and img.Parent then
+					local clone = tmpl:Clone()
+					local vpf = mk("ViewportFrame", {
+						Size               = UDim2.new(1, 0, 1, 0),
+						BackgroundTransparency = 1,
+						ZIndex             = 15,
+					}, img)
+					local cam = Instance.new("Camera")
+					cam.Parent = vpf
+					vpf.CurrentCamera = cam
+					clone.Parent = vpf
+					local cf, sz
+					if clone:IsA("Model") then
+						cf, sz = clone:GetBoundingBox()
+					else
+						local bp = clone:FindFirstChildWhichIsA("BasePart", true)
+						cf = bp and bp.CFrame or CFrame.new()
+						sz = bp and bp.Size or Vector3.new(2, 2, 1)
+					end
+					local maxDim = math.max(sz.X, sz.Y, sz.Z, 1)
+					cam.CFrame = CFrame.new(cf.Position + Vector3.new(0, 0, maxDim * 1.15), cf.Position)
+					if phLbl then phLbl.Visible = false end
+				elseif phLbl and phLbl.Parent then
+					phLbl.Text = "WING"
+				end
+			end)
+		else
+			mk("TextLabel", {
+				Size               = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = 1,
+				Text               = item.isWorn and "WORN" or "NO IMG",
+				TextColor3         = item.isWorn and C.text or C.muted,
+				Font               = Enum.Font.GothamBold,
+				TextSize           = 7,
+				ZIndex             = 15,
+			}, img)
+		end
 	end
 
 	mk("TextLabel", {
@@ -4894,7 +4947,7 @@ local function refreshGrid()
 				Size               = UDim2.new(1, -12, 1, 0),
 				Position           = UDim2.new(0, 6, 0, 0),
 				BackgroundTransparency = 1,
-				Text               = "NO ITEMS WORN\nEquip items from Heels, Skirts, or Bodices, then tap + SAVE CURRENT OUTFIT!",
+				Text               = "NO ITEMS WORN\n\nEquip items from Heels, Skirts, or Bodices to wear and stack them!",
 				TextColor3         = C.sub,
 				Font               = Enum.Font.Gotham,
 				TextSize           = 7.5,
