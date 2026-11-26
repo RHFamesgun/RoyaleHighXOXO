@@ -1,5 +1,5 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v49
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v50
 --
 -- NEW FIXES & FEATURES IN v28:
 -- 1. PRECISION CLOTHING SCANNER (ZERO HAIR CLONING):
@@ -173,7 +173,7 @@ local function hideTryOnOverlays()
             end
         end
         for _, gui in ipairs(pg:GetChildren()) do
-            if gui.Name ~= "RH_Wardrobe_v49" and gui.Name ~= "Shop" then
+            if gui.Name ~= "RH_Wardrobe_v50" and gui.Name ~= "Shop" then
                 for _, bb in ipairs(gui:GetDescendants()) do
                     if bb:IsA("BillboardGui") then
                         for _, d in ipairs(bb:GetDescendants()) do
@@ -451,12 +451,13 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v49)
+-- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v50)
 -- ============================================================
 local bakedLayersBackup = {}
 local defaultAvatarInstances = {}
 local findItemImage = nil -- Forward declaration for catalog thumbnail lookup
 local setStatusRef = nil
+local equipItemRef = nil
 
 local legPartNames = {
     "LeftLeg", "RightLeg", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
@@ -932,11 +933,21 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData)
     clone.Parent = bakedFolder
 
     local function weldRigid(part0, part1, weldName)
+        local savedC0 = part1:GetAttribute("RH_SavedC0")
+        local relC0
+        if typeof(savedC0) == "CFrame" and part1:GetAttribute("RH_SavedPart0") == part0.Name then
+            relC0 = savedC0
+            part1.CFrame = part0.CFrame * relC0
+        else
+            relC0 = part0.CFrame:ToObjectSpace(part1.CFrame)
+            part1:SetAttribute("RH_SavedC0", relC0)
+            part1:SetAttribute("RH_SavedPart0", part0.Name)
+        end
         local w = Instance.new("Weld")
         w.Name = weldName or "RH_RigidWeld"
         w.Part0 = part0
         w.Part1 = part1
-        w.C0 = part0.CFrame:ToObjectSpace(part1.CFrame)
+        w.C0 = relC0
         w.C1 = CFrame.new()
         w.Parent = part1
         return w
@@ -3050,6 +3061,7 @@ local masterList = {
 	{"Accessories", "LeahAshe's Bear Ears", "LeahAshe's Bear Ears", "Special", ""},
 	{"Accessories", "Antilique's Horns", "Antilique's Horns", "Special", ""},
 	{"Accessories", "Cristal's Tiara", "Cristal's Tiara", "Special", ""},
+	{"Accessories", "Queen of the Ocean Sparkling Scepter (Ocean Scepter)", "Queen of the Ocean Sparkling Scepter", "Special", ""},
 	{"Accessories", "Anzu's Mindwings", "Anzu's Mindwings", "Special", ""},
 	{"Accessories", "Lizzy Winkle's Crown", "Lizzy Winkle's Crown of Roses", "Special", ""},
 
@@ -3078,7 +3090,7 @@ local masterList = {
 	{"Halos", "Lucky Halo 2021", "Lucky Halo 2021", "Special", ""},
 	{"Halos", "Val Halo 2019", "Val Halo 2019", "Special", ""},
 	{"Halos", "Val Halo 2020", "Val Halo 2020", "Special", ""},
-	{"Halos", "Val Halo 2021", "Val Halo 2021", "Special", ""},
+	{"Halos", "Valentines Halo 2021", "Valentines Halo 2021", "Special", ""},
 	{"Halos", "Easter Halo 2019", "Easter Halo 2019", "Special", ""},
 	{"Halos", "Autumn Halo 2019", "Autumn Halo 2019", "Special", ""},
 	{"Halos", "Starlight Halo 2023", "Starlight Halo 2023", "Special", ""},
@@ -3656,16 +3668,26 @@ local function openItemColorAndToggles(item)
             end
 
             local numGroups = 2
-            pcall(function()
-                local inv = ReplicatedStorage:FindFirstChild("Inventory")
-                local gn = inv and inv:FindFirstChild("GetNumColorGroups")
-                if gn and gn:IsA("RemoteFunction") then
-                    local res = gn:InvokeServer(assetName)
-                    if type(res) == "number" and res >= 1 and res <= 8 then
-                        numGroups = res
-                    end
+            local customSpec = findCustomRbxmSpec(item)
+            if customSpec then
+                local maxG = 1
+                for _, pd in ipairs(customSpec.parts) do
+                    local n = tonumber(pd.name)
+                    if n and n > maxG then maxG = n end
                 end
-            end)
+                numGroups = maxG
+            else
+                pcall(function()
+                    local inv = ReplicatedStorage:FindFirstChild("Inventory")
+                    local gn = inv and inv:FindFirstChild("GetNumColorGroups")
+                    if gn and gn:IsA("RemoteFunction") then
+                        local res = gn:InvokeServer(assetName)
+                        if type(res) == "number" and res >= 1 and res <= 8 then
+                            numGroups = res
+                        end
+                    end
+                end)
+            end
             colorMod:SetItemToUnequip(assetName, item.cat)
             pcall(function() colorMod:RememberSelectionKey(assetName) end)
             colorMod:Appear(onColorPicked, true, false, "Generic", numGroups, false)
@@ -3678,6 +3700,367 @@ local function openItemColorAndToggles(item)
 
     return opened
 end
+
+-- ============================================================
+-- 4A. CUSTOM 1:1 .RBXM MODELS (Val Halo 2021 & Ocean Scepter) + CLIENT DRESS UP INV
+-- ============================================================
+local CUSTOM_RBXM_SPECS = {
+    ["valentineshalo2021"] = {
+    anchor = "Head",
+    parts = {
+        {name="1", folder="Bows", meshId="rbxassetid://7554844114", texId="", size={1.71297, 0.20791, 1.57963}, scale={0.62752, 0.62752, 0.62752}, color={0.8275, 0.5647, 0.7373}, mat=Enum.Material.SmoothPlastic, tr=0.0, relCF={0.00019, 0.80799, -0.08627, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={}, light=nil},
+        {name="1", folder="Bows", meshId="rbxassetid://7554844088", texId="", size={1.74182, 0.13178, 1.64409}, scale={0.62752, 0.60894, 0.62742}, color={0.8275, 0.5647, 0.7373}, mat=Enum.Material.SmoothPlastic, tr=0.0, relCF={0.00022, 0.87793, -0.08678, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={{tex="rbxassetid://2111597598", pos={0.8493, 0.0036, 0.0074}}, {tex="rbxassetid://2111597598", pos={0.4242, 0.0036, 0.7411}}, {tex="rbxassetid://2111597598", pos={-0.4173, 0.0036, -0.7263}}, {tex="rbxassetid://2111597598", pos={-0.8423, 0.0036, 0.0074}}, {tex="rbxassetid://2111597598", pos={-0.4194, 0.0036, 0.7399}}, {tex="rbxassetid://2111597598", pos={0.4264, 0.0036, -0.7251}}}, light=nil},
+        {name="2", folder="Wings", meshId="rbxassetid://7554844115", texId="", size={0.48712, 0.18563, 1.67879}, scale={0.62752, 0.62752, 0.62752}, color={0.9725, 0.9725, 0.9725}, mat=Enum.Material.SmoothPlastic, tr=0.0, relCF={0.00826, 1.32923, -0.07792, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={{tex="rbxassetid://2111597598", pos={-0.1263, -0.0466, 0.8226}}, {tex="rbxassetid://2111597598", pos={-0.1859, 0.0474, 0.8226}}, {tex="rbxassetid://2111597598", pos={0.186, 0.0474, 0.8226}}, {tex="rbxassetid://2111597598", pos={-0.1263, -0.0466, -0.8151}}, {tex="rbxassetid://2111597598", pos={-0.1859, 0.0474, -0.8151}}, {tex="rbxassetid://2111597598", pos={0.1275, -0.0466, 0.8226}}, {tex="rbxassetid://2111597598", pos={0.186, 0.0474, -0.8151}}, {tex="rbxassetid://2111597598", pos={0.1275, -0.0466, -0.8151}}}, light=nil},
+        {name="2", folder="Lace", meshId="rbxassetid://7554844129", texId="", size={1.62345, 0.41287, 1.62104}, scale={0.62752, 0.62752, 0.62752}, color={0.9725, 0.9725, 0.9725}, mat=Enum.Material.SmoothPlastic, tr=0.0, relCF={-0.0019, 0.9502, -0.08034, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={}, light=nil},
+        {name="1", folder="Main", meshId="rbxassetid://7554844494", texId="", size={1.69996, 0.61651, 1.71907}, scale={0.62752, 0.62752, 0.62752}, color={0.8275, 0.5647, 0.7373}, mat=Enum.Material.SmoothPlastic, tr=0.0, relCF={-0.0004, 1.02918, -0.0783, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={}, light=nil},
+        {name="3", folder="Main", meshId="rbxassetid://7554844112", texId="", size={1.61006, 0.13772, 1.60244}, scale={0.62752, 0.62752, 0.62752}, color={1.0, 0.5922, 0.8627}, mat=Enum.Material.SmoothPlastic, tr=0.0, relCF={0.00018, 0.96143, -0.08602, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={}, light=nil},
+        {name="1", folder="Main", meshId="rbxassetid://7554844263", texId="", size={1.70291, 0.40151, 1.73708}, scale={0.62752, 0.62752, 0.62752}, color={0.8275, 0.5647, 0.7373}, mat=Enum.Material.Neon, tr=0.0, relCF={-0.00034, 1.12965, -0.07822, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={}, light=nil},
+    }
+},
+    ["valhalo2021"] = {
+    anchor = "Head",
+    parts = {
+        {name="1", folder="Bows", meshId="rbxassetid://7554844114", texId="", size={1.71297, 0.20791, 1.57963}, scale={0.62752, 0.62752, 0.62752}, color={0.8275, 0.5647, 0.7373}, mat=Enum.Material.SmoothPlastic, tr=0.0, relCF={0.00019, 0.80799, -0.08627, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={}, light=nil},
+        {name="1", folder="Bows", meshId="rbxassetid://7554844088", texId="", size={1.74182, 0.13178, 1.64409}, scale={0.62752, 0.60894, 0.62742}, color={0.8275, 0.5647, 0.7373}, mat=Enum.Material.SmoothPlastic, tr=0.0, relCF={0.00022, 0.87793, -0.08678, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={{tex="rbxassetid://2111597598", pos={0.8493, 0.0036, 0.0074}}, {tex="rbxassetid://2111597598", pos={0.4242, 0.0036, 0.7411}}, {tex="rbxassetid://2111597598", pos={-0.4173, 0.0036, -0.7263}}, {tex="rbxassetid://2111597598", pos={-0.8423, 0.0036, 0.0074}}, {tex="rbxassetid://2111597598", pos={-0.4194, 0.0036, 0.7399}}, {tex="rbxassetid://2111597598", pos={0.4264, 0.0036, -0.7251}}}, light=nil},
+        {name="2", folder="Wings", meshId="rbxassetid://7554844115", texId="", size={0.48712, 0.18563, 1.67879}, scale={0.62752, 0.62752, 0.62752}, color={0.9725, 0.9725, 0.9725}, mat=Enum.Material.SmoothPlastic, tr=0.0, relCF={0.00826, 1.32923, -0.07792, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={{tex="rbxassetid://2111597598", pos={-0.1263, -0.0466, 0.8226}}, {tex="rbxassetid://2111597598", pos={-0.1859, 0.0474, 0.8226}}, {tex="rbxassetid://2111597598", pos={0.186, 0.0474, 0.8226}}, {tex="rbxassetid://2111597598", pos={-0.1263, -0.0466, -0.8151}}, {tex="rbxassetid://2111597598", pos={-0.1859, 0.0474, -0.8151}}, {tex="rbxassetid://2111597598", pos={0.1275, -0.0466, 0.8226}}, {tex="rbxassetid://2111597598", pos={0.186, 0.0474, -0.8151}}, {tex="rbxassetid://2111597598", pos={0.1275, -0.0466, -0.8151}}}, light=nil},
+        {name="2", folder="Lace", meshId="rbxassetid://7554844129", texId="", size={1.62345, 0.41287, 1.62104}, scale={0.62752, 0.62752, 0.62752}, color={0.9725, 0.9725, 0.9725}, mat=Enum.Material.SmoothPlastic, tr=0.0, relCF={-0.0019, 0.9502, -0.08034, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={}, light=nil},
+        {name="1", folder="Main", meshId="rbxassetid://7554844494", texId="", size={1.69996, 0.61651, 1.71907}, scale={0.62752, 0.62752, 0.62752}, color={0.8275, 0.5647, 0.7373}, mat=Enum.Material.SmoothPlastic, tr=0.0, relCF={-0.0004, 1.02918, -0.0783, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={}, light=nil},
+        {name="3", folder="Main", meshId="rbxassetid://7554844112", texId="", size={1.61006, 0.13772, 1.60244}, scale={0.62752, 0.62752, 0.62752}, color={1.0, 0.5922, 0.8627}, mat=Enum.Material.SmoothPlastic, tr=0.0, relCF={0.00018, 0.96143, -0.08602, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={}, light=nil},
+        {name="1", folder="Main", meshId="rbxassetid://7554844263", texId="", size={1.70291, 0.40151, 1.73708}, scale={0.62752, 0.62752, 0.62752}, color={0.8275, 0.5647, 0.7373}, mat=Enum.Material.Neon, tr=0.0, relCF={-0.00034, 1.12965, -0.07822, 1.0, 0.0, -0.0, 0.0, 1.00001, 1e-05, -0.0, 1e-05, 1.00001}, particles={}, light=nil},
+    }
+},
+    ["queenoftheoceansparklingscepter"] = {
+    anchor = "RightHand",
+    parts = {
+        {name="2", folder="Fins of thousands", meshId="rbxassetid://123060969830852", texId="", size={3.12887, 3.67451, 0.001}, scale={0.06567, 0.0809, 163.84001}, color={1.0, 0.5961, 0.8627}, mat=Enum.Material.Plastic, tr=1.0, relCF={-0.25298, 0.05232, -0.07068, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="1", folder="Fins of thousands", meshId="rbxassetid://123060969830852", texId="rbxassetid://113075597561045", size={3.12887, 3.67451, 0.001}, scale={0.06567, 0.0809, 163.84001}, color={0.992, 0.0, 0.718}, mat=Enum.Material.Plastic, tr=0.35, relCF={-0.25298, 0.05232, -0.07068, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="6", folder="Orb of the ocean", meshId="rbxassetid://140094061370601", texId="", size={0.97753, 0.39477, 0.56226}, scale={1.50546, 1.50546, 1.50546}, color={1.0, 0.4706, 0.7216}, mat=Enum.Material.Neon, tr=0.0, relCF={0.64611, 0.27851, -2.945, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="7", folder="Orb of the ocean", meshId="rbxassetid://123679815480977", texId="", size={0.34475, 0.31789, 0.1293}, scale={1.50546, 1.50546, 1.50546}, color={0.8745, 0.6941, 0.8157}, mat=Enum.Material.Metal, tr=0.0, relCF={0.75288, 0.31221, -3.30969, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="7", folder="Orb of the ocean", meshId="rbxassetid://128747180187963", texId="", size={1.08549, 0.48503, 0.81383}, scale={1.50546, 1.50546, 1.50546}, color={0.8745, 0.6941, 0.8157}, mat=Enum.Material.Metal, tr=0.0, relCF={0.64093, 0.27364, -2.92297, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="7", folder="Orb of the ocean", meshId="rbxassetid://128133225604883", texId="", size={1.03416, 1.05011, 1.03416}, scale={1.50546, 1.50546, 1.50546}, color={0.8745, 0.6941, 0.8157}, mat=Enum.Material.SmoothPlastic, tr=0.3, relCF={0.56103, 0.2513, -2.65628, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={{tex="rbxassetid://6297023791", pos={0, 0, 0}}}, light={c={1.0, 0.471, 0.725}, r=6.0, b=0.3199999928474426}},
+        {name="6", folder="Orb of the ocean", meshId="rbxassetid://139228173713564", texId="", size={1.18101, 0.75425, 1.10543}, scale={1.50546, 1.50546, 1.50546}, color={1.0, 0.4706, 0.7216}, mat=Enum.Material.Neon, tr=0.0, relCF={0.55824, 0.25044, -2.64694, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="8", folder="Orb of the ocean", meshId="rbxassetid://128646903146900", texId="", size={0.38321, 0.09961, 0.40753}, scale={1.50546, 1.50546, 1.50546}, color={0.9725, 0.9725, 0.9725}, mat=Enum.Material.Glass, tr=0.0, relCF={0.71862, 0.29432, -3.17607, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="7", folder="Orb of the ocean", meshId="rbxassetid://76524706162809", texId="", size={1.09249, 0.86075, 1.18356}, scale={1.56952, 1.5699, 1.5699}, color={0.8745, 0.6941, 0.8157}, mat=Enum.Material.Metal, tr=0.0, relCF={0.52728, 0.24051, -2.54173, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="5", folder="Mantle of the earth", meshId="rbxassetid://98889720382218", texId="", size={2.0954, 1.52322, 0.36828}, scale={1.50546, 1.50546, 1.50546}, color={0.878, 0.698, 0.816}, mat=Enum.Material.Plastic, tr=0.0, relCF={0.24318, 0.2157, -1.75115, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="3", folder="Mantle of the earth", meshId="rbxassetid://133600439164529", texId="rbxassetid://113075597561045", size={0.31818, 4.17687, 0.2304}, scale={1.50546, 1.50546, 1.50546}, color={1.0, 0.494, 0.953}, mat=Enum.Material.Neon, tr=0.3, relCF={-0.28518, 0.01176, 0.23895, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="4", folder="Mantle of the earth", meshId="rbxassetid://133600439164529", texId="", size={0.31818, 4.17687, 0.2304}, scale={1.50546, 1.50546, 1.50546}, color={0.0667, 0.0667, 0.0667}, mat=Enum.Material.Neon, tr=1.0, relCF={-0.28518, 0.01176, 0.23895, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="7", folder="Mantle of the earth", meshId="rbxassetid://127332734981017", texId="", size={0.2677, 0.28852, 0.12444}, scale={1.50546, 1.50546, 1.50546}, color={0.8745, 0.6941, 0.8157}, mat=Enum.Material.Metal, tr=0.0, relCF={0.27033, 0.10906, -1.54993, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="6", folder="Mantle of the earth", meshId="rbxassetid://96698232911721", texId="", size={0.43228, 0.25867, 0.37465}, scale={1.50546, 1.50546, 1.50546}, color={1.0, 0.4706, 0.7216}, mat=Enum.Material.Neon, tr=0.0, relCF={0.31677, 0.189, -1.87468, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="5", folder="Mantle of the earth", meshId="rbxassetid://113600553752836", texId="", size={0.56758, 0.49233, 0.22192}, scale={1.50546, 1.50546, 1.50546}, color={0.8745, 0.6941, 0.8157}, mat=Enum.Material.Metal, tr=0.0, relCF={0.33156, 0.19373, -1.92484, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="8", folder="Mantle of the earth", meshId="rbxassetid://85751537084537", texId="", size={0.34582, 3.48682, 0.25787}, scale={1.50546, 1.50546, 1.50546}, color={0.9725, 0.9725, 0.9725}, mat=Enum.Material.Glass, tr=0.0, relCF={-0.25441, 0.00689, 0.26291, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+    }
+},
+    ["oceanscepter"] = {
+    anchor = "RightHand",
+    parts = {
+        {name="2", folder="Fins of thousands", meshId="rbxassetid://123060969830852", texId="", size={3.12887, 3.67451, 0.001}, scale={0.06567, 0.0809, 163.84001}, color={1.0, 0.5961, 0.8627}, mat=Enum.Material.Plastic, tr=1.0, relCF={-0.25298, 0.05232, -0.07068, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="1", folder="Fins of thousands", meshId="rbxassetid://123060969830852", texId="rbxassetid://113075597561045", size={3.12887, 3.67451, 0.001}, scale={0.06567, 0.0809, 163.84001}, color={0.992, 0.0, 0.718}, mat=Enum.Material.Plastic, tr=0.35, relCF={-0.25298, 0.05232, -0.07068, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="6", folder="Orb of the ocean", meshId="rbxassetid://140094061370601", texId="", size={0.97753, 0.39477, 0.56226}, scale={1.50546, 1.50546, 1.50546}, color={1.0, 0.4706, 0.7216}, mat=Enum.Material.Neon, tr=0.0, relCF={0.64611, 0.27851, -2.945, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="7", folder="Orb of the ocean", meshId="rbxassetid://123679815480977", texId="", size={0.34475, 0.31789, 0.1293}, scale={1.50546, 1.50546, 1.50546}, color={0.8745, 0.6941, 0.8157}, mat=Enum.Material.Metal, tr=0.0, relCF={0.75288, 0.31221, -3.30969, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="7", folder="Orb of the ocean", meshId="rbxassetid://128747180187963", texId="", size={1.08549, 0.48503, 0.81383}, scale={1.50546, 1.50546, 1.50546}, color={0.8745, 0.6941, 0.8157}, mat=Enum.Material.Metal, tr=0.0, relCF={0.64093, 0.27364, -2.92297, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="7", folder="Orb of the ocean", meshId="rbxassetid://128133225604883", texId="", size={1.03416, 1.05011, 1.03416}, scale={1.50546, 1.50546, 1.50546}, color={0.8745, 0.6941, 0.8157}, mat=Enum.Material.SmoothPlastic, tr=0.3, relCF={0.56103, 0.2513, -2.65628, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={{tex="rbxassetid://6297023791", pos={0, 0, 0}}}, light={c={1.0, 0.471, 0.725}, r=6.0, b=0.3199999928474426}},
+        {name="6", folder="Orb of the ocean", meshId="rbxassetid://139228173713564", texId="", size={1.18101, 0.75425, 1.10543}, scale={1.50546, 1.50546, 1.50546}, color={1.0, 0.4706, 0.7216}, mat=Enum.Material.Neon, tr=0.0, relCF={0.55824, 0.25044, -2.64694, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="8", folder="Orb of the ocean", meshId="rbxassetid://128646903146900", texId="", size={0.38321, 0.09961, 0.40753}, scale={1.50546, 1.50546, 1.50546}, color={0.9725, 0.9725, 0.9725}, mat=Enum.Material.Glass, tr=0.0, relCF={0.71862, 0.29432, -3.17607, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="7", folder="Orb of the ocean", meshId="rbxassetid://76524706162809", texId="", size={1.09249, 0.86075, 1.18356}, scale={1.56952, 1.5699, 1.5699}, color={0.8745, 0.6941, 0.8157}, mat=Enum.Material.Metal, tr=0.0, relCF={0.52728, 0.24051, -2.54173, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="5", folder="Mantle of the earth", meshId="rbxassetid://98889720382218", texId="", size={2.0954, 1.52322, 0.36828}, scale={1.50546, 1.50546, 1.50546}, color={0.878, 0.698, 0.816}, mat=Enum.Material.Plastic, tr=0.0, relCF={0.24318, 0.2157, -1.75115, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="3", folder="Mantle of the earth", meshId="rbxassetid://133600439164529", texId="rbxassetid://113075597561045", size={0.31818, 4.17687, 0.2304}, scale={1.50546, 1.50546, 1.50546}, color={1.0, 0.494, 0.953}, mat=Enum.Material.Neon, tr=0.3, relCF={-0.28518, 0.01176, 0.23895, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="4", folder="Mantle of the earth", meshId="rbxassetid://133600439164529", texId="", size={0.31818, 4.17687, 0.2304}, scale={1.50546, 1.50546, 1.50546}, color={0.0667, 0.0667, 0.0667}, mat=Enum.Material.Neon, tr=1.0, relCF={-0.28518, 0.01176, 0.23895, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="7", folder="Mantle of the earth", meshId="rbxassetid://127332734981017", texId="", size={0.2677, 0.28852, 0.12444}, scale={1.50546, 1.50546, 1.50546}, color={0.8745, 0.6941, 0.8157}, mat=Enum.Material.Metal, tr=0.0, relCF={0.27033, 0.10906, -1.54993, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="6", folder="Mantle of the earth", meshId="rbxassetid://96698232911721", texId="", size={0.43228, 0.25867, 0.37465}, scale={1.50546, 1.50546, 1.50546}, color={1.0, 0.4706, 0.7216}, mat=Enum.Material.Neon, tr=0.0, relCF={0.31677, 0.189, -1.87468, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="5", folder="Mantle of the earth", meshId="rbxassetid://113600553752836", texId="", size={0.56758, 0.49233, 0.22192}, scale={1.50546, 1.50546, 1.50546}, color={0.8745, 0.6941, 0.8157}, mat=Enum.Material.Metal, tr=0.0, relCF={0.33156, 0.19373, -1.92484, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+        {name="8", folder="Mantle of the earth", meshId="rbxassetid://85751537084537", texId="", size={0.34582, 3.48682, 0.25787}, scale={1.50546, 1.50546, 1.50546}, color={0.9725, 0.9725, 0.9725}, mat=Enum.Material.Glass, tr=0.0, relCF={-0.25441, 0.00689, 0.26291, 0.6726, 0.28163, -0.68432, 0.69152, 0.09003, 0.71673, 0.26345, -0.95529, -0.1342}, particles={}, light=nil},
+    }
+},
+}
+
+local activeHaloBobConns = {}
+
+local function findCustomRbxmSpec(item)
+    if not item then return nil, nil end
+    for _, cand in ipairs({item.assetName, item.name}) do
+        if type(cand) == "string" and cand ~= "" then
+            local k = cand:lower():gsub("[^%w]", "")
+            if CUSTOM_RBXM_SPECS[k] then return CUSTOM_RBXM_SPECS[k], cand end
+            if k:find("oceanscepter") or k:find("queenoftheoceansparklingscepter") then
+                return CUSTOM_RBXM_SPECS["oceanscepter"], "Queen of the Ocean Sparkling Scepter"
+            end
+            if k:find("valentineshalo2021") or k:find("valhalo2021") then
+                return CUSTOM_RBXM_SPECS["valentineshalo2021"], "Valentines Halo 2021"
+            end
+        end
+    end
+    return nil, nil
+end
+
+local function equipCustomRbxmItem(item, spec, canonName)
+    local char = lp.Character
+    if not char or not spec then return false end
+
+    local cat = item.cat or ((spec.anchor == "Head") and "Halos" or "Accessories")
+    local slotKey = (cat == "Halos") and "Halos" or ("Acc_" .. (canonName or item.name):gsub("%s+", ""))
+
+    local bakedFolder = char:FindFirstChild("RH_BakedWardrobe")
+    if not bakedFolder then
+        bakedFolder = Instance.new("Folder")
+        bakedFolder.Name = "RH_BakedWardrobe"
+        bakedFolder.Parent = char
+    end
+
+    local old = bakedFolder:FindFirstChild(slotKey)
+    if old then pcall(function() old:Destroy() end) end
+    if activeHaloBobConns[slotKey] then
+        pcall(function() activeHaloBobConns[slotKey]:Disconnect() end)
+        activeHaloBobConns[slotKey] = nil
+    end
+
+    local anchorLimb = char:FindFirstChild(spec.anchor)
+                    or (spec.anchor == "RightHand" and (char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")))
+                    or char:FindFirstChild("Head")
+                    or char:FindFirstChild("UpperTorso")
+                    or char:FindFirstChild("HumanoidRootPart")
+    if not anchorLimb then return false end
+
+    local model = Instance.new("Model")
+    model.Name = slotKey
+    model:SetAttribute("RH_BakedLayer", true)
+    model:SetAttribute("RH_Category", cat)
+    model:SetAttribute("RH_SlotKey", slotKey)
+    model:SetAttribute("RH_ItemName", canonName or item.name)
+    model:SetAttribute("RH_Image", item.img or "")
+    model:SetAttribute("RH_Price", item.price or "Special")
+    model:SetAttribute("RH_CustomRbxm", true)
+
+    local folderCache = {}
+    local foldersList = {}
+    local builtParts = {}
+
+    for _, pd in ipairs(spec.parts) do
+        local parentInst = model
+        if pd.folder and pd.folder ~= "Main" then
+            if not folderCache[pd.folder] then
+                local fld = Instance.new("Folder")
+                fld.Name = pd.folder
+                fld.Parent = model
+                folderCache[pd.folder] = fld
+                table.insert(foldersList, pd.folder)
+            end
+            parentInst = folderCache[pd.folder]
+        end
+
+        local p = Instance.new("Part")
+        p.Name = pd.name
+        p.Size = Vector3.new(pd.size[1], pd.size[2], pd.size[3])
+        p.Color = Color3.new(pd.color[1], pd.color[2], pd.color[3])
+        p.Material = pd.mat or Enum.Material.SmoothPlastic
+        p.Transparency = pd.tr or 0
+        p.Anchored = false
+        p.CanCollide = false
+        p.CanTouch = false
+        p.CanQuery = false
+        p.Massless = true
+        p:SetAttribute("RH_OrigTransparency", pd.tr or 0)
+        local mcNum = tonumber(pd.name)
+        if mcNum then p:SetAttribute("MultiColor", mcNum) end
+
+        if pd.meshId and pd.meshId ~= "" then
+            local sm = Instance.new("SpecialMesh")
+            sm.MeshType = Enum.MeshType.FileMesh
+            sm.MeshId = pd.meshId
+            if pd.texId and pd.texId ~= "" then
+                sm.TextureId = pd.texId
+            end
+            sm.Scale = Vector3.new(pd.scale[1], pd.scale[2], pd.scale[3])
+            sm.Parent = p
+        end
+
+        for _, peData in ipairs(pd.particles or {}) do
+            local peHost = p
+            if peData.pos and (peData.pos[1] ~= 0 or peData.pos[2] ~= 0 or peData.pos[3] ~= 0) then
+                local att = Instance.new("Attachment")
+                att.Position = Vector3.new(peData.pos[1], peData.pos[2], peData.pos[3])
+                att.Parent = p
+                peHost = att
+            end
+            local pe = Instance.new("ParticleEmitter")
+            pe.Texture = peData.tex
+            pe.Rate = 6
+            pe.Lifetime = NumberRange.new(0.8, 1.6)
+            pe.Speed = NumberRange.new(0.15, 0.5)
+            pe.Size = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0),
+                NumberSequenceKeypoint.new(0.4, 0.25),
+                NumberSequenceKeypoint.new(1, 0),
+            })
+            pe.LightEmission = 0.8
+            pe.Color = ColorSequence.new(p.Color)
+            pe.Parent = peHost
+        end
+
+        if pd.light then
+            local pl = Instance.new("PointLight")
+            pl.Color = Color3.new(pd.light.c[1], pd.light.c[2], pd.light.c[3])
+            pl.Range = pd.light.r or 6
+            pl.Brightness = (pd.light.b or 0.35) * 2
+            pl.Parent = p
+        end
+
+        local m = pd.relCF
+        local relCFrame = CFrame.new(m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12])
+        p.CFrame = anchorLimb.CFrame * relCFrame
+        p.Parent = parentInst
+        table.insert(builtParts, { part = p, relCF = relCFrame })
+    end
+
+    model.Parent = bakedFolder
+
+    local haloWelds = {}
+    for _, bp in ipairs(builtParts) do
+        local w = Instance.new("Weld")
+        w.Name = (cat == "Halos") and "RH_HaloFloatWeld" or "RH_CustomRbxmWeld"
+        w.Part0 = anchorLimb
+        w.Part1 = bp.part
+        w.C0 = bp.relCF
+        w.C1 = CFrame.new()
+        w.Parent = bp.part
+        if cat == "Halos" then
+            table.insert(haloWelds, { weld = w, baseC0 = bp.relCF })
+        end
+    end
+
+    -- 1:1 Halo float/bob animation relative to Head
+    if cat == "Halos" and #haloWelds > 0 then
+        local t0 = tick()
+        activeHaloBobConns[slotKey] = RunService.Heartbeat:Connect(function()
+            if not model.Parent or not anchorLimb.Parent then
+                if activeHaloBobConns[slotKey] then
+                    activeHaloBobConns[slotKey]:Disconnect()
+                    activeHaloBobConns[slotKey] = nil
+                end
+                return
+            end
+            local elapsed = tick() - t0
+            local dy = math.sin(elapsed * 2.2) * 0.14
+            local rotY = elapsed * 0.45
+            local spinOffset = CFrame.new(0, dy, 0) * CFrame.Angles(0, rotY, 0)
+            for _, hw in ipairs(haloWelds) do
+                -- Orbit halo around Head center smoothly
+                local pos = hw.baseC0.Position
+                local centered = hw.baseC0 - pos
+                local newPos = (CFrame.Angles(0, rotY, 0) * pos) + Vector3.new(0, dy, 0)
+                hw.weld.C0 = CFrame.new(newPos) * (CFrame.Angles(0, rotY, 0) * centered)
+            end
+        end)
+    end
+
+    bakedLayersBackup[slotKey] = deepClone(model)
+    updateTabCounts()
+    if refreshGridRef then refreshGridRef() end
+    if setStatusRef then setStatusRef("Equipped " .. (canonName or item.name) .. "!", C.text) end
+    return true
+end
+
+-- Client-side Dress Up Inventory Injection (PlayerGui.CharacterCreation)
+_G.RH_ClientDressUpInv = _G.RH_ClientDressUpInv or {
+    HeelMorphs = {},
+    Skirts = {},
+    Accessories = {},
+    Wings = {},
+}
+
+local function mapToDressUpCategory(wardrobeCat)
+    if wardrobeCat == "Heels" then return "HeelMorphs"
+    elseif wardrobeCat == "Skirts" then return "Skirts"
+    elseif wardrobeCat == "Wings" then return "Wings"
+    else return "Accessories" end -- Bodices, Accessories, Halos go to Accessories in Royale High Dress Up
+end
+
+local function addItemToClientDressUpInv(item, qty)
+    if not item then return false end
+    qty = math.max(1, math.floor(tonumber(qty) or 1))
+    local duCat = mapToDressUpCategory(item.cat)
+    _G.RH_ClientDressUpInv[duCat] = _G.RH_ClientDressUpInv[duCat] or {}
+    local key = (item.assetName or item.name)
+    _G.RH_ClientDressUpInv[duCat][key] = { item = item, qty = qty }
+    return true, duCat
+end
+
+local injectIntoDressUpUIRef = nil
+task.spawn(function()
+    local cc = pg:WaitForChild("CharacterCreation", 15)
+    if not cc then return end
+    local tmpl = cc:FindFirstChild("ItemTemplate", true)
+    local inner = tmpl and tmpl.Parent and tmpl.Parent:FindFirstChild("Inner")
+    if not tmpl or not inner then return end
+    local duMain = tmpl.Parent
+
+    local activeDuCat = "Accessories"
+    local function detectCurrentDuCat()
+        for _, catName in ipairs({"Skirts", "HeelMorphs", "Accessories", "Wings", "Show All"}) do
+            local sf = duMain:FindFirstChild(catName .. "SortFrame")
+            if sf and sf.Visible then return catName end
+        end
+        return activeDuCat
+    end
+
+    local function injectItemsForCat(duCat)
+        local buckets = {}
+        if duCat == "Show All" then
+            for _, list in pairs(_G.RH_ClientDressUpInv) do table.insert(buckets, list) end
+        elseif _G.RH_ClientDressUpInv[duCat] then
+            table.insert(buckets, _G.RH_ClientDressUpInv[duCat])
+        end
+
+        for _, bucket in ipairs(buckets) do
+            for key, entry in pairs(bucket) do
+                if not inner:FindFirstChild("RH_Inj_" .. key) then
+                    local ok, btn = pcall(function() return tmpl:Clone() end)
+                    if ok and btn then
+                        btn.Name = "RH_Inj_" .. key
+                        btn.Visible = true
+                        btn.LayoutOrder = 9000
+                        pcall(function() btn.Tooltip.Text = entry.item.name end)
+                        pcall(function() btn.Image.Image = entry.item.img or "" end)
+                        pcall(function()
+                            if btn:FindFirstChild("QuantityLabel") then
+                                if entry.qty > 1 then
+                                    btn.QuantityLabel.Visible = true
+                                    btn.QuantityLabel.Text = tostring(entry.qty)
+                                else
+                                    btn.QuantityLabel.Visible = false
+                                end
+                            end
+                        end)
+                        btn.Parent = inner
+                        btn.MouseButton1Click:Connect(function()
+                            if equipItemRef then equipItemRef(entry.item) end
+                        end)
+                    end
+                else
+                    local existing = inner:FindFirstChild("RH_Inj_" .. key)
+                    pcall(function()
+                        if existing and existing:FindFirstChild("QuantityLabel") then
+                            existing.QuantityLabel.Visible = (entry.qty > 1)
+                            existing.QuantityLabel.Text = tostring(entry.qty)
+                        end
+                    end)
+                end
+            end
+        end
+    end
+    injectIntoDressUpUIRef = function()
+        injectItemsForCat(detectCurrentDuCat())
+    end
+
+    for _, ch in ipairs(duMain:GetChildren()) do
+        if ch:IsA("GuiButton") and ch:FindFirstChild("categoryItem") then
+            ch.Activated:Connect(function()
+                activeDuCat = ch.Name
+                task.delay(0.35, function() injectItemsForCat(activeDuCat) end)
+                task.delay(1.0, function() injectItemsForCat(activeDuCat) end)
+            end)
+        end
+    end
+end)
 
 local function equipWings(item)
     local char = lp.Character
@@ -3756,6 +4139,13 @@ local function equipItem(item)
     local itemName = item.assetName or item.name
     local itemCat  = item.cat
 
+    -- Check custom local .rbxm models first (Valentines Halo 2021 & Ocean Scepter)
+    local customSpec, canonName = findCustomRbxmSpec(item)
+    if customSpec then
+        equipCustomRbxmItem(item, customSpec, canonName)
+        return "OK"
+    end
+
     if itemCat == "Wings" then
         return equipWings(item)
     end
@@ -3795,8 +4185,17 @@ local function equipItem(item)
 
         local startTick = tick()
         local baked = nil
-        while tick() - startTick < 4.5 do
+        local reping1, reping2 = false, false
+        while tick() - startTick < 5.0 do
             task.wait(0.10)
+            local elapsed = tick() - startTick
+            if elapsed >= 1.3 and not reping1 then
+                reping1 = true
+                if previewItemRemote then pcall(function() previewItemRemote:FireServer(itemName) end) end
+            elseif elapsed >= 2.7 and not reping2 then
+                reping2 = true
+                if previewItemRemote then pcall(function() previewItemRemote:FireServer(itemName) end) end
+            end
             local targetInst, foundCat = findSpecificItemOnAvatar(itemName, itemCat, beforeSet)
             if targetInst then
                 local lastCount = countBaseParts(targetInst)
@@ -3815,15 +4214,41 @@ local function equipItem(item)
                 end
                 baked = bakeItemToAvatar(targetInst, itemCat or foundCat, nil, item)
                 if baked then
-                    -- Background catchup: if more meshes stream in on mobile 1.0s-2.0s later, silently update the clone 1:1
+                    -- Background catchup: if more meshes stream in OR Royale High finishes welding to char 1.0s later, update clone 1:1
                     local initialParts = countBaseParts(baked)
                     local trackedSource = targetInst
+                    local hadCharWeld = false
+                    for _, j in ipairs(trackedSource:GetDescendants()) do
+                        if j:IsA("Weld") or j:IsA("WeldConstraint") or j:IsA("Motor6D") then
+                            if (j.Part0 and j.Part0:IsDescendantOf(char)) or (j.Part1 and j.Part1:IsDescendantOf(char)) then
+                                hadCharWeld = true
+                                break
+                            end
+                        end
+                    end
                     task.spawn(function()
-                        for _, delaySec in ipairs({1.0, 1.2}) do
+                        for _, delaySec in ipairs({0.9, 1.2}) do
                             task.wait(delaySec)
-                            if trackedSource and trackedSource.Parent and countBaseParts(trackedSource) > initialParts then
-                                local updated = bakeItemToAvatar(trackedSource, itemCat or foundCat, nil, item)
-                                if updated then initialParts = countBaseParts(updated) end
+                            if trackedSource and trackedSource.Parent then
+                                local curParts = countBaseParts(trackedSource)
+                                local nowWelded = hadCharWeld
+                                if not nowWelded then
+                                    for _, j in ipairs(trackedSource:GetDescendants()) do
+                                        if j:IsA("Weld") or j:IsA("WeldConstraint") or j:IsA("Motor6D") then
+                                            if (j.Part0 and j.Part0:IsDescendantOf(char)) or (j.Part1 and j.Part1:IsDescendantOf(char)) then
+                                                nowWelded = true
+                                                break
+                                            end
+                                        end
+                                    end
+                                end
+                                if curParts > initialParts or (not hadCharWeld and nowWelded) then
+                                    local updated = bakeItemToAvatar(trackedSource, itemCat or foundCat, nil, item)
+                                    if updated then
+                                        initialParts = countBaseParts(updated)
+                                        hadCharWeld = nowWelded
+                                    end
+                                end
                             end
                         end
                     end)
@@ -3858,6 +4283,7 @@ local function equipItem(item)
 
     return "OK"
 end
+equipItemRef = equipItem
 
 -- ============================================================
 -- 5. COMPACT MOBILE BLACK & WHITE GUI (270px x 380px)
@@ -4120,8 +4546,23 @@ local SearchBoxFrame = mk("Frame", {
 corner(4, SearchBoxFrame)
 stroke(1, C.border, SearchBoxFrame)
 
+local addAllInvBtn = mk("TextButton", {
+	Name             = "AddAllInvBtn",
+	Size             = UDim2.new(0, 56, 0, 18),
+	Position         = UDim2.new(1, -58, 0.5, -9),
+	BackgroundColor3 = C.accent,
+	Text             = "+ ADD ALL",
+	TextColor3       = C.accentTxt,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 7,
+	BorderSizePixel  = 0,
+	ZIndex           = 15,
+	AutoButtonColor  = false,
+}, SearchBoxFrame)
+corner(3, addAllInvBtn)
+
 local SearchBox = mk("TextBox", {
-	Size               = UDim2.new(1, -8, 1, 0),
+	Size               = UDim2.new(1, -66, 1, 0),
 	Position           = UDim2.new(0, 4, 0, 0),
 	BackgroundTransparency = 1,
 	PlaceholderText    = "Search...",
@@ -4276,7 +4717,7 @@ local function rebuildStatLabelCache(force)
 	for _, gui in ipairs(pg:GetChildren()) do
 		if gui.Name == "Shop" then
 			if gui:FindFirstChild("Header") then table.insert(roots, gui.Header) end
-		elseif gui.Name ~= "RH_Wardrobe_v49" then
+		elseif gui.Name ~= "RH_Wardrobe_v50" then
 			table.insert(roots, gui)
 		end
 	end
@@ -4548,7 +4989,7 @@ task.spawn(function()
 end)
 
 -- Slide-up Inspector (140px height)
-local InspHeight = 140
+local InspHeight = 166
 local Inspector = mk("Frame", {
 	Size             = UDim2.new(1, 0, 0, InspHeight),
 	Position         = UDim2.new(0, 0, 1, 0),
@@ -4705,6 +5146,94 @@ local clearLayersBtn = mk("TextButton", {
 corner(4, clearLayersBtn)
 stroke(1, C.border, clearLayersBtn)
 
+-- Row 3: Quantity [- 1 +] and [+ ADD TO INV] (client Dress Up injection)
+local selectedInvQty = 1
+local qtyMinusBtn = mk("TextButton", {
+	Size = UDim2.new(0, 22, 0, 21),
+	Position = UDim2.new(0, 6, 0, 137),
+	BackgroundColor3 = C.card,
+	Text = "-",
+	TextColor3 = C.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 9,
+	BorderSizePixel = 0,
+	ZIndex = 26,
+}, Inspector)
+corner(3, qtyMinusBtn); stroke(1, C.border, qtyMinusBtn)
+
+local qtyBox = mk("TextBox", {
+	Size = UDim2.new(0, 34, 0, 21),
+	Position = UDim2.new(0, 30, 0, 137),
+	BackgroundColor3 = C.bg,
+	Text = "1",
+	TextColor3 = C.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 8,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	ZIndex = 26,
+}, Inspector)
+corner(3, qtyBox); stroke(1, C.border, qtyBox)
+
+local qtyPlusBtn = mk("TextButton", {
+	Size = UDim2.new(0, 22, 0, 21),
+	Position = UDim2.new(0, 66, 0, 137),
+	BackgroundColor3 = C.card,
+	Text = "+",
+	TextColor3 = C.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 9,
+	BorderSizePixel = 0,
+	ZIndex = 26,
+}, Inspector)
+corner(3, qtyPlusBtn); stroke(1, C.border, qtyPlusBtn)
+
+local addToInvBtn = mk("TextButton", {
+	Size = UDim2.new(1, -98, 0, 21),
+	Position = UDim2.new(0, 92, 0, 137),
+	BackgroundColor3 = C.btnHi,
+	Text = "+ ADD TO DRESS UP INV",
+	TextColor3 = C.btnTextHi,
+	Font = Enum.Font.GothamBold,
+	TextSize = 7,
+	BorderSizePixel = 0,
+	ZIndex = 26,
+	AutoButtonColor = false,
+}, Inspector)
+corner(4, addToInvBtn); stroke(1, C.borderHi, addToInvBtn)
+
+qtyMinusBtn.Activated:Connect(function()
+	selectedInvQty = math.max(1, selectedInvQty - 1)
+	qtyBox.Text = tostring(selectedInvQty)
+end)
+qtyPlusBtn.Activated:Connect(function()
+	selectedInvQty = math.min(999, selectedInvQty + 1)
+	qtyBox.Text = tostring(selectedInvQty)
+end)
+qtyBox:GetPropertyChangedSignal("Text"):Connect(function()
+	local n = tonumber((qtyBox.Text:gsub("[^%d]", "")))
+	if n then selectedInvQty = math.clamp(n, 1, 999) end
+end)
+addToInvBtn.Activated:Connect(function()
+	if not selectedItem then return end
+	local ok, duCat = addItemToClientDressUpInv(selectedItem, selectedInvQty)
+	if injectIntoDressUpUIRef then pcall(injectIntoDressUpUIRef) end
+	if ok then
+		setStatus("Added x" .. tostring(selectedInvQty) .. " to DressUp (" .. duCat .. ")", C.text)
+	end
+end)
+addAllInvBtn.Activated:Connect(function()
+	if currentCat == "Worn" or currentCat == "Stats" then return end
+	local list = categories[currentCat] or {}
+	local count = 0
+	for _, it in ipairs(list) do
+		local ok = addItemToClientDressUpInv(it, selectedInvQty)
+		if ok then count = count + 1 end
+	end
+	if injectIntoDressUpUIRef then pcall(injectIntoDressUpUIRef) end
+	setStatus("Added " .. tostring(count) .. " " .. currentCat .. " (x" .. tostring(selectedInvQty) .. ") to DressUp!", C.text)
+end)
+
 local selectedItem = nil
 local function closeInsp()
 	Inspector.Visible = false
@@ -4760,9 +5289,108 @@ local function handleWearOrRemove()
 end
 equipBtn.Activated:Connect(handleWearOrRemove)
 
+-- Compact toggle selector popup for custom .rbxm models (Val21 Halo Bows/Wings/Lace & Ocean Scepter Fins/Orb/Mantle)
+local CustomToggleBar = mk("Frame", {
+	Name             = "CustomToggleBar",
+	Size             = UDim2.new(1, -12, 0, 30),
+	Position         = UDim2.new(0, 6, 1, -172),
+	BackgroundColor3 = C.panel,
+	BorderSizePixel  = 0,
+	Visible          = false,
+	ZIndex           = 35,
+}, Main)
+corner(4, CustomToggleBar)
+stroke(1, C.borderHi, CustomToggleBar)
+mk("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	Padding = UDim.new(0, 4),
+	HorizontalAlignment = Enum.HorizontalAlignment.Center,
+	VerticalAlignment = Enum.VerticalAlignment.Center,
+}, CustomToggleBar)
+
+local function openCustomToggleBarFor(item)
+	for _, ch in ipairs(CustomToggleBar:GetChildren()) do
+		if ch:IsA("GuiObject") then ch:Destroy() end
+	end
+	local char = lp.Character
+	local bf = char and char:FindFirstChild("RH_BakedWardrobe")
+	local spec = findCustomRbxmSpec(item)
+	if not bf or not spec then
+		CustomToggleBar.Visible = false
+		return
+	end
+	local slotKey = (item.cat == "Halos") and "Halos" or ("Acc_" .. (select(2, findCustomRbxmSpec(item)) or item.name):gsub("%s+", ""))
+	local mdl = bf:FindFirstChild(slotKey)
+	if not mdl then CustomToggleBar.Visible = false return end
+
+	local folders = {}
+	for _, ch in ipairs(mdl:GetChildren()) do
+		if ch:IsA("Folder") then table.insert(folders, ch) end
+	end
+	if #folders == 0 then CustomToggleBar.Visible = false return end
+
+	for _, fld in ipairs(folders) do
+		local isOn = true
+		for _, p in ipairs(fld:GetChildren()) do
+			if p:IsA("BasePart") and (p:GetAttribute("RH_OrigTransparency") or 0) < 0.99 then
+				if p.Transparency >= 0.99 then isOn = false end
+				break
+			end
+		end
+		local tb = mk("TextButton", {
+			Size = UDim2.new(0, 74, 0, 22),
+			BackgroundColor3 = isOn and C.accent or C.card,
+			Text = fld.Name:sub(1, 11),
+			TextColor3 = isOn and C.accentTxt or C.sub,
+			Font = Enum.Font.GothamBold,
+			TextSize = 6.5,
+			BorderSizePixel = 0,
+			ZIndex = 36,
+		}, CustomToggleBar)
+		corner(3, tb)
+		tb.Activated:Connect(function()
+			local curOn = false
+			for _, p in ipairs(fld:GetChildren()) do
+				if p:IsA("BasePart") and (p:GetAttribute("RH_OrigTransparency") or 0) < 0.99 then
+					if p.Transparency < 0.99 then curOn = true end
+					break
+				end
+			end
+			local newOn = not curOn
+			for _, p in ipairs(fld:GetDescendants()) do
+				if p:IsA("BasePart") then
+					p.Transparency = newOn and (p:GetAttribute("RH_OrigTransparency") or 0) or 1
+				elseif p:IsA("ParticleEmitter") or p:IsA("PointLight") then
+					p.Enabled = newOn
+				end
+			end
+			tb.BackgroundColor3 = newOn and C.accent or C.card
+			tb.TextColor3 = newOn and C.accentTxt or C.sub
+		end)
+	end
+	local closeT = mk("TextButton", {
+		Size = UDim2.new(0, 20, 0, 22),
+		BackgroundColor3 = C.card,
+		Text = "X",
+		TextColor3 = C.sub,
+		Font = Enum.Font.GothamBold,
+		TextSize = 7,
+		BorderSizePixel = 0,
+		ZIndex = 36,
+	}, CustomToggleBar)
+	corner(3, closeT)
+	closeT.Activated:Connect(function() CustomToggleBar.Visible = false end)
+	CustomToggleBar.Visible = true
+end
+
 local function handleColor()
 	if not selectedItem then return end
 	local ok = openItemColorAndToggles(selectedItem)
+	if findCustomRbxmSpec(selectedItem) then
+		openCustomToggleBarFor(selectedItem)
+	else
+		CustomToggleBar.Visible = false
+	end
 	if ok then
 		setStatus("Royale High Colors opened!", C.text)
 	else
@@ -4848,14 +5476,20 @@ local function makeCard(item, order)
 				if tmpl and typeof(tmpl) == "Instance" and img and img.Parent then
 					local clone = tmpl:Clone()
 					local vpf = mk("ViewportFrame", {
-						Size               = UDim2.new(1, 0, 1, 0),
+						Size                   = UDim2.new(1, 0, 1, 0),
 						BackgroundTransparency = 1,
-						ZIndex             = 15,
+						Ambient                = Color3.fromRGB(230, 230, 230),
+						LightColor             = Color3.fromRGB(255, 255, 255),
+						LightDirection         = Vector3.new(-1, -1, -1),
+						ZIndex                 = 15,
 					}, img)
+					local wm = Instance.new("WorldModel")
+					wm.Parent = vpf
 					local cam = Instance.new("Camera")
+					cam.FieldOfView = 36
 					cam.Parent = vpf
 					vpf.CurrentCamera = cam
-					clone.Parent = vpf
+					clone.Parent = wm
 					local cf, sz
 					if clone:IsA("Model") then
 						cf, sz = clone:GetBoundingBox()
@@ -4864,8 +5498,17 @@ local function makeCard(item, order)
 						cf = bp and bp.CFrame or CFrame.new()
 						sz = bp and bp.Size or Vector3.new(2, 2, 1)
 					end
-					local maxDim = math.max(sz.X, sz.Y, sz.Z, 1)
-					cam.CFrame = CFrame.new(cf.Position + Vector3.new(0, 0, maxDim * 1.15), cf.Position)
+					local center = cf.Position
+					local spanW, lookDir
+					if sz.X >= sz.Z then
+						spanW = math.max(sz.X, sz.Y)
+						lookDir = Vector3.new(0, 0, 1)
+					else
+						spanW = math.max(sz.Z, sz.Y)
+						lookDir = Vector3.new(1, 0, 0)
+					end
+					local dist = (spanW * 0.62) / math.tan(math.rad(cam.FieldOfView * 0.5))
+					cam.CFrame = CFrame.new(center + lookDir * math.max(dist, 1.8), center)
 					if phLbl then phLbl.Visible = false end
 				elseif phLbl and phLbl.Parent then
 					phLbl.Text = "WING"
