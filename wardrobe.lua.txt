@@ -5417,7 +5417,7 @@ do
 		GridScroll.CanvasSize = UDim2.new(0, 0, 0, GridLayout.AbsoluteContentSize.Y + 10)
 	end)
 end
-mk("UIPadding", {PaddingTop = UDim.new(0, 2), PaddingLeft = UDim2.new(0, 2)}, GridScroll)
+mk("UIPadding", {PaddingTop = UDim.new(0, 2), PaddingLeft = UDim.new(0, 2)}, GridScroll)
 
 -- ============================================================
 -- 5B. VISUAL STAT SPOOFER PANEL (Monochrome, Real-Time)
