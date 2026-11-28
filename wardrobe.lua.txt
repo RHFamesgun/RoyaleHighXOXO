@@ -5103,6 +5103,18 @@ local function stroke(t, c, parent)
 	return mk("UIStroke", {Thickness = t, Color = c, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, parent)
 end
 
+local function onClick(btn, fn)
+	local lastT = 0
+	local function fire()
+		local now = tick()
+		if (now - lastT) < 0.08 then return end
+		lastT = now
+		fn()
+	end
+	btn.Activated:Connect(fire)
+	btn.MouseButton1Click:Connect(fire)
+end
+
 -- Floating Toast Notification Banner (tells you the exact instant a clone locks on!)
 UI.ToastFrame = mk("Frame", {
 	Name             = "RH_ToastBanner",
@@ -5212,7 +5224,7 @@ local closeInspRef = nil
 
 do
 	local lastToggleTick = 0
-	ToggleBtn.Activated:Connect(function()
+	onClick(ToggleBtn, function()
 		local now = tick()
 		if now - lastToggleTick < 0.25 then return end
 		lastToggleTick = now
@@ -5315,7 +5327,7 @@ do
 	corner(4, CloseBtn)
 	stroke(1, C.border, CloseBtn)
 
-	CloseBtn.Activated:Connect(function()
+	onClick(CloseBtn, function()
 		Main.Visible = false
 		updateToggleBtnState()
 		if closeInspRef then closeInspRef() end
@@ -5331,7 +5343,7 @@ do
 	UI.ContentArea = ContentArea
 
 	local isMinimized = false
-	MinBtn.Activated:Connect(function()
+	onClick(MinBtn, function()
 		isMinimized = not isMinimized
 		ContentArea.Visible = not isMinimized
 		Main.Size = isMinimized and UDim2.new(0, UI.W, 0, 26) or UDim2.new(0, UI.W, 0, UI.H)
@@ -5368,14 +5380,20 @@ for i, cat in ipairs(catOrder) do
 		TextSize         = 7.5,
 		BorderSizePixel  = 0,
 		LayoutOrder      = i,
-		ZIndex           = 13,
+		ZIndex           = 20,
+		Active           = true,
 		AutoButtonColor  = false,
 	}, CatScroll)
 	corner(4, btn)
 	stroke(1, C.border, btn)
 	tabButtons[cat] = btn
-	btn.Activated:Connect(function()
-		if UI.setActiveCategory then UI.setActiveCategory(cat) end
+	onClick(btn, function()
+		if UI.setActiveCategory then
+			local okSw, errSw = pcall(UI.setActiveCategory, cat)
+			if not okSw and notifyToastRef then
+				notifyToastRef("Tab err: " .. tostring(errSw), 3.0)
+			end
+		end
 	end)
 end
 
@@ -5433,6 +5451,746 @@ local StatsPanel = mk("Frame", {
 	Visible            = false,
 	ZIndex             = 12,
 }, UI.ContentArea)
+
+-- ============================================================
+-- 6. GRID POPULATION & CATEGORY NAVIGATION
+-- ============================================================
+local currentCat    = "Heels"
+local currentSearch = ""
+local cardInstances = {}
+
+local function makeCard(item, order)
+	local card = mk("Frame", {
+		Name             = "Card_" .. tostring(item.name or "Item"):sub(1,10),
+		BackgroundColor3 = C.card,
+		BorderSizePixel  = 0,
+		LayoutOrder      = order,
+		ZIndex           = 13,
+	}, GridScroll)
+	corner(4, card)
+	stroke(1, C.border, card)
+
+	local img = mk("ImageLabel", {
+		Size             = UDim2.new(1, -6, 0, 38),
+		Position         = UDim2.new(0, 3, 0, 3),
+		BackgroundColor3 = C.btn,
+		BorderSizePixel  = 0,
+		ScaleType        = Enum.ScaleType.Fit,
+		Image            = item.img or "",
+		ZIndex           = 14,
+	}, card)
+	corner(3, img)
+
+	if not item.img or item.img == "" then
+		if item.cat == "Wings" then
+			_G.RH_WingModelCache = _G.RH_WingModelCache or {}
+			local phLbl = mk("TextLabel", {
+				Size               = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = 1,
+				Text               = "...",
+				TextColor3         = C.muted,
+				Font               = Enum.Font.GothamBold,
+				TextSize           = 7,
+				ZIndex             = 15,
+			}, img)
+			task.spawn(function()
+				local wingKey = item.assetName or item.name
+				local tmpl = _G.RH_WingModelCache[wingKey]
+				if tmpl == nil then
+					local getWingFn = ReplicatedStorage:FindFirstChild("GetWingModel")
+					if getWingFn and getWingFn:IsA("RemoteFunction") then
+						local ok, res = pcall(function() return getWingFn:InvokeServer(wingKey) end)
+						tmpl = (ok and typeof(res) == "Instance") and res or false
+						_G.RH_WingModelCache[wingKey] = tmpl
+					else
+						_G.RH_WingModelCache[wingKey] = false
+					end
+				end
+				if tmpl and typeof(tmpl) == "Instance" and img and img.Parent then
+					local clone = tmpl:Clone()
+					local vpf = mk("ViewportFrame", {
+						Size                   = UDim2.new(1, 0, 1, 0),
+						BackgroundTransparency = 1,
+						Ambient                = Color3.fromRGB(230, 230, 230),
+						LightColor             = Color3.fromRGB(255, 255, 255),
+						LightDirection         = Vector3.new(-1, -1, -1),
+						ZIndex                 = 15,
+					}, img)
+					local wm = Instance.new("WorldModel")
+					wm.Parent = vpf
+					local cam = Instance.new("Camera")
+					cam.FieldOfView = 36
+					cam.Parent = vpf
+					vpf.CurrentCamera = cam
+					clone.Parent = wm
+					local cf, sz
+					if clone:IsA("Model") then
+						cf, sz = clone:GetBoundingBox()
+					else
+						local bp = clone:FindFirstChildWhichIsA("BasePart", true)
+						cf = bp and bp.CFrame or CFrame.new()
+						sz = bp and bp.Size or Vector3.new(2, 2, 1)
+					end
+					local center = cf.Position
+					local spanW, lookDir
+					if sz.X >= sz.Z then
+						spanW = math.max(sz.X, sz.Y)
+						lookDir = Vector3.new(0, 0, 1)
+					else
+						spanW = math.max(sz.Z, sz.Y)
+						lookDir = Vector3.new(1, 0, 0)
+					end
+					local dist = (spanW * 0.62) / math.tan(math.rad(cam.FieldOfView * 0.5))
+					cam.CFrame = CFrame.new(center + lookDir * math.max(dist, 1.8), center)
+					if phLbl then phLbl.Visible = false end
+				elseif phLbl and phLbl.Parent then
+					phLbl.Text = "WING"
+				end
+			end)
+		else
+			mk("TextLabel", {
+				Size               = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = 1,
+				Text               = item.isWorn and "WORN" or "NO IMG",
+				TextColor3         = item.isWorn and C.text or C.muted,
+				Font               = Enum.Font.GothamBold,
+				TextSize           = 7,
+				ZIndex             = 15,
+			}, img)
+		end
+	end
+
+	mk("TextLabel", {
+		Size               = UDim2.new(1, -4, 0, 20),
+		Position           = UDim2.new(0, 2, 0, 44),
+		BackgroundTransparency = 1,
+		Text               = item.name,
+		TextColor3         = C.text,
+		Font               = Enum.Font.Gotham,
+		TextSize           = 6.5,
+		TextWrapped        = true,
+		TextYAlignment     = Enum.TextYAlignment.Top,
+		ZIndex             = 14,
+	}, card)
+
+	local btn = mk("TextButton", {
+		Size               = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text               = "",
+		Active             = true,
+		ZIndex             = 16,
+	}, card)
+	onClick(btn, function()
+		if UI.openInsp then
+			UI.openInsp(item)
+		elseif notifyToastRef then
+			notifyToastRef("Inspector loading...", 1.5)
+		end
+	end)
+
+	cardInstances[item] = card
+	return card
+end
+
+local function refreshGrid()
+	for _, card in pairs(cardInstances) do pcall(function() card:Destroy() end) end
+	cardInstances = {}
+	for _, ch in ipairs(GridScroll:GetChildren()) do
+		if ch:IsA("GuiObject") then ch:Destroy() end
+	end
+
+	if currentCat == "Stats" then return end
+
+	local list = {}
+	if currentCat == "Worn" then
+		local okW, wl = pcall(getWornItemsList)
+		list = (okW and type(wl) == "table") and wl or {}
+	else
+		list = categories[currentCat] or {}
+	end
+
+	local search = (currentCat == "Worn") and "" or currentSearch:lower()
+	local filtered = {}
+	for _, item in ipairs(list) do
+		if search == "" or tostring(item.name or ""):lower():find(search, 1, true) then
+			table.insert(filtered, item)
+		end
+	end
+
+	if currentCat == "Worn" then
+		if #filtered == 0 then
+			local emptyCard = mk("Frame", {
+				Name             = "EmptyNotice",
+				Size             = UDim2.new(1, -8, 0, 64),
+				BackgroundColor3 = C.card,
+				BorderSizePixel  = 0,
+				LayoutOrder      = 1,
+				ZIndex           = 13,
+			}, GridScroll)
+			corner(4, emptyCard)
+			stroke(1, C.border, emptyCard)
+
+			mk("TextLabel", {
+				Size               = UDim2.new(1, -12, 1, 0),
+				Position           = UDim2.new(0, 6, 0, 0),
+				BackgroundTransparency = 1,
+				Text               = "NO ITEMS WORN\n\nEquip items from Heels, Skirts, or Bodices to wear and stack them!",
+				TextColor3         = C.sub,
+				Font               = Enum.Font.Gotham,
+				TextSize           = 7.5,
+				TextWrapped        = true,
+				ZIndex             = 14,
+			}, emptyCard)
+			cardInstances[emptyCard] = emptyCard
+			return
+		end
+	else
+		-- Sort: Items with valid images FIRST, items with NO image LAST
+		table.sort(filtered, function(a, b)
+			local aHas = (a.img and a.img ~= "") and 1 or 0
+			local bHas = (b.img and b.img ~= "") and 1 or 0
+			if aHas ~= bHas then
+				return aHas > bHas
+			end
+			return tostring(a.name or ""):lower() < tostring(b.name or ""):lower()
+		end)
+	end
+
+	for order, item in ipairs(filtered) do
+		makeCard(item, order)
+	end
+end
+
+UI.updateTabCounts = updateTabCounts
+refreshGridRef = function(targetCat)
+    if not targetCat or targetCat == currentCat then
+        refreshGrid()
+    end
+end
+UI.refreshGrid = refreshGridRef
+
+local function setActiveCategory(cat)
+	currentCat = cat
+	if cat == "Worn" and SearchBox.Text ~= "" then
+		currentSearch = ""
+		SearchBox.Text = ""
+	end
+	for c, btn in pairs(tabButtons) do
+		if c == cat then
+			btn.BackgroundColor3 = C.tabActive
+			btn.TextColor3       = C.tabActTxt
+		else
+			btn.BackgroundColor3 = C.tabInact
+			btn.TextColor3       = C.tabInaTxt
+		end
+	end
+	if closeInspRef then pcall(closeInspRef) end
+	pcall(updateTabCounts)
+
+	if cat == "Stats" then
+		SearchBoxFrame.Visible = false
+		GridScroll.Visible     = false
+		StatsPanel.Visible     = true
+	else
+		StatsPanel.Visible     = false
+		SearchBoxFrame.Visible = true
+		GridScroll.Visible     = true
+		refreshGrid()
+	end
+end
+
+UI.setActiveCategory = setActiveCategory
+onClick(TitleStatsBtn, function()
+	pcall(setActiveCategory, "Stats")
+end)
+
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	currentSearch = SearchBox.Text
+	pcall(refreshGrid)
+end)
+
+Main.Visible = true
+updateToggleBtnState()
+local okInit, errInit = pcall(setActiveCategory, "Heels")
+if not okInit and notifyToastRef then
+	notifyToastRef("Grid init err: " .. tostring(errInit), 4.0)
+end
+pcall(updateTabCounts)
+
+do
+local okInsp, errInsp = pcall(function()
+-- Slide-up Inspector (140px height)
+local InspHeight = 140
+local Inspector = mk("Frame", {
+	Size             = UDim2.new(1, 0, 0, InspHeight),
+	Position         = UDim2.new(0, 0, 1, 0),
+	BackgroundColor3 = C.panel,
+	BorderSizePixel  = 0,
+	Visible          = false,
+	ZIndex           = 25,
+	ClipsDescendants = true,
+}, Main)
+corner(8, Inspector)
+stroke(1, C.borderHi, Inspector)
+
+local inspClose = mk("TextButton", {
+	Size            = UDim2.new(0, 16, 0, 16),
+	Position        = UDim2.new(1, -20, 0, 3),
+	BackgroundColor3= C.btn,
+	Text            = "X",
+	TextColor3      = C.text,
+	Font            = Enum.Font.GothamBold,
+	TextSize        = 8,
+	BorderSizePixel = 0,
+	ZIndex          = 26,
+	AutoButtonColor = false,
+}, Inspector)
+corner(4, inspClose)
+stroke(1, C.border, inspClose)
+
+local inspImg = mk("ImageLabel", {
+	Size            = UDim2.new(0, 48, 0, 48),
+	Position        = UDim2.new(0, 6, 0, 6),
+	BackgroundColor3= C.btn,
+	BorderSizePixel = 0,
+	ZIndex          = 26,
+	ScaleType       = Enum.ScaleType.Fit,
+}, Inspector)
+corner(6, inspImg)
+stroke(1, C.border, inspImg)
+
+local inspPlaceholder = mk("TextLabel", {
+	Size               = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Text               = "NO\nIMG",
+	TextColor3         = C.muted,
+	Font               = Enum.Font.GothamBold,
+	TextSize           = 8,
+	Visible            = false,
+	ZIndex             = 27,
+}, inspImg)
+
+local inspName = mk("TextLabel", {
+	Size               = UDim2.new(1, -80, 0, 20),
+	Position           = UDim2.new(0, 60, 0, 4),
+	BackgroundTransparency = 1,
+	Text               = "ITEM NAME",
+	TextColor3         = C.text,
+	Font               = Enum.Font.GothamBold,
+	TextSize           = 8.5,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	TextWrapped        = true,
+	ZIndex             = 26,
+}, Inspector)
+
+local inspPrice = mk("TextLabel", {
+	Size               = UDim2.new(1, -80, 0, 13),
+	Position           = UDim2.new(0, 60, 0, 24),
+	BackgroundTransparency = 1,
+	Text               = "Price: Free",
+	TextColor3         = C.sub,
+	Font               = Enum.Font.Gotham,
+	TextSize           = 7.5,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	ZIndex             = 26,
+}, Inspector)
+
+local inspStatus = mk("TextLabel", {
+	Size               = UDim2.new(1, -80, 0, 13),
+	Position           = UDim2.new(0, 60, 0, 38),
+	BackgroundTransparency = 1,
+	Text               = "",
+	TextColor3         = C.muted,
+	Font               = Enum.Font.Gotham,
+	TextSize           = 7.5,
+	TextXAlignment     = Enum.TextXAlignment.Left,
+	ZIndex             = 26,
+}, Inspector)
+
+local function setStatus(msg, col)
+	inspStatus.Text = msg
+	inspStatus.TextColor3 = col or C.sub
+	task.delay(3, function()
+		if inspStatus.Text == msg then inspStatus.Text = "" end
+	end)
+end
+setStatusRef = setStatus
+
+-- Row 1: PREVIEW FIRST / CLONE LOOK (left) and COLOR / TOGGLE (right)
+local equipBtn = mk("TextButton", {
+	Size             = UDim2.new(0.48, -4, 0, 23),
+	Position         = UDim2.new(0, 6, 0, 84),
+	BackgroundColor3 = C.btnHi,
+	Text             = "PREVIEW FIRST",
+	TextColor3       = C.btnTextHi,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 7.5,
+	BorderSizePixel  = 0,
+	ZIndex           = 26,
+	AutoButtonColor  = false,
+}, Inspector)
+corner(4, equipBtn)
+
+local colorBtn = mk("TextButton", {
+	Size             = UDim2.new(0.48, -4, 0, 23),
+	Position         = UDim2.new(0.5, 2, 0, 84),
+	BackgroundColor3 = C.btn,
+	Text             = "COLOR / TOGGLE",
+	TextColor3       = C.text,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 7,
+	BorderSizePixel  = 0,
+	ZIndex           = 26,
+	AutoButtonColor  = false,
+}, Inspector)
+corner(4, colorBtn)
+stroke(1, C.border, colorBtn)
+
+-- Row 2: CLONE NOW (left) and CLEAR ALL (right)
+local bakeBtn = mk("TextButton", {
+	Size             = UDim2.new(0.48, -4, 0, 21),
+	Position         = UDim2.new(0, 6, 0, 111),
+	BackgroundColor3 = C.btn,
+	Text             = "CLONE NOW",
+	TextColor3       = C.text,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 7,
+	BorderSizePixel  = 0,
+	ZIndex           = 26,
+	AutoButtonColor  = false,
+}, Inspector)
+corner(4, bakeBtn)
+stroke(1, C.border, bakeBtn)
+
+local clearLayersBtn = mk("TextButton", {
+	Size             = UDim2.new(0.48, -4, 0, 21),
+	Position         = UDim2.new(0.5, 2, 0, 111),
+	BackgroundColor3 = C.btn,
+	Text             = "CLEAR ALL",
+	TextColor3       = C.sub,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 7,
+	BorderSizePixel  = 0,
+	ZIndex           = 26,
+	AutoButtonColor  = false,
+}, Inspector)
+corner(4, clearLayersBtn)
+stroke(1, C.border, clearLayersBtn)
+
+
+local selectedItem = nil
+local CustomToggleBar = nil
+local function normItemKey(it)
+	if not it then return "" end
+	return tostring(it.assetName or it.name or ""):lower():gsub("%s*%b()%s*", ""):gsub("[^%w]", "")
+end
+local function isItemInPreview(it)
+	if not it or it.isWorn then return false end
+	local k = normItemKey(it)
+	if k == "" then return false end
+	if activePreviewItem and normItemKey(activePreviewItem) == k then
+		return true
+	end
+	local pf = getPreviewFolder(false)
+	if pf then
+		for _, ch in ipairs(pf:GetChildren()) do
+			local cn = tostring(ch:GetAttribute("RH_ItemName") or ch.Name):lower():gsub("%s*%b()%s*", ""):gsub("[^%w]", "")
+			if cn == k then return true end
+		end
+	end
+	return false
+end
+updateInspBtnRef = function()
+	if not selectedItem then return end
+	if selectedItem.isWorn then
+		inspPrice.Text = "Equipped: " .. tostring(selectedItem.cat or "Custom")
+		equipBtn.Text = "UNEQUIP / REMOVE"
+		equipBtn.BackgroundColor3 = C.card
+		equipBtn.TextColor3 = C.text
+	elseif isItemInPreview(selectedItem) then
+		local pr = tostring(selectedItem.price or "")
+		inspPrice.Text = "Previewing! " .. (pr ~= "" and ("(" .. pr .. ")") or "(Ready to Clone)")
+		equipBtn.Text = "CLONE LOOK"
+		equipBtn.BackgroundColor3 = C.btnHi
+		equipBtn.TextColor3 = C.btnTextHi
+	else
+		local pr = tostring(selectedItem.price or "")
+		inspPrice.Text = (pr ~= "" and ("Price: " .. pr) or "Price: Special")
+		equipBtn.Text = "PREVIEW FIRST"
+		equipBtn.BackgroundColor3 = C.btnHi
+		equipBtn.TextColor3 = C.btnTextHi
+	end
+end
+
+local function closeInsp()
+	Inspector.Visible = false
+	Inspector.Position = UDim2.new(0, 0, 1, 0)
+	if CustomToggleBar then CustomToggleBar.Visible = false end
+end
+closeInspRef = closeInsp
+onClick(inspClose, closeInsp)
+
+local function openInsp(item)
+	selectedItem = item
+	inspName.Text = tostring(item.name or "ITEM"):upper()
+	updateInspBtnRef()
+	if item.img and item.img ~= "" then
+		inspImg.Image = item.img
+		inspPlaceholder.Visible = false
+	else
+		inspImg.Image = ""
+		inspPlaceholder.Visible = true
+	end
+	Inspector.Visible = true
+	Inspector.Position = UDim2.new(0, 0, 1, -InspHeight)
+end
+UI.openInsp = openInsp
+
+local function handleWearOrRemove()
+	if not selectedItem then return end
+	if selectedItem.isWorn then
+		setStatus("Unequipping...", C.sub)
+		unequipWornItem(selectedItem)
+		setStatus("Item Removed!", C.text)
+		closeInsp()
+		updateTabCounts()
+		if refreshGridRef then refreshGridRef("Worn") end
+	elseif isItemInPreview(selectedItem) then
+		setStatus("Cloning customized look...", C.sub)
+		if confirmCloneRef then confirmCloneRef(selectedItem) end
+	else
+		setStatus("Starting Preview...", C.sub)
+		if startPreviewRef then startPreviewRef(selectedItem) end
+	end
+end
+onClick(equipBtn, handleWearOrRemove)
+
+-- Compact scrollable toggle selector popup for ALL 16 custom .rbxm models
+CustomToggleBar = mk("Frame", {
+	Name             = "CustomToggleBar",
+	Size             = UDim2.new(1, -12, 0, 32),
+	Position         = UDim2.new(0, 6, 1, -174),
+	BackgroundColor3 = C.panel,
+	BorderSizePixel  = 0,
+	Visible          = false,
+	ZIndex           = 35,
+}, Main)
+corner(4, CustomToggleBar)
+stroke(1, C.borderHi, CustomToggleBar)
+
+local CustomToggleScroll = mk("ScrollingFrame", {
+	Size               = UDim2.new(1, -28, 1, 0),
+	Position           = UDim2.new(0, 4, 0, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel    = 0,
+	ScrollBarThickness = 2,
+	CanvasSize         = UDim2.new(0, 0, 0, 0),
+	ZIndex             = 36,
+}, CustomToggleBar)
+pcall(function() CustomToggleScroll.ScrollingDirection = Enum.ScrollingDirection.X end)
+pcall(function() CustomToggleScroll.AutomaticCanvasSize = Enum.AutomaticSize.X end)
+mk("UIListLayout", {
+	FillDirection       = Enum.FillDirection.Horizontal,
+	Padding             = UDim.new(0, 4),
+	VerticalAlignment   = Enum.VerticalAlignment.Center,
+}, CustomToggleScroll)
+
+local closeCustomTBtn = mk("TextButton", {
+	Size             = UDim2.new(0, 20, 0, 22),
+	Position         = UDim2.new(1, -24, 0.5, -11),
+	BackgroundColor3 = C.card,
+	Text             = "X",
+	TextColor3       = C.sub,
+	Font             = Enum.Font.GothamBold,
+	TextSize         = 7,
+	BorderSizePixel  = 0,
+	ZIndex           = 37,
+}, CustomToggleBar)
+corner(3, closeCustomTBtn)
+onClick(closeCustomTBtn, function() CustomToggleBar.Visible = false end)
+hideCustomToggleBarRef = function()
+	if CustomToggleBar then CustomToggleBar.Visible = false end
+end
+
+local function openCustomToggleBarFor(item)
+	for _, ch in ipairs(CustomToggleScroll:GetChildren()) do
+		if ch:IsA("GuiObject") then ch:Destroy() end
+	end
+	local pf = getPreviewFolder(false)
+	local bf = getBakedFolder(false)
+	local meta, canonName, b64Key = findCustomRbxmSpec(item)
+	if (not pf and not bf) or not meta then
+		CustomToggleBar.Visible = false
+		return
+	end
+	local cat = item.cat or meta.cat
+	local cleanCanon = tostring(canonName or meta.name or item.name):gsub("%s*%b()%s*", ""):gsub("[^%w]", "")
+	local expectedSlot = ((cat == "Halos") and "Halo_" or "Acc_") .. cleanCanon
+	local mdl = nil
+	for _, folder in ipairs({pf, bf}) do
+		if folder then
+			mdl = (item.slotKey and folder:FindFirstChild(item.slotKey)) or folder:FindFirstChild(expectedSlot)
+			if not mdl and b64Key then
+				for _, ch in ipairs(folder:GetChildren()) do
+					if ch:GetAttribute("RH_CustomB64Key") == b64Key then
+						mdl = ch
+						break
+					end
+				end
+			end
+			if mdl then break end
+		end
+	end
+	if not mdl then CustomToggleBar.Visible = false return end
+
+	-- Group toggle folders by name across multi-limb models & nested toggle models (e.g., Lucky 21 Beams, Winter 22 Crystal Sparkles!)
+	local groupList = {}
+	local groupMap = {}
+	local skipNames = {
+		["Configuration"]=true, ["Colors"]=true, ["InteractSettings"]=true, ["CycleVariants"]=true, ["1"]=true,
+		["Size: 2"]=true, ["Orientation: Down"]=true, ["Turn to Brooch"]=true,
+	}
+
+	for _, ch in ipairs(mdl:GetDescendants()) do
+		if ch:IsA("Folder") and not skipNames[ch.Name] and not ch.Name:match("CRFolder$") and not ch.Name:match("^Cycle") and not ch.Name:match("^Wand Rotation") and not ch.Name:match("^Wand Size") then
+			if not ch:FindFirstAncestor("Configuration") and not ch:FindFirstAncestor("Colors") then
+				local hasToggleContent = false
+				for _, dc in ipairs(ch:GetChildren()) do
+					if dc:IsA("BasePart") or dc:IsA("ParticleEmitter") or dc:IsA("PointLight") or dc:IsA("Attachment") or dc:IsA("Beam") or dc:IsA("Trail") then
+						hasToggleContent = true
+						break
+					elseif dc:IsA("Model") and dc:FindFirstChildWhichIsA("BasePart", true) then
+						hasToggleContent = true
+						break
+					end
+				end
+				if hasToggleContent then
+					if not groupMap[ch.Name] then
+						groupMap[ch.Name] = {}
+						table.insert(groupList, { name = ch.Name, folders = groupMap[ch.Name] })
+					end
+					table.insert(groupMap[ch.Name], ch)
+				end
+			end
+		end
+	end
+
+	if #groupList == 0 then CustomToggleBar.Visible = false return end
+
+	local function isGroupActive(fldList)
+		local checkedAny = false
+		for _, fld in ipairs(fldList) do
+			for _, p in ipairs(fld:GetDescendants()) do
+				if p:IsA("BasePart") and (p:GetAttribute("RH_OrigTransparency") or 0) < 0.99 then
+					checkedAny = true
+					if p.Transparency < 0.99 then return true end
+				elseif p:IsA("ParticleEmitter") or p:IsA("PointLight") or p:IsA("Beam") or p:IsA("Trail") then
+					checkedAny = true
+					if p.Enabled then return true end
+				end
+			end
+		end
+		return checkedAny
+	end
+
+	for _, grp in ipairs(groupList) do
+		local isOn = isGroupActive(grp.folders)
+		local tb = mk("TextButton", {
+			Size             = UDim2.new(0, 74, 0, 22),
+			BackgroundColor3 = isOn and C.accent or C.card,
+			Text             = grp.name:sub(1, 20),
+			TextWrapped      = true,
+			TextColor3       = isOn and C.accentTxt or C.sub,
+			Font             = Enum.Font.GothamBold,
+			TextSize         = 6,
+			BorderSizePixel  = 0,
+			ZIndex           = 36,
+		}, CustomToggleScroll)
+		corner(3, tb)
+		tb.Activated:Connect(function()
+			local newOn = not isGroupActive(grp.folders)
+			for _, fld in ipairs(grp.folders) do
+				for _, p in ipairs(fld:GetDescendants()) do
+					if p:IsA("BasePart") then
+						p.Transparency = newOn and (p:GetAttribute("RH_OrigTransparency") or 0) or 1
+					elseif p:IsA("ParticleEmitter") or p:IsA("PointLight") or p:IsA("Beam") or p:IsA("Trail") then
+						p.Enabled = newOn
+					end
+				end
+			end
+			tb.BackgroundColor3 = newOn and C.accent or C.card
+			tb.TextColor3 = newOn and C.accentTxt or C.sub
+			if mdl:GetAttribute("RH_BakedLayer") then
+				bakedLayersBackup[mdl.Name] = deepClone(mdl)
+			end
+		end)
+	end
+	CustomToggleBar.Visible = true
+end
+UI.openCustomToggleBarFor = openCustomToggleBarFor
+
+local function handleColor()
+	if not selectedItem then return end
+	if not selectedItem.isWorn and not isItemInPreview(selectedItem) then
+		-- Auto-start preview first so user can pick toggles & colors BEFORE cloning!
+		local bf = getBakedFolder(false)
+		local cleanC = normItemKey(selectedItem)
+		local foundBaked = false
+		if bf then
+			for _, ch in ipairs(bf:GetChildren()) do
+				if tostring(ch:GetAttribute("RH_ItemName") or ch.Name):lower():gsub("%s*%b()%s*", ""):gsub("[^%w]", "") == cleanC then
+					foundBaked = true
+					break
+				end
+			end
+		end
+		if not foundBaked and startPreviewRef then
+			setStatus("Previewing to customize...", C.sub)
+			startPreviewRef(selectedItem)
+			return
+		end
+	end
+	local ok = openItemColorAndToggles(selectedItem)
+	if findCustomRbxmSpec(selectedItem) then
+		openCustomToggleBarFor(selectedItem)
+	else
+		CustomToggleBar.Visible = false
+	end
+	if ok then
+		setStatus("Toggles & Colors opened!", C.text)
+	else
+		setStatus("Colors/Toggles opened", C.sub)
+	end
+end
+onClick(colorBtn, handleColor)
+
+onClick(bakeBtn, function()
+	if confirmCloneRef and (isItemInPreview(selectedItem) or selectedItem) then
+		setStatus("Cloning & Locking...", C.sub)
+		confirmCloneRef(selectedItem)
+		return
+	end
+	local cat = selectedItem and selectedItem.cat or "Accessories"
+	local n = lockCurrentAvatarLook(cat, selectedItem)
+	releasePlayerMovement()
+	if n > 0 then
+		setStatus("Layer Locked & Saved!", C.text)
+	else
+		setStatus("Current Look Baked!", C.text)
+	end
+	updateTabCounts()
+	if refreshGridRef then refreshGridRef() end
+end)
+
+onClick(clearLayersBtn, function()
+	clearAllWornLayers()
+	setStatus("Cleared all layers.", C.sub)
+	updateTabCounts()
+	if refreshGridRef then refreshGridRef() end
+end)
+end)
+if not okInsp then warn("[RH Wardrobe v55] Inspector init err:", errInsp) end
+end -- Inspector & CustomToggleBar scope
 
 do
 local okStat, errStat = pcall(function()
@@ -5822,732 +6580,4 @@ end)
 end)
 if not okStat then warn("[RH Wardrobe v55] Stat Spoofer init skipped:", errStat) end
 end -- Stat Spoofer scope
-
--- Slide-up Inspector (140px height)
-local InspHeight = 140
-local Inspector = mk("Frame", {
-	Size             = UDim2.new(1, 0, 0, InspHeight),
-	Position         = UDim2.new(0, 0, 1, 0),
-	BackgroundColor3 = C.panel,
-	BorderSizePixel  = 0,
-	Visible          = false,
-	ZIndex           = 25,
-	ClipsDescendants = true,
-}, Main)
-corner(8, Inspector)
-stroke(1, C.borderHi, Inspector)
-
-local inspClose = mk("TextButton", {
-	Size            = UDim2.new(0, 16, 0, 16),
-	Position        = UDim2.new(1, -20, 0, 3),
-	BackgroundColor3= C.btn,
-	Text            = "X",
-	TextColor3      = C.text,
-	Font            = Enum.Font.GothamBold,
-	TextSize        = 8,
-	BorderSizePixel = 0,
-	ZIndex          = 26,
-	AutoButtonColor = false,
-}, Inspector)
-corner(4, inspClose)
-stroke(1, C.border, inspClose)
-
-local inspImg = mk("ImageLabel", {
-	Size            = UDim2.new(0, 48, 0, 48),
-	Position        = UDim2.new(0, 6, 0, 6),
-	BackgroundColor3= C.btn,
-	BorderSizePixel = 0,
-	ZIndex          = 26,
-	ScaleType       = Enum.ScaleType.Fit,
-}, Inspector)
-corner(6, inspImg)
-stroke(1, C.border, inspImg)
-
-local inspPlaceholder = mk("TextLabel", {
-	Size               = UDim2.new(1, 0, 1, 0),
-	BackgroundTransparency = 1,
-	Text               = "NO\nIMG",
-	TextColor3         = C.muted,
-	Font               = Enum.Font.GothamBold,
-	TextSize           = 8,
-	Visible            = false,
-	ZIndex             = 27,
-}, inspImg)
-
-local inspName = mk("TextLabel", {
-	Size               = UDim2.new(1, -80, 0, 20),
-	Position           = UDim2.new(0, 60, 0, 4),
-	BackgroundTransparency = 1,
-	Text               = "ITEM NAME",
-	TextColor3         = C.text,
-	Font               = Enum.Font.GothamBold,
-	TextSize           = 8.5,
-	TextXAlignment     = Enum.TextXAlignment.Left,
-	TextWrapped        = true,
-	ZIndex             = 26,
-}, Inspector)
-
-local inspPrice = mk("TextLabel", {
-	Size               = UDim2.new(1, -80, 0, 13),
-	Position           = UDim2.new(0, 60, 0, 24),
-	BackgroundTransparency = 1,
-	Text               = "Price: Free",
-	TextColor3         = C.sub,
-	Font               = Enum.Font.Gotham,
-	TextSize           = 7.5,
-	TextXAlignment     = Enum.TextXAlignment.Left,
-	ZIndex             = 26,
-}, Inspector)
-
-local inspStatus = mk("TextLabel", {
-	Size               = UDim2.new(1, -80, 0, 13),
-	Position           = UDim2.new(0, 60, 0, 38),
-	BackgroundTransparency = 1,
-	Text               = "",
-	TextColor3         = C.muted,
-	Font               = Enum.Font.Gotham,
-	TextSize           = 7.5,
-	TextXAlignment     = Enum.TextXAlignment.Left,
-	ZIndex             = 26,
-}, Inspector)
-
-local function setStatus(msg, col)
-	inspStatus.Text = msg
-	inspStatus.TextColor3 = col or C.sub
-	task.delay(3, function()
-		if inspStatus.Text == msg then inspStatus.Text = "" end
-	end)
-end
-setStatusRef = setStatus
-
--- Row 1: PREVIEW FIRST / CLONE LOOK (left) and COLOR / TOGGLE (right)
-local equipBtn = mk("TextButton", {
-	Size             = UDim2.new(0.48, -4, 0, 23),
-	Position         = UDim2.new(0, 6, 0, 84),
-	BackgroundColor3 = C.btnHi,
-	Text             = "PREVIEW FIRST",
-	TextColor3       = C.btnTextHi,
-	Font             = Enum.Font.GothamBold,
-	TextSize         = 7.5,
-	BorderSizePixel  = 0,
-	ZIndex           = 26,
-	AutoButtonColor  = false,
-}, Inspector)
-corner(4, equipBtn)
-
-local colorBtn = mk("TextButton", {
-	Size             = UDim2.new(0.48, -4, 0, 23),
-	Position         = UDim2.new(0.5, 2, 0, 84),
-	BackgroundColor3 = C.btn,
-	Text             = "COLOR / TOGGLE",
-	TextColor3       = C.text,
-	Font             = Enum.Font.GothamBold,
-	TextSize         = 7,
-	BorderSizePixel  = 0,
-	ZIndex           = 26,
-	AutoButtonColor  = false,
-}, Inspector)
-corner(4, colorBtn)
-stroke(1, C.border, colorBtn)
-
--- Row 2: CLONE NOW (left) and CLEAR ALL (right)
-local bakeBtn = mk("TextButton", {
-	Size             = UDim2.new(0.48, -4, 0, 21),
-	Position         = UDim2.new(0, 6, 0, 111),
-	BackgroundColor3 = C.btn,
-	Text             = "CLONE NOW",
-	TextColor3       = C.text,
-	Font             = Enum.Font.GothamBold,
-	TextSize         = 7,
-	BorderSizePixel  = 0,
-	ZIndex           = 26,
-	AutoButtonColor  = false,
-}, Inspector)
-corner(4, bakeBtn)
-stroke(1, C.border, bakeBtn)
-
-local clearLayersBtn = mk("TextButton", {
-	Size             = UDim2.new(0.48, -4, 0, 21),
-	Position         = UDim2.new(0.5, 2, 0, 111),
-	BackgroundColor3 = C.btn,
-	Text             = "CLEAR ALL",
-	TextColor3       = C.sub,
-	Font             = Enum.Font.GothamBold,
-	TextSize         = 7,
-	BorderSizePixel  = 0,
-	ZIndex           = 26,
-	AutoButtonColor  = false,
-}, Inspector)
-corner(4, clearLayersBtn)
-stroke(1, C.border, clearLayersBtn)
-
-
-local selectedItem = nil
-local CustomToggleBar = nil
-local function normItemKey(it)
-	if not it then return "" end
-	return tostring(it.assetName or it.name or ""):lower():gsub("%s*%b()%s*", ""):gsub("[^%w]", "")
-end
-local function isItemInPreview(it)
-	if not it or it.isWorn then return false end
-	local k = normItemKey(it)
-	if k == "" then return false end
-	if activePreviewItem and normItemKey(activePreviewItem) == k then
-		return true
-	end
-	local pf = getPreviewFolder(false)
-	if pf then
-		for _, ch in ipairs(pf:GetChildren()) do
-			local cn = tostring(ch:GetAttribute("RH_ItemName") or ch.Name):lower():gsub("%s*%b()%s*", ""):gsub("[^%w]", "")
-			if cn == k then return true end
-		end
-	end
-	return false
-end
-updateInspBtnRef = function()
-	if not selectedItem then return end
-	if selectedItem.isWorn then
-		inspPrice.Text = "Equipped: " .. tostring(selectedItem.cat or "Custom")
-		equipBtn.Text = "UNEQUIP / REMOVE"
-		equipBtn.BackgroundColor3 = C.card
-		equipBtn.TextColor3 = C.text
-	elseif isItemInPreview(selectedItem) then
-		local pr = tostring(selectedItem.price or "")
-		inspPrice.Text = "Previewing! " .. (pr ~= "" and ("(" .. pr .. ")") or "(Ready to Clone)")
-		equipBtn.Text = "CLONE LOOK"
-		equipBtn.BackgroundColor3 = C.btnHi
-		equipBtn.TextColor3 = C.btnTextHi
-	else
-		local pr = tostring(selectedItem.price or "")
-		inspPrice.Text = (pr ~= "" and ("Price: " .. pr) or "Price: Special")
-		equipBtn.Text = "PREVIEW FIRST"
-		equipBtn.BackgroundColor3 = C.btnHi
-		equipBtn.TextColor3 = C.btnTextHi
-	end
-end
-
-local function closeInsp()
-	Inspector.Visible = false
-	Inspector.Position = UDim2.new(0, 0, 1, 0)
-	if CustomToggleBar then CustomToggleBar.Visible = false end
-end
-closeInspRef = closeInsp
-inspClose.Activated:Connect(closeInsp)
-
-local function openInsp(item)
-	selectedItem = item
-	inspName.Text = tostring(item.name or "ITEM"):upper()
-	updateInspBtnRef()
-	if item.img and item.img ~= "" then
-		inspImg.Image = item.img
-		inspPlaceholder.Visible = false
-	else
-		inspImg.Image = ""
-		inspPlaceholder.Visible = true
-	end
-	Inspector.Visible = true
-	Inspector.Position = UDim2.new(0, 0, 1, -InspHeight)
-end
-
-local function handleWearOrRemove()
-	if not selectedItem then return end
-	if selectedItem.isWorn then
-		setStatus("Unequipping...", C.sub)
-		unequipWornItem(selectedItem)
-		setStatus("Item Removed!", C.text)
-		closeInsp()
-		updateTabCounts()
-		if refreshGridRef then refreshGridRef("Worn") end
-	elseif isItemInPreview(selectedItem) then
-		setStatus("Cloning customized look...", C.sub)
-		if confirmCloneRef then confirmCloneRef(selectedItem) end
-	else
-		setStatus("Starting Preview...", C.sub)
-		if startPreviewRef then startPreviewRef(selectedItem) end
-	end
-end
-equipBtn.Activated:Connect(handleWearOrRemove)
-
--- Compact scrollable toggle selector popup for ALL 16 custom .rbxm models
-CustomToggleBar = mk("Frame", {
-	Name             = "CustomToggleBar",
-	Size             = UDim2.new(1, -12, 0, 32),
-	Position         = UDim2.new(0, 6, 1, -174),
-	BackgroundColor3 = C.panel,
-	BorderSizePixel  = 0,
-	Visible          = false,
-	ZIndex           = 35,
-}, Main)
-corner(4, CustomToggleBar)
-stroke(1, C.borderHi, CustomToggleBar)
-
-local CustomToggleScroll = mk("ScrollingFrame", {
-	Size               = UDim2.new(1, -28, 1, 0),
-	Position           = UDim2.new(0, 4, 0, 0),
-	BackgroundTransparency = 1,
-	BorderSizePixel    = 0,
-	ScrollBarThickness = 2,
-	ScrollingDirection = Enum.ScrollingDirection.X,
-	AutomaticCanvasSize = Enum.AutomaticSize.X,
-	CanvasSize         = UDim2.new(0, 0, 0, 0),
-	ZIndex             = 36,
-}, CustomToggleBar)
-mk("UIListLayout", {
-	FillDirection       = Enum.FillDirection.Horizontal,
-	Padding             = UDim.new(0, 4),
-	VerticalAlignment   = Enum.VerticalAlignment.Center,
-}, CustomToggleScroll)
-
-local closeCustomTBtn = mk("TextButton", {
-	Size             = UDim2.new(0, 20, 0, 22),
-	Position         = UDim2.new(1, -24, 0.5, -11),
-	BackgroundColor3 = C.card,
-	Text             = "X",
-	TextColor3       = C.sub,
-	Font             = Enum.Font.GothamBold,
-	TextSize         = 7,
-	BorderSizePixel  = 0,
-	ZIndex           = 37,
-}, CustomToggleBar)
-corner(3, closeCustomTBtn)
-closeCustomTBtn.Activated:Connect(function() CustomToggleBar.Visible = false end)
-hideCustomToggleBarRef = function()
-	if CustomToggleBar then CustomToggleBar.Visible = false end
-end
-
-local function openCustomToggleBarFor(item)
-	for _, ch in ipairs(CustomToggleScroll:GetChildren()) do
-		if ch:IsA("GuiObject") then ch:Destroy() end
-	end
-	local pf = getPreviewFolder(false)
-	local bf = getBakedFolder(false)
-	local meta, canonName, b64Key = findCustomRbxmSpec(item)
-	if (not pf and not bf) or not meta then
-		CustomToggleBar.Visible = false
-		return
-	end
-	local cat = item.cat or meta.cat
-	local cleanCanon = tostring(canonName or meta.name or item.name):gsub("%s*%b()%s*", ""):gsub("[^%w]", "")
-	local expectedSlot = ((cat == "Halos") and "Halo_" or "Acc_") .. cleanCanon
-	local mdl = nil
-	for _, folder in ipairs({pf, bf}) do
-		if folder then
-			mdl = (item.slotKey and folder:FindFirstChild(item.slotKey)) or folder:FindFirstChild(expectedSlot)
-			if not mdl and b64Key then
-				for _, ch in ipairs(folder:GetChildren()) do
-					if ch:GetAttribute("RH_CustomB64Key") == b64Key then
-						mdl = ch
-						break
-					end
-				end
-			end
-			if mdl then break end
-		end
-	end
-	if not mdl then CustomToggleBar.Visible = false return end
-
-	-- Group toggle folders by name across multi-limb models & nested toggle models (e.g., Lucky 21 Beams, Winter 22 Crystal Sparkles!)
-	local groupList = {}
-	local groupMap = {}
-	local skipNames = {
-		["Configuration"]=true, ["Colors"]=true, ["InteractSettings"]=true, ["CycleVariants"]=true, ["1"]=true,
-		["Size: 2"]=true, ["Orientation: Down"]=true, ["Turn to Brooch"]=true,
-	}
-
-	for _, ch in ipairs(mdl:GetDescendants()) do
-		if ch:IsA("Folder") and not skipNames[ch.Name] and not ch.Name:match("CRFolder$") and not ch.Name:match("^Cycle") and not ch.Name:match("^Wand Rotation") and not ch.Name:match("^Wand Size") then
-			if not ch:FindFirstAncestor("Configuration") and not ch:FindFirstAncestor("Colors") then
-				local hasToggleContent = false
-				for _, dc in ipairs(ch:GetChildren()) do
-					if dc:IsA("BasePart") or dc:IsA("ParticleEmitter") or dc:IsA("PointLight") or dc:IsA("Attachment") or dc:IsA("Beam") or dc:IsA("Trail") then
-						hasToggleContent = true
-						break
-					elseif dc:IsA("Model") and dc:FindFirstChildWhichIsA("BasePart", true) then
-						hasToggleContent = true
-						break
-					end
-				end
-				if hasToggleContent then
-					if not groupMap[ch.Name] then
-						groupMap[ch.Name] = {}
-						table.insert(groupList, { name = ch.Name, folders = groupMap[ch.Name] })
-					end
-					table.insert(groupMap[ch.Name], ch)
-				end
-			end
-		end
-	end
-
-	if #groupList == 0 then CustomToggleBar.Visible = false return end
-
-	local function isGroupActive(fldList)
-		local checkedAny = false
-		for _, fld in ipairs(fldList) do
-			for _, p in ipairs(fld:GetDescendants()) do
-				if p:IsA("BasePart") and (p:GetAttribute("RH_OrigTransparency") or 0) < 0.99 then
-					checkedAny = true
-					if p.Transparency < 0.99 then return true end
-				elseif p:IsA("ParticleEmitter") or p:IsA("PointLight") or p:IsA("Beam") or p:IsA("Trail") then
-					checkedAny = true
-					if p.Enabled then return true end
-				end
-			end
-		end
-		return checkedAny
-	end
-
-	for _, grp in ipairs(groupList) do
-		local isOn = isGroupActive(grp.folders)
-		local tb = mk("TextButton", {
-			Size             = UDim2.new(0, 74, 0, 22),
-			BackgroundColor3 = isOn and C.accent or C.card,
-			Text             = grp.name:sub(1, 20),
-			TextWrapped      = true,
-			TextColor3       = isOn and C.accentTxt or C.sub,
-			Font             = Enum.Font.GothamBold,
-			TextSize         = 6,
-			BorderSizePixel  = 0,
-			ZIndex           = 36,
-		}, CustomToggleScroll)
-		corner(3, tb)
-		tb.Activated:Connect(function()
-			local newOn = not isGroupActive(grp.folders)
-			for _, fld in ipairs(grp.folders) do
-				for _, p in ipairs(fld:GetDescendants()) do
-					if p:IsA("BasePart") then
-						p.Transparency = newOn and (p:GetAttribute("RH_OrigTransparency") or 0) or 1
-					elseif p:IsA("ParticleEmitter") or p:IsA("PointLight") or p:IsA("Beam") or p:IsA("Trail") then
-						p.Enabled = newOn
-					end
-				end
-			end
-			tb.BackgroundColor3 = newOn and C.accent or C.card
-			tb.TextColor3 = newOn and C.accentTxt or C.sub
-			if mdl:GetAttribute("RH_BakedLayer") then
-				bakedLayersBackup[mdl.Name] = deepClone(mdl)
-			end
-		end)
-	end
-	CustomToggleBar.Visible = true
-end
-UI.openCustomToggleBarFor = openCustomToggleBarFor
-
-local function handleColor()
-	if not selectedItem then return end
-	if not selectedItem.isWorn and not isItemInPreview(selectedItem) then
-		-- Auto-start preview first so user can pick toggles & colors BEFORE cloning!
-		local bf = getBakedFolder(false)
-		local cleanC = normItemKey(selectedItem)
-		local foundBaked = false
-		if bf then
-			for _, ch in ipairs(bf:GetChildren()) do
-				if tostring(ch:GetAttribute("RH_ItemName") or ch.Name):lower():gsub("%s*%b()%s*", ""):gsub("[^%w]", "") == cleanC then
-					foundBaked = true
-					break
-				end
-			end
-		end
-		if not foundBaked and startPreviewRef then
-			setStatus("Previewing to customize...", C.sub)
-			startPreviewRef(selectedItem)
-			return
-		end
-	end
-	local ok = openItemColorAndToggles(selectedItem)
-	if findCustomRbxmSpec(selectedItem) then
-		openCustomToggleBarFor(selectedItem)
-	else
-		CustomToggleBar.Visible = false
-	end
-	if ok then
-		setStatus("Toggles & Colors opened!", C.text)
-	else
-		setStatus("Colors/Toggles opened", C.sub)
-	end
-end
-colorBtn.Activated:Connect(handleColor)
-
-bakeBtn.Activated:Connect(function()
-	if confirmCloneRef and (isItemInPreview(selectedItem) or selectedItem) then
-		setStatus("Cloning & Locking...", C.sub)
-		confirmCloneRef(selectedItem)
-		return
-	end
-	local cat = selectedItem and selectedItem.cat or "Accessories"
-	local n = lockCurrentAvatarLook(cat, selectedItem)
-	releasePlayerMovement()
-	if n > 0 then
-		setStatus("Layer Locked & Saved!", C.text)
-	else
-		setStatus("Current Look Baked!", C.text)
-	end
-	updateTabCounts()
-	if refreshGridRef then refreshGridRef() end
-end)
-
-clearLayersBtn.Activated:Connect(function()
-	clearAllWornLayers()
-	setStatus("Cleared all layers.", C.sub)
-	updateTabCounts()
-	if refreshGridRef then refreshGridRef() end
-end)
-
--- ============================================================
--- 6. GRID POPULATION & CATEGORY NAVIGATION
--- ============================================================
-local currentCat    = "Heels"
-local currentSearch = ""
-local cardInstances = {}
-
-local function makeCard(item, order)
-	local card = mk("Frame", {
-		Name             = "Card_" .. item.name:sub(1,10),
-		BackgroundColor3 = C.card,
-		BorderSizePixel  = 0,
-		LayoutOrder      = order,
-		ZIndex           = 13,
-	}, GridScroll)
-	corner(4, card)
-	stroke(1, C.border, card)
-
-	local img = mk("ImageLabel", {
-		Size             = UDim2.new(1, -6, 0, 38),
-		Position         = UDim2.new(0, 3, 0, 3),
-		BackgroundColor3 = C.btn,
-		BorderSizePixel  = 0,
-		ScaleType        = Enum.ScaleType.Fit,
-		Image            = item.img or "",
-		ZIndex           = 14,
-	}, card)
-	corner(3, img)
-
-	if not item.img or item.img == "" then
-		if item.cat == "Wings" then
-			_G.RH_WingModelCache = _G.RH_WingModelCache or {}
-			local phLbl = mk("TextLabel", {
-				Size               = UDim2.new(1, 0, 1, 0),
-				BackgroundTransparency = 1,
-				Text               = "...",
-				TextColor3         = C.muted,
-				Font               = Enum.Font.GothamBold,
-				TextSize           = 7,
-				ZIndex             = 15,
-			}, img)
-			task.spawn(function()
-				local wingKey = item.assetName or item.name
-				local tmpl = _G.RH_WingModelCache[wingKey]
-				if tmpl == nil then
-					local getWingFn = ReplicatedStorage:FindFirstChild("GetWingModel")
-					if getWingFn and getWingFn:IsA("RemoteFunction") then
-						local ok, res = pcall(function() return getWingFn:InvokeServer(wingKey) end)
-						tmpl = (ok and typeof(res) == "Instance") and res or false
-						_G.RH_WingModelCache[wingKey] = tmpl
-					else
-						_G.RH_WingModelCache[wingKey] = false
-					end
-				end
-				if tmpl and typeof(tmpl) == "Instance" and img and img.Parent then
-					local clone = tmpl:Clone()
-					local vpf = mk("ViewportFrame", {
-						Size                   = UDim2.new(1, 0, 1, 0),
-						BackgroundTransparency = 1,
-						Ambient                = Color3.fromRGB(230, 230, 230),
-						LightColor             = Color3.fromRGB(255, 255, 255),
-						LightDirection         = Vector3.new(-1, -1, -1),
-						ZIndex                 = 15,
-					}, img)
-					local wm = Instance.new("WorldModel")
-					wm.Parent = vpf
-					local cam = Instance.new("Camera")
-					cam.FieldOfView = 36
-					cam.Parent = vpf
-					vpf.CurrentCamera = cam
-					clone.Parent = wm
-					local cf, sz
-					if clone:IsA("Model") then
-						cf, sz = clone:GetBoundingBox()
-					else
-						local bp = clone:FindFirstChildWhichIsA("BasePart", true)
-						cf = bp and bp.CFrame or CFrame.new()
-						sz = bp and bp.Size or Vector3.new(2, 2, 1)
-					end
-					local center = cf.Position
-					local spanW, lookDir
-					if sz.X >= sz.Z then
-						spanW = math.max(sz.X, sz.Y)
-						lookDir = Vector3.new(0, 0, 1)
-					else
-						spanW = math.max(sz.Z, sz.Y)
-						lookDir = Vector3.new(1, 0, 0)
-					end
-					local dist = (spanW * 0.62) / math.tan(math.rad(cam.FieldOfView * 0.5))
-					cam.CFrame = CFrame.new(center + lookDir * math.max(dist, 1.8), center)
-					if phLbl then phLbl.Visible = false end
-				elseif phLbl and phLbl.Parent then
-					phLbl.Text = "WING"
-				end
-			end)
-		else
-			mk("TextLabel", {
-				Size               = UDim2.new(1, 0, 1, 0),
-				BackgroundTransparency = 1,
-				Text               = item.isWorn and "WORN" or "NO IMG",
-				TextColor3         = item.isWorn and C.text or C.muted,
-				Font               = Enum.Font.GothamBold,
-				TextSize           = 7,
-				ZIndex             = 15,
-			}, img)
-		end
-	end
-
-	mk("TextLabel", {
-		Size               = UDim2.new(1, -4, 0, 20),
-		Position           = UDim2.new(0, 2, 0, 44),
-		BackgroundTransparency = 1,
-		Text               = item.name,
-		TextColor3         = C.text,
-		Font               = Enum.Font.Gotham,
-		TextSize           = 6.5,
-		TextWrapped        = true,
-		TextYAlignment     = Enum.TextYAlignment.Top,
-		ZIndex             = 14,
-	}, card)
-
-	local btn = mk("TextButton", {
-		Size               = UDim2.new(1, 0, 1, 0),
-		BackgroundTransparency = 1,
-		Text               = "",
-		ZIndex             = 16,
-	}, card)
-	btn.Activated:Connect(function() openInsp(item) end)
-
-	cardInstances[item] = card
-	return card
-end
-
-local function refreshGrid()
-	for _, card in pairs(cardInstances) do pcall(function() card:Destroy() end) end
-	cardInstances = {}
-	for _, ch in ipairs(GridScroll:GetChildren()) do
-		if ch:IsA("GuiObject") then ch:Destroy() end
-	end
-
-	if currentCat == "Stats" then return end
-
-	local list = {}
-	if currentCat == "Worn" then
-		local okW, wl = pcall(getWornItemsList)
-		list = (okW and type(wl) == "table") and wl or {}
-	else
-		list = categories[currentCat] or {}
-	end
-
-	local search = (currentCat == "Worn") and "" or currentSearch:lower()
-	local filtered = {}
-	for _, item in ipairs(list) do
-		if search == "" or tostring(item.name or ""):lower():find(search, 1, true) then
-			table.insert(filtered, item)
-		end
-	end
-
-	if currentCat == "Worn" then
-		if #filtered == 0 then
-			local emptyCard = mk("Frame", {
-				Name             = "EmptyNotice",
-				Size             = UDim2.new(1, -8, 0, 64),
-				BackgroundColor3 = C.card,
-				BorderSizePixel  = 0,
-				LayoutOrder      = 1,
-				ZIndex           = 13,
-			}, GridScroll)
-			corner(4, emptyCard)
-			stroke(1, C.border, emptyCard)
-
-			mk("TextLabel", {
-				Size               = UDim2.new(1, -12, 1, 0),
-				Position           = UDim2.new(0, 6, 0, 0),
-				BackgroundTransparency = 1,
-				Text               = "NO ITEMS WORN\n\nEquip items from Heels, Skirts, or Bodices to wear and stack them!",
-				TextColor3         = C.sub,
-				Font               = Enum.Font.Gotham,
-				TextSize           = 7.5,
-				TextWrapped        = true,
-				ZIndex             = 14,
-			}, emptyCard)
-			cardInstances[emptyCard] = emptyCard
-			return
-		end
-	else
-		-- Sort: Items with valid images FIRST, items with NO image LAST
-		table.sort(filtered, function(a, b)
-			local aHas = (a.img and a.img ~= "") and 1 or 0
-			local bHas = (b.img and b.img ~= "") and 1 or 0
-			if aHas ~= bHas then
-				return aHas > bHas
-			end
-			return tostring(a.name or ""):lower() < tostring(b.name or ""):lower()
-		end)
-	end
-
-	for order, item in ipairs(filtered) do
-		makeCard(item, order)
-	end
-end
-
-UI.updateTabCounts = updateTabCounts
-refreshGridRef = function(targetCat)
-    if not targetCat or targetCat == currentCat then
-        refreshGrid()
-    end
-end
-UI.refreshGrid = refreshGridRef
-
-local function setActiveCategory(cat)
-	currentCat = cat
-	if cat == "Worn" and SearchBox.Text ~= "" then
-		currentSearch = ""
-		SearchBox.Text = ""
-	end
-	for c, btn in pairs(tabButtons) do
-		if c == cat then
-			btn.BackgroundColor3 = C.tabActive
-			btn.TextColor3       = C.tabActTxt
-		else
-			btn.BackgroundColor3 = C.tabInact
-			btn.TextColor3       = C.tabInaTxt
-		end
-	end
-	closeInsp()
-	pcall(updateTabCounts)
-
-	if cat == "Stats" then
-		SearchBoxFrame.Visible = false
-		GridScroll.Visible     = false
-		StatsPanel.Visible     = true
-	else
-		StatsPanel.Visible     = false
-		SearchBoxFrame.Visible = true
-		GridScroll.Visible     = true
-		refreshGrid()
-	end
-end
-
-UI.setActiveCategory = setActiveCategory
-TitleStatsBtn.Activated:Connect(function()
-	setActiveCategory("Stats")
-end)
-
-SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-	currentSearch = SearchBox.Text
-	pcall(refreshGrid)
-end)
-
-Main.Visible = true
-updateToggleBtnState()
-local okInit, errInit = pcall(setActiveCategory, "Heels")
-if not okInit and notifyToastRef then
-	notifyToastRef("Grid init err: " .. tostring(errInit), 4.0)
-end
-pcall(updateTabCounts)
-
 print("[RH Wardrobe v55] 100% Royale High MultiColor formatting (16 RBXMs + all items), articulated heels & HipHeight persistence, full rig visibility active.")
