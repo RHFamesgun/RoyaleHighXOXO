@@ -1,5 +1,5 @@
 -- ============================================================
--- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v54
+-- ROYALE HIGH DEFINITIVE WARDROBE & CLOSET VIEWER v55
 --
 -- NEW FIXES & FEATURES IN v28:
 -- 1. PRECISION CLOTHING SCANNER (ZERO HAIR CLONING):
@@ -43,6 +43,12 @@ local lastExitClientTick = 0
 local keepTogglesOpenUntil = 0
 local savedColorsBySlot = {}
 local clientItemCache = {}
+local RHRigColor = {
+    origHipHeight = nil,
+    appliedHipHeight = nil,
+    applyingHipHeight = false,
+    detailedAssetCache = {},
+}
 
 if previewItemRemote then
     pcall(function()
@@ -75,6 +81,19 @@ local function bindHrpAntiAnchor(char)
             end)
             if hrp.Anchored then hrp.Anchored = false end
         end
+        local hum = char:WaitForChild("Humanoid", 10)
+        if hum and RHRigColor then
+            RHRigColor.snapshotOrigHipHeight(char)
+            hum:GetPropertyChangedSignal("HipHeight"):Connect(function()
+                if not RHRigColor.applyingHipHeight and RHRigColor.hasActiveTargetHipHeight() ~= nil then
+                    task.defer(function()
+                        if lp.Character == char and RHRigColor.syncHipHeight then
+                            RHRigColor.syncHipHeight(char)
+                        end
+                    end)
+                end
+            end)
+        end
     end)
 end
 if lp.Character then bindHrpAntiAnchor(lp.Character) end
@@ -92,7 +111,7 @@ for _, name in ipairs({
     "RH_Wardrobe_v16","RH_Wardrobe_v17","RH_Wardrobe_v18","RH_Wardrobe_v19",
     "RH_Wardrobe_v20","RH_Wardrobe_v21","RH_Wardrobe_v22","RH_Wardrobe_v23",
     "RH_Wardrobe_v24","RH_Wardrobe_v51","RH_Wardrobe_v52","RH_Wardrobe_v53",
-    "RH_Wardrobe_v54","RH_Wardrobe_Definitive"
+    "RH_Wardrobe_v54","RH_Wardrobe_v55","RH_Wardrobe_Definitive"
 }) do
     local old = getGuiParent():FindFirstChild(name)
     if old then pcall(function() old:Destroy() end) end
@@ -202,7 +221,7 @@ local function hideTryOnOverlays()
             end
         end
         for _, gui in ipairs(pg:GetChildren()) do
-            if gui.Name ~= "RH_Wardrobe_v54" and gui.Name ~= "Shop" then
+            if gui.Name ~= "RH_Wardrobe_v55" and gui.Name ~= "Shop" then
                 for _, bb in ipairs(gui:GetDescendants()) do
                     if bb:IsA("BillboardGui") then
                         for _, d in ipairs(bb:GetDescendants()) do
@@ -480,7 +499,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v54)
+-- 2. PRECISION 1:1 LAYER BAKER & MESH CLONER (v55)
 -- ============================================================
 local bakedLayersBackup = {}
 local defaultAvatarInstances = {}
@@ -499,6 +518,18 @@ local confirmCloneRef = nil
 local updateInspBtnRef = nil
 local hideCustomToggleBarRef = nil
 local restoreUnhiddenBodyParts = nil
+
+local HELPER_TRANSPARENT_PARTS = {
+    ["Head"]=true, ["UpperTorso"]=true, ["LowerTorso"]=true, ["Torso"]=true,
+    ["LeftHand"]=true, ["RightHand"]=true, ["LeftLowerArm"]=true, ["RightLowerArm"]=true,
+    ["LeftUpperArm"]=true, ["RightUpperArm"]=true, ["LeftUpperLeg"]=true, ["RightUpperLeg"]=true,
+    ["LeftLowerLeg"]=true, ["RightLowerLeg"]=true, ["LeftFoot"]=true, ["RightFoot"]=true,
+    ["Middle"]=true, ["Scalp"]=true, ["StationaryHaloBase"]=true, ["FakeHead"]=true,
+    ["Track"]=true, ["Pivot"]=true, ["RotationalOrigin"]=true, ["clickboxhelper"]=true,
+    ["__HaloMotionRoot_Everfriend2026Float"]=true, ["HumanoidRootPart"]=true,
+    ["LowerTorsoCR"]=true, ["LeftUpperLegCR"]=true, ["LeftLowerLegCR"]=true, ["LeftFootCR"]=true,
+    ["NoColor"]=true,
+}
 
 local function getBakedClosetName()
     return "RH_BakedCloset_" .. tostring(lp.UserId)
@@ -555,6 +586,9 @@ function clearPreviewStage()
     end
     activePreviewItem = nil
     previewBeforeSet = {}
+    if RHRigColor.syncHipHeight then
+        pcall(function() RHRigColor.syncHipHeight(lp.Character) end)
+    end
 end
 
 -- Migrate any legacy RH_BakedWardrobe out of Character into safe workspace closet
@@ -577,54 +611,695 @@ local legPartNames = {
 
 local hiddenBodyPartsBySlot = {}
 
-enforceHiddenBodyParts = function()
-    local char = lp.Character
-    if not char then return end
-    local bakedFolder = getBakedFolder(false)
-    local prevFolder = getPreviewFolder(false)
-    if not bakedFolder and not prevFolder then return end
+function RHRigColor.getSkinColor(char)
+    if not char then return Color3.fromRGB(255, 224, 189) end
+    local hd = char:FindFirstChild("Head")
+    if hd and hd:IsA("BasePart") then return hd.Color end
+    local bc = char:FindFirstChildOfClass("BodyColors")
+    if bc then return bc.HeadColor3 or bc.TorsoColor3 end
+    for _, nm in ipairs({"UpperTorso", "Torso", "LeftUpperArm", "RightUpperArm"}) do
+        local bp = char:FindFirstChild(nm)
+        if bp and bp:IsA("BasePart") and bp.Transparency < 0.99 then return bp.Color end
+    end
+    return Color3.fromRGB(255, 224, 189)
+end
 
-    for slotKey, partsMap in pairs(hiddenBodyPartsBySlot) do
-        local active = (bakedFolder and bakedFolder:FindFirstChild(slotKey))
-                    or (prevFolder and type(slotKey) == "string" and slotKey:sub(1, 8) == "Preview_" and prevFolder:FindFirstChild(slotKey:sub(9)))
-        if active then
-            for partName, _ in pairs(partsMap) do
-                if partName ~= "HumanoidRootPart" and partName ~= "Head" then
-                    local limb = char:FindFirstChild(partName)
-                    if limb and limb:IsA("BasePart") and limb.Transparency < 0.99 then
-                        limb.Transparency = 1
+function RHRigColor.hasActiveTargetHipHeight()
+    local best = nil
+    local pf = getPreviewFolder(false)
+    if pf then
+        for _, m in ipairs(pf:GetChildren()) do
+            local hh = m:GetAttribute("RH_TargetHipHeight")
+            if type(hh) == "number" and (not best or hh > best) then best = hh end
+        end
+    end
+    local bf = getBakedFolder(false)
+    if bf then
+        for _, m in ipairs(bf:GetChildren()) do
+            local hh = m:GetAttribute("RH_TargetHipHeight")
+            if type(hh) == "number" and (not best or hh > best) then best = hh end
+        end
+    end
+    return best
+end
+
+function RHRigColor.snapshotOrigHipHeight(char)
+    if RHRigColor.origHipHeight ~= nil or not char then return end
+    if RHRigColor.hasActiveTargetHipHeight() ~= nil or RHRigColor.appliedHipHeight ~= nil then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        RHRigColor.origHipHeight = hum.HipHeight
+    end
+end
+
+function RHRigColor.syncHipHeight(char)
+    if not char or RHRigColor.applyingHipHeight then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+
+    -- Never overwrite live server Try-On preview of a new pair of Heels while previewing!
+    if serverPreviewActive and activePreviewItem and activePreviewItem.cat == "Heels" then
+        local pf = getPreviewFolder(false)
+        local hasPreviewHeelHH = false
+        if pf then
+            for _, ch in ipairs(pf:GetChildren()) do
+                if type(ch:GetAttribute("RH_TargetHipHeight")) == "number" then
+                    hasPreviewHeelHH = true
+                    break
+                end
+            end
+        end
+        if not hasPreviewHeelHH then return end
+    end
+
+    local targetHH = nil
+    local pf = getPreviewFolder(false)
+    if pf then
+        for _, ch in ipairs(pf:GetChildren()) do
+            local hh = ch:GetAttribute("RH_TargetHipHeight")
+            if type(hh) == "number" then
+                if not targetHH or hh > targetHH then targetHH = hh end
+            end
+        end
+    end
+    if not targetHH then
+        local bf = getBakedFolder(false)
+        if bf then
+            for _, ch in ipairs(bf:GetChildren()) do
+                local hh = ch:GetAttribute("RH_TargetHipHeight")
+                if type(hh) == "number" then
+                    if not targetHH or hh > targetHH then targetHH = hh end
+                end
+            end
+        end
+    end
+
+    if targetHH then
+        if RHRigColor.origHipHeight == nil then
+            RHRigColor.origHipHeight = hum.HipHeight
+        end
+        if math.abs(hum.HipHeight - targetHH) > 0.02 then
+            RHRigColor.applyingHipHeight = true
+            RHRigColor.appliedHipHeight = targetHH
+            pcall(function() hum.HipHeight = targetHH end)
+            RHRigColor.applyingHipHeight = false
+        else
+            RHRigColor.appliedHipHeight = targetHH
+        end
+    elseif RHRigColor.appliedHipHeight ~= nil and RHRigColor.origHipHeight ~= nil then
+        if math.abs(hum.HipHeight - RHRigColor.origHipHeight) > 0.02 then
+            RHRigColor.applyingHipHeight = true
+            pcall(function() hum.HipHeight = RHRigColor.origHipHeight end)
+            RHRigColor.applyingHipHeight = false
+        end
+        RHRigColor.appliedHipHeight = nil
+    end
+end
+
+function RHRigColor.applySkinToModel(model, char)
+    if not model or not char then return end
+    local skinColor = RHRigColor.getSkinColor(char)
+    local hasColoredSkin = false
+    local function handleDesc(d)
+        if d:IsA("BasePart") and (d.Name:lower() == "coloredleg" or d:GetAttribute("RH_IsSkinPart") == true) then
+            hasColoredSkin = true
+            d:SetAttribute("RH_IsSkinPart", true)
+            d.Color = skinColor
+            for _, ch in ipairs(d:GetChildren()) do
+                if ch:IsA("SurfaceAppearance") then
+                    ch:SetAttribute("RH_IsSkinPart", true)
+                    pcall(function() ch.Color = skinColor end)
+                elseif ch:IsA("SpecialMesh") then
+                    ch:SetAttribute("RH_IsSkinPart", true)
+                    pcall(function() ch.VertexColor = Vector3.new(skinColor.R, skinColor.G, skinColor.B) end)
+                end
+            end
+        elseif d:IsA("SurfaceAppearance") and (d.Name:lower() == "coloredleg" or (d.Parent and d.Parent.Name:lower() == "coloredleg")) then
+            hasColoredSkin = true
+            d:SetAttribute("RH_IsSkinPart", true)
+            pcall(function() d.Color = skinColor end)
+        end
+    end
+    if model:IsA("BasePart") then handleDesc(model) end
+    for _, d in ipairs(model:GetDescendants()) do handleDesc(d) end
+    if hasColoredSkin and model.SetAttribute then
+        pcall(function() model:SetAttribute("RH_HasColoredSkin", true) end)
+    end
+end
+
+function RHRigColor.isSkinPart(p)
+    if not p then return true end
+    if p.GetAttribute and p:GetAttribute("RH_IsSkinPart") == true then return true end
+    local pn = tostring(p.Name or ""):lower()
+    if standardBodyParts[p.Name] or p.Name == "HumanoidRootPart" or p.Name == "Head" then
+        return true
+    end
+    if pn == "coloredleg" or pn:find("skintone")
+       or pn == "leg" or pn == "arm" or pn == "hand" or pn == "foot" or pn == "thigh" or pn == "body" then
+        return true
+    end
+    if (pn:find("skin") and not pn:find("silk")) then
+        return true
+    end
+    return false
+end
+
+function RHRigColor.parseGroupFromName(name)
+    local s = tostring(name or "")
+    local n = tonumber(s)
+    if not n then
+        n = tonumber(s:match("^.-%((%d+)%)%s*$"))
+            or tonumber(s:match("^[Cc]olor%s*(%d+)$"))
+            or tonumber(s:match("^[Mm]ulti[Cc]olor%s*(%d+)$"))
+    end
+    if n then
+        n = math.floor(n)
+        if n >= 1 and n <= 12 then return n end
+    end
+    return nil
+end
+
+function RHRigColor.isColorEffect(d)
+    return d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") or d:IsA("Light")
+end
+
+function RHRigColor.isVisualColorChild(d)
+    return d:IsA("SurfaceAppearance") or d:IsA("SpecialMesh") or d:IsA("Decal") or d:IsA("Texture")
+end
+
+function RHRigColor.formatModel(model, b64Key)
+    if not model then return false end
+    if model:GetAttribute("RH_ColorFormatted") and model:GetAttribute("RH_ColorFmtKey") == tostring(b64Key or "") then
+        return model:GetAttribute("RH_HasNumberedGroups") == true
+    end
+
+    local BK = b64Key or model:GetAttribute("RH_CustomB64Key")
+    local inConfig = setmetatable({}, {__mode = "k"})
+    for _, f in ipairs(model:GetDescendants()) do
+        if f.Name == "Configuration" or f.Name == "Colors" or f.Name == "InteractSettings" then
+            inConfig[f] = true
+            for _, sub in ipairs(f:GetDescendants()) do inConfig[sub] = true end
+        end
+    end
+
+    local isHelperSet = (type(HELPER_TRANSPARENT_PARTS) == "table") and HELPER_TRANSPARENT_PARTS or {}
+    local ownGroup = setmetatable({}, {__mode = "k"})
+    local foundAnyNumber = false
+    local maxG = 0
+
+    local function bumpMax(g)
+        if g and g >= 1 and g <= 12 then
+            foundAnyNumber = true
+            if g > maxG then maxG = g end
+        end
+    end
+
+    local function readExplicitGroup(inst)
+        local mc = inst:GetAttribute("MultiColor")
+        if mc ~= nil then
+            local gn = tonumber(mc)
+            if gn and gn >= 1 and gn <= 12 then return math.floor(gn) end
+        end
+        local mv = inst:FindFirstChild("MultiColor")
+        if mv and (mv:IsA("IntValue") or mv:IsA("NumberValue")) then
+            local gn = tonumber(mv.Value)
+            if gn and gn >= 1 and gn <= 12 then return math.floor(gn) end
+        end
+        return RHRigColor.parseGroupFromName(inst.Name)
+    end
+
+    local function hasAncName(d, pat)
+        local cur = d.Parent
+        while cur and cur ~= model do
+            if tostring(cur.Name or ""):lower():find(pat, 1, true) then return true end
+            cur = cur.Parent
+        end
+        return false
+    end
+
+    -- Pass 1: record explicit MultiColor / name numbers & per-RBXM channel overrides
+    local descs = model:GetDescendants()
+    if model:IsA("BasePart") then table.insert(descs, model) end
+
+    for _, d in ipairs(descs) do
+        if not inConfig[d] then
+            if d:IsA("Folder") or d:IsA("Model") then
+                local g = readExplicitGroup(d)
+                if g then ownGroup[d] = g; bumpMax(g) end
+            elseif d:IsA("BasePart") then
+                if d.Name:lower() == "coloredleg" or d:GetAttribute("RH_IsSkinPart") then
+                    d:SetAttribute("RH_IsSkinPart", true)
+                elseif not isHelperSet[d.Name] and not RHRigColor.isSkinPart(d) then
+                    local dl = d.Name:lower()
+                    local g = readExplicitGroup(d)
+                    if BK == "hair" then
+                        g = (dl:find("sphere", 1, true) or hasAncName(d, "tie") or hasAncName(d, "band")) and 2 or 1
+                    elseif BK == "glimmering" or BK == "alien" then
+                        if dl == "neon" or dl:find("glow", 1, true) then g = 2
+                        elseif dl == "ring" or dl:find("bread", 1, true) then g = 1 end
+                    elseif BK == "val20" then
+                        if dl:find("heart", 1, true) or dl == "ring" or dl:find("snowflake", 1, true) then g = 2
+                        elseif dl == "meshpart" or dl == "non" then g = 1 end
+                    elseif BK == "lucky21" and not g then
+                        if dl:find("rainbow", 1, true) or dl:find("swirl", 1, true) or hasAncName(d, "rainbow") then
+                            g = 3
+                        end
+                    elseif BK == "winter22" and not g then
+                        if dl:find("crystal", 1, true) or dl:find("glow", 1, true) or hasAncName(d, "crystal") then
+                            g = 3
+                        end
+                    end
+                    if g then ownGroup[d] = g; bumpMax(g) end
+                end
+            elseif RHRigColor.isVisualColorChild(d) then
+                local dl = d.Name:lower()
+                if dl == "coloredleg" or (d.Parent and (d.Parent.Name:lower() == "coloredleg" or d.Parent:GetAttribute("RH_IsSkinPart"))) then
+                    d:SetAttribute("RH_IsSkinPart", true)
+                else
+                    local g = readExplicitGroup(d)
+                    if BK == "hair" then
+                        local pl = d.Parent and d.Parent.Name:lower() or ""
+                        g = (pl:find("sphere", 1, true) or dl:find("sphere", 1, true)) and 2 or 1
+                    elseif BK == "glimmering" or BK == "alien" then
+                        local pl = d.Parent and d.Parent.Name:lower() or ""
+                        if pl == "neon" or dl == "neon" then g = 2
+                        elseif pl == "ring" or pl:find("bread", 1, true) then g = 1 end
+                    elseif BK == "val20" then
+                        local pl = d.Parent and d.Parent.Name:lower() or ""
+                        if pl:find("heart", 1, true) or pl == "ring" or pl:find("snowflake", 1, true) then g = 2
+                        elseif pl == "meshpart" or pl == "non" then g = 1 end
+                    elseif BK == "lucky21" and not g then
+                        local pl = d.Parent and d.Parent.Name:lower() or ""
+                        if pl:find("rainbow", 1, true) or pl:find("swirl", 1, true) or hasAncName(d, "rainbow") then g = 3 end
+                    end
+                    if g then ownGroup[d] = g; bumpMax(g) end
+                end
+            elseif RHRigColor.isColorEffect(d) then
+                if not (d.Parent and d.Parent:GetAttribute("RH_IsSkinPart")) then
+                    local g = readExplicitGroup(d)
+                    local dl = d.Name:lower()
+                    if not g then
+                        if BK == "glimmering" or BK == "alien" or BK == "val20" then
+                            g = 2
+                        elseif BK == "lucky21" then
+                            g = 3
+                        elseif BK == "winter22" then
+                            if hasAncName(d, "crystal") or hasAncName(d, "sparkle") or hasAncName(d, "nocolor") or (d.Parent and d.Parent.Name == "NoColor") then
+                                g = 3
+                            end
+                        elseif BK == "everfriend24" then
+                            g = 6
+                        elseif BK == "everfriend25" then
+                            if dl:find("rainbow", 1, true) or hasAncName(d, "rainbow") then
+                                g = 10
+                            elseif d:IsA("Light") or dl:find("glow", 1, true) or hasAncName(d, "glow") then
+                                g = 9
+                            else
+                                g = 10
+                            end
+                        elseif BK == "everfriend26" then
+                            g = 6
+                        elseif BK == "bodice" then
+                            g = 3
+                        elseif BK == "scepter" then
+                            g = 6
+                        end
+                    end
+                    if g then ownGroup[d] = g; bumpMax(g) end
+                end
+            end
+        end
+    end
+
+    -- Check Colors Configuration folder too (if model defines MultiColor1..N)
+    local cfgColors = model:FindFirstChild("Colors", true)
+    if cfgColors then
+        for _, cVal in ipairs(cfgColors:GetChildren()) do
+            local gn = tonumber(tostring(cVal.Name):match("%d+"))
+            if gn and gn >= 1 and gn <= 12 then bumpMax(gn) end
+        end
+    end
+
+    if BK and CUSTOM_RBXM_REGISTRY and CUSTOM_RBXM_REGISTRY[BK] then
+        foundAnyNumber = true
+        if (CUSTOM_RBXM_REGISTRY[BK].maxColors or 0) > maxG then
+            maxG = CUSTOM_RBXM_REGISTRY[BK].maxColors
+        end
+    end
+
+    -- Pass 2: Resolve & stamp MultiColor cleanly on BaseParts first (so SurfaceAppearance / FX can inherit!)
+    local function findAncestorGroup(inst)
+        local cur = inst.Parent
+        while cur and cur ~= model do
+            if ownGroup[cur] then return ownGroup[cur] end
+            local pg = RHRigColor.parseGroupFromName(cur.Name)
+            if pg then return pg end
+            cur = cur.Parent
+        end
+        return nil
+    end
+
+    for _, d in ipairs(descs) do
+        if d:IsA("BasePart") and not inConfig[d] and not isHelperSet[d.Name] and not RHRigColor.isSkinPart(d) then
+            local g = ownGroup[d] or findAncestorGroup(d)
+            if not g then
+                for _, ch in ipairs(d:GetChildren()) do
+                    if ch:IsA("SurfaceAppearance") and ownGroup[ch] then
+                        g = ownGroup[ch]
+                        break
+                    end
+                end
+            end
+            if not g and foundAnyNumber then
+                g = 1
+            end
+            if g then
+                ownGroup[d] = g
+                bumpMax(g)
+                d:SetAttribute("MultiColor", g)
+            end
+        end
+    end
+
+    -- Pass 3: Resolve SurfaceAppearance / SpecialMesh / Decal / Texture & ParticleEmitters / Lights / Beams / Trails
+    for _, d in ipairs(descs) do
+        if not inConfig[d] and not d:GetAttribute("RH_IsSkinPart") then
+            if RHRigColor.isVisualColorChild(d) then
+                local par = d.Parent
+                local parIsSkin = par and (par:GetAttribute("RH_IsSkinPart") == true or (par:IsA("BasePart") and RHRigColor.isSkinPart(par) and not isHelperSet[par.Name]))
+                if not parIsSkin then
+                    local g = ownGroup[d] or (par and ownGroup[par]) or findAncestorGroup(d)
+                    if not g and foundAnyNumber then g = 1 end
+                    if g then
+                        ownGroup[d] = g
+                        bumpMax(g)
+                        d:SetAttribute("MultiColor", g)
+                    end
+                end
+            elseif RHRigColor.isColorEffect(d) then
+                local par = d.Parent
+                local parIsSkin = par and par:GetAttribute("RH_IsSkinPart") == true
+                if not parIsSkin then
+                    local g = ownGroup[d] or (par and ownGroup[par]) or findAncestorGroup(d)
+                    if not g and foundAnyNumber then
+                        g = (maxG >= 2) and 2 or 1
+                    end
+                    if g then
+                        ownGroup[d] = g
+                        bumpMax(g)
+                        d:SetAttribute("MultiColor", g)
                     end
                 end
             end
         end
     end
+
+    model:SetAttribute("RH_ColorFormatted", true)
+    model:SetAttribute("RH_ColorFmtKey", tostring(BK or ""))
+    model:SetAttribute("RH_HasNumberedGroups", foundAnyNumber)
+    if maxG > 0 then
+        model:SetAttribute("RH_MaxColorGroup", maxG)
+    end
+    return foundAnyNumber
 end
 
-restoreUnhiddenBodyParts = function(removedPartsMap)
-    local char = lp.Character
-    if not char or not removedPartsMap then return end
-    local bakedFolder = getBakedFolder(false)
-    local prevFolder = getPreviewFolder(false)
+function RHRigColor.countModelGroups(m)
+    if not m then return 0 end
+    RHRigColor.formatModel(m, m:GetAttribute("RH_CustomB64Key"))
+    local maxG = tonumber(m:GetAttribute("RH_MaxColorGroup")) or 0
+    for _, d in ipairs(m:GetDescendants()) do
+        if not d:GetAttribute("RH_IsSkinPart") then
+            local mc = tonumber(d:GetAttribute("MultiColor"))
+            if mc and mc > maxG and mc <= 12 then maxG = mc end
+        end
+    end
+    local cfgColors = m:FindFirstChild("Colors", true)
+    if cfgColors then
+        for _, cVal in ipairs(cfgColors:GetChildren()) do
+            local gn = tonumber(tostring(cVal.Name):match("%d+"))
+            if gn and gn > maxG and gn <= 12 then maxG = gn end
+        end
+    end
+    return maxG
+end
 
-    for partName, _ in pairs(removedPartsMap) do
-        if partName ~= "HumanoidRootPart" and partName ~= "Head" then
-            local stillHidden = false
-            for slotKey, partsMap in pairs(hiddenBodyPartsBySlot) do
-                local active = (bakedFolder and bakedFolder:FindFirstChild(slotKey))
-                            or (prevFolder and type(slotKey) == "string" and slotKey:sub(1, 8) == "Preview_" and prevFolder:FindFirstChild(slotKey:sub(9)))
-                if active and partsMap[partName] then
-                    stillHidden = true
-                    break
+function RHRigColor.getAssetColorMeta(assetName)
+    local key = tostring(assetName or "")
+    if key == "" then return nil end
+    if RHRigColor.detailedAssetCache[key] then
+        return RHRigColor.detailedAssetCache[key]
+    end
+    local info = { numGroups = nil, colorNames = nil }
+    pcall(function()
+        local inv = ReplicatedStorage:FindFirstChild("Inventory")
+        local gn = inv and inv:FindFirstChild("GetNumColorGroups")
+        if gn and gn:IsA("RemoteFunction") then
+            local res = gn:InvokeServer(key)
+            if type(res) == "number" and res >= 1 and res <= 12 then
+                info.numGroups = res
+            end
+        end
+        local gd = inv and inv:FindFirstChild("GetDetailedAsset")
+        if gd and gd:IsA("RemoteFunction") then
+            local det = gd:InvokeServer(key, nil, true)
+            if type(det) == "table" then
+                if type(det.NumColorGroups) == "number" and det.NumColorGroups >= 1 and det.NumColorGroups <= 12 then
+                    info.numGroups = math.max(info.numGroups or 0, det.NumColorGroups)
+                end
+                if type(det.ColorNames) == "table" and #det.ColorNames > 0 then
+                    info.colorNames = det.ColorNames
+                    info.numGroups = math.max(info.numGroups or 0, #det.ColorNames)
                 end
             end
-            if not stillHidden then
-                local limb = char:FindFirstChild(partName)
-                if limb and limb:IsA("BasePart") then
-                    limb.Transparency = 0
+        end
+    end)
+    RHRigColor.detailedAssetCache[key] = info
+    return info
+end
+
+function RHRigColor.applyColorToModel(m, char, c3, group, texOverride)
+    if not m or not c3 then return false end
+    group = tonumber(group) or 1
+    local hasNumbers = RHRigColor.formatModel(m, m:GetAttribute("RH_CustomB64Key"))
+    local maxGroups = tonumber(m:GetAttribute("RH_MaxColorGroup")) or (hasNumbers and 2 or 2)
+    local isHelperSet = (type(HELPER_TRANSPARENT_PARTS) == "table") and HELPER_TRANSPARENT_PARTS or {}
+
+    local function matchesGroup(p, isUnnumberedTarget)
+        local mc = p:GetAttribute("MultiColor")
+        if mc ~= nil then
+            return tonumber(mc) == group
+        end
+        if hasNumbers then
+            local pn = RHRigColor.parseGroupFromName(p.Name)
+            if pn == group then return true end
+            local par = p.Parent
+            while par and par ~= char and par ~= m do
+                local pmc = par:GetAttribute("MultiColor")
+                if pmc ~= nil then return tonumber(pmc) == group end
+                local pg = RHRigColor.parseGroupFromName(par.Name)
+                if pg then return pg == group end
+                par = par.Parent
+            end
+            return false
+        end
+        if maxGroups <= 1 and group == 1 then
+            return true
+        end
+        if RHRigColor.isColorEffect(p) then
+            return group == 2
+        end
+        local n = (p.Name .. " " .. (p.Parent and p.Parent.Name or "")):lower()
+        local isGroup2 = n:find("2") or n:find("trim") or n:find("lace") or n:find("accent")
+                      or n:find("ribbon") or n:find("bow") or n:find("secondary") or n:find("buckle")
+                      or n:find("detail") or n:find("gem") or n:find("jewel") or n:find("metal")
+                      or n:find("glow") or n:find("sparkle")
+        if group == 2 then
+            return isGroup2
+        elseif group == 1 then
+            return not isGroup2 or n:find("1") or n:find("main") or n:find("base")
+        end
+        return false
+    end
+
+    local function colorSinglePart(p)
+        if p:IsA("MeshPart") then
+            if texOverride then
+                pcall(function() p.TextureID = texOverride end)
+            else
+                pcall(function() p.TextureID = "" end)
+            end
+        end
+        for _, ch in ipairs(p:GetChildren()) do
+            if ch:IsA("SpecialMesh") and not ch:GetAttribute("RH_IsSkinPart") then
+                local chMc = ch:GetAttribute("MultiColor")
+                if not hasNumbers or chMc == nil or tonumber(chMc) == group then
+                    pcall(function()
+                        ch.TextureId = texOverride or ""
+                        ch.VertexColor = Vector3.new(c3.R, c3.G, c3.B)
+                    end)
+                end
+            elseif ch:IsA("SurfaceAppearance") and not ch:GetAttribute("RH_IsSkinPart") then
+                local saGroup = ch:GetAttribute("MultiColor") or RHRigColor.parseGroupFromName(ch.Name)
+                if not hasNumbers or saGroup == nil or tonumber(saGroup) == group then
+                    pcall(function() ch.Color = c3 end)
+                    if texOverride then pcall(function() ch.ColorMap = texOverride end) end
+                end
+            end
+        end
+        p.Color = c3
+    end
+
+    local allTargets = m:GetDescendants()
+    if m:IsA("BasePart") then table.insert(allTargets, m) end
+
+    local coloredCount = 0
+    for _, d in ipairs(allTargets) do
+        if d:IsA("BasePart") and not isHelperSet[d.Name] and not RHRigColor.isSkinPart(d) then
+            if matchesGroup(d) then
+                colorSinglePart(d)
+                coloredCount = coloredCount + 1
+            end
+        elseif d:IsA("SurfaceAppearance") and not d:GetAttribute("RH_IsSkinPart") then
+            local par = d.Parent
+            local parIsSkin = par and (par:GetAttribute("RH_IsSkinPart") == true or (par:IsA("BasePart") and RHRigColor.isSkinPart(par) and not isHelperSet[par.Name]))
+            if not parIsSkin and matchesGroup(d) then
+                pcall(function() d.Color = c3 end)
+                if texOverride then pcall(function() d.ColorMap = texOverride end) end
+                coloredCount = coloredCount + 1
+            end
+        elseif d:IsA("SpecialMesh") and not d:GetAttribute("RH_IsSkinPart") then
+            local par = d.Parent
+            local parIsSkin = par and (par:GetAttribute("RH_IsSkinPart") == true or (par:IsA("BasePart") and RHRigColor.isSkinPart(par) and not isHelperSet[par.Name]))
+            if not parIsSkin and (matchesGroup(d) or (par and matchesGroup(par))) then
+                pcall(function()
+                    d.TextureId = texOverride or ""
+                    d.VertexColor = Vector3.new(c3.R, c3.G, c3.B)
+                end)
+                coloredCount = coloredCount + 1
+            end
+        elseif (d:IsA("Decal") or d:IsA("Texture")) and not d:GetAttribute("RH_IsSkinPart") then
+            if matchesGroup(d) or (d.Parent and matchesGroup(d.Parent)) then
+                pcall(function()
+                    d.Color3 = c3
+                    if texOverride then d.Texture = texOverride end
+                end)
+                coloredCount = coloredCount + 1
+            end
+        elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
+            if not (d.Parent and d.Parent:GetAttribute("RH_IsSkinPart")) and matchesGroup(d) then
+                pcall(function() d.Color = ColorSequence.new(c3) end)
+                coloredCount = coloredCount + 1
+            end
+        elseif d:IsA("Light") then
+            if not (d.Parent and d.Parent:GetAttribute("RH_IsSkinPart")) and matchesGroup(d) then
+                pcall(function() d.Color = c3 end)
+                coloredCount = coloredCount + 1
+            end
+        end
+    end
+
+    -- Sync Configuration/Colors values if present inside the model
+    local cfgColors = m:FindFirstChild("Colors", true)
+    if cfgColors then
+        for _, cVal in ipairs(cfgColors:GetChildren()) do
+            local gn = tonumber(tostring(cVal.Name):match("%d+"))
+            if gn == group then
+                if cVal:IsA("Color3Value") then
+                    pcall(function() cVal.Value = c3 end)
+                elseif cVal:IsA("StringValue") then
+                    pcall(function()
+                        cVal:SetAttribute("Color3", string.format("%.3f,%.3f,%.3f", c3.R, c3.G, c3.B))
+                    end)
                 end
             end
         end
     end
+
+    if coloredCount == 0 and group == 2 and not hasNumbers then
+        local parts = {}
+        for _, p in ipairs(allTargets) do
+            if p:IsA("BasePart") and not isHelperSet[p.Name] and not RHRigColor.isSkinPart(p) then
+                table.insert(parts, p)
+            end
+        end
+        table.sort(parts, function(a, b)
+            return (a.Size.X * a.Size.Y * a.Size.Z) < (b.Size.X * b.Size.Y * b.Size.Z)
+        end)
+        local half = math.max(1, math.floor(#parts / 2))
+        for i = 1, half do
+            if parts[i] then
+                colorSinglePart(parts[i])
+                coloredCount = coloredCount + 1
+            end
+        end
+    end
+    return coloredCount > 0
+end
+
+enforceHiddenBodyParts = function()
+    local char = lp.Character
+    if not char then return end
+    local bakedFolder = getBakedFolder(false)
+    local prevFolder = getPreviewFolder(false)
+
+    if bakedFolder or prevFolder then
+        for slotKey, partsMap in pairs(hiddenBodyPartsBySlot) do
+            local active = (bakedFolder and bakedFolder:FindFirstChild(slotKey))
+                        or (prevFolder and type(slotKey) == "string" and slotKey:sub(1, 8) == "Preview_" and prevFolder:FindFirstChild(slotKey:sub(9)))
+            if active then
+                for partName, _ in pairs(partsMap) do
+                    if partName ~= "HumanoidRootPart" and partName ~= "Head" then
+                        local limb = char:FindFirstChild(partName)
+                        if limb and limb:IsA("BasePart") and limb.Transparency < 0.99 then
+                            limb.Transparency = 1
+                        end
+                    end
+                end
+            end
+        end
+        for _, folder in ipairs({prevFolder, bakedFolder}) do
+            if folder then
+                for _, m in ipairs(folder:GetChildren()) do
+                    if m:GetAttribute("RH_HasColoredSkin") then
+                        RHRigColor.applySkinToModel(m, char)
+                    end
+                end
+            end
+        end
+    end
+
+    RHRigColor.syncHipHeight(char)
+end
+
+restoreUnhiddenBodyParts = function(removedPartsMap)
+    local char = lp.Character
+    if not char then return end
+    local bakedFolder = getBakedFolder(false)
+    local prevFolder = getPreviewFolder(false)
+
+    if removedPartsMap then
+        for partName, _ in pairs(removedPartsMap) do
+            if partName ~= "HumanoidRootPart" and partName ~= "Head" then
+                local stillHidden = false
+                for slotKey, partsMap in pairs(hiddenBodyPartsBySlot) do
+                    local active = (bakedFolder and bakedFolder:FindFirstChild(slotKey))
+                                or (prevFolder and type(slotKey) == "string" and slotKey:sub(1, 8) == "Preview_" and prevFolder:FindFirstChild(slotKey:sub(9)))
+                    if active and partsMap[partName] then
+                        stillHidden = true
+                        break
+                    end
+                end
+                if not stillHidden then
+                    local limb = char:FindFirstChild(partName)
+                    if limb and limb:IsA("BasePart") then
+                        limb.Transparency = 0
+                    end
+                end
+            end
+        end
+    end
+
+    RHRigColor.syncHipHeight(char)
 end
 
 local function registerDefaultAvatar()
@@ -1238,13 +1913,31 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData, p
 
     local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("LowerTorso")
 
+    -- Measure base avatar foot bottom Y & live HipHeight BEFORE welding Heels!
+    local baseFootBottomY = nil
+    local itemLowestBottomY = nil
+    if cat == "Heels" then
+        for _, ln in ipairs(legPartNames) do
+            local lpPart = char:FindFirstChild(ln)
+            if lpPart and lpPart:IsA("BasePart") then
+                local bY = lpPart.Position.Y - (lpPart.Size.Y * 0.5)
+                if not baseFootBottomY or bY < baseFootBottomY then baseFootBottomY = bY end
+            end
+        end
+    end
+
     if cat == "Heels" and hrp then
+        RHRigColor.snapshotOrigHipHeight(char)
         local leftLimb = char:FindFirstChild("LeftLowerLeg") or char:FindFirstChild("LeftUpperLeg") or char:FindFirstChild("Left Leg") or hrp
         local rightLimb = char:FindFirstChild("RightLowerLeg") or char:FindFirstChild("RightUpperLeg") or char:FindFirstChild("Right Leg") or hrp
 
         local leftParts, rightParts = {}, {}
         local function sortHeelPart(p)
             prepPart(p)
+            if not HELPER_TRANSPARENT_PARTS[p.Name] and p.Transparency < 0.99 then
+                local py = p.Position.Y - (p.Size.Y * 0.5)
+                if not itemLowestBottomY or py < itemLowestBottomY then itemLowestBottomY = py end
+            end
             local side = p:GetAttribute("RH_HeelSide")
             if side == "L" then
                 table.insert(leftParts, p)
@@ -1265,18 +1958,50 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData, p
             end
         end
 
+        -- Avoid cross-joint lock when internal rigid welds span UpperLeg <-> LowerLeg <-> Foot!
+        for _, j in ipairs(clone:GetDescendants()) do
+            if j:IsA("Weld") or j:IsA("WeldConstraint") then
+                local a, b = j.Part0, j.Part1
+                if a and b and a:IsA("BasePart") and b:IsA("BasePart") then
+                    local ha = a:GetAttribute("RH_LimbHint") or a:GetAttribute("RH_SavedPart0")
+                    local hb = b:GetAttribute("RH_LimbHint") or b:GetAttribute("RH_SavedPart0")
+                    if ha and hb and ha ~= hb then
+                        pcall(function() j:Destroy() end)
+                    end
+                end
+            end
+        end
+
+        -- Bind parts with explicit multi-limb hints first (thighs / calves / feet animate naturally!)
+        for _, list in ipairs({leftParts, rightParts}) do
+            for _, p in ipairs(list) do
+                if not attachedSet[p] then
+                    local hint = p:GetAttribute("RH_LimbHint") or p:GetAttribute("RH_SavedPart0")
+                    local targetL = (hint and resolveCharLimb(char, hint)) or nil
+                    if targetL and targetL:IsDescendantOf(char) then
+                        weldRigid(targetL, p, "RH_HeelLimbWeld")
+                        markComponent(p)
+                    end
+                end
+            end
+        end
+
         local function rigBoot(partsList, targetLimb)
-            if #partsList == 0 or not targetLimb then return end
-            local root = partsList[1]
-            local maxVol = -1
+            local unattached = {}
             for _, p in ipairs(partsList) do
+                if not attachedSet[p] then table.insert(unattached, p) end
+            end
+            if #unattached == 0 or not targetLimb then return end
+            local root = unattached[1]
+            local maxVol = -1
+            for _, p in ipairs(unattached) do
                 local vol = p.Size.X * p.Size.Y * p.Size.Z
                 if vol > maxVol then maxVol = vol; root = p end
             end
             weldRigid(targetLimb, root, "RH_BootRootWeld")
             markComponent(root)
-            -- Weld ANY disconnected sub-island in this boot to root!
-            for _, p in ipairs(partsList) do
+            -- Weld ANY remaining disconnected sub-island in this boot to root!
+            for _, p in ipairs(unattached) do
                 if not attachedSet[p] then
                     weldRigid(root, p, "RH_BootSubWeld")
                     markComponent(p)
@@ -1407,10 +2132,18 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData, p
     if cat == "Heels" then
         for _, lName in ipairs(legPartNames) do hiddenMap[lName] = true end
     end
-    for _, tName in ipairs(torsoPartNames) do
-        if sourceItem:FindFirstChild(tName, true) or sourceItem:FindFirstChild("HideTorso", true) then
+    if sourceItem:FindFirstChild("HideTorso", true) then
+        for _, x in ipairs(torsoPartNames) do hiddenMap[x] = true end
+    else
+        if sourceItem:FindFirstChild("HideUpperTorso", true) or sourceItem:FindFirstChild("UpperTorso", true) then
+            hiddenMap["UpperTorso"] = true
+            hiddenMap["Torso"] = true
+        end
+        if sourceItem:FindFirstChild("HideLowerTorso", true) or sourceItem:FindFirstChild("LowerTorso", true) then
+            hiddenMap["LowerTorso"] = true
+        end
+        if sourceItem:FindFirstChild("Torso", true) then
             for _, x in ipairs(torsoPartNames) do hiddenMap[x] = true end
-            break
         end
     end
     for _, aName in ipairs(armSleeveNames) do
@@ -1428,10 +2161,46 @@ local function bakeItemToAvatar(sourceItem, category, customSlotKey, itemData, p
             hiddenMap[lName] = true
         end
     end
+
+    -- Format MultiColor channels & tint skin parts (e.g. coloredleg / SurfaceAppearance)
+    RHRigColor.formatModel(clone, nil)
+    RHRigColor.applySkinToModel(clone, char)
+
+    -- Preserve / calculate target HipHeight for Heels or HipHeight-altering morphs
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local existingHH = clone:GetAttribute("RH_TargetHipHeight")
+    local targetHH = type(existingHH) == "number" and existingHH or nil
+    if not targetHH then
+        local hhObj = clone:FindFirstChild("HipHeight", true) or sourceItem:FindFirstChild("HipHeight", true)
+        local hhAttr = clone:GetAttribute("HipHeight") or sourceItem:GetAttribute("HipHeight")
+        if hhObj and (hhObj:IsA("NumberValue") or hhObj:IsA("IntValue")) and hhObj.Value > 0.5 then
+            targetHH = hhObj.Value
+        elseif type(hhAttr) == "number" and hhAttr > 0.5 then
+            targetHH = hhAttr
+        elseif cat == "Heels" and hum then
+            local baseHH = RHRigColor.origHipHeight or 2
+            if hum.HipHeight > baseHH + 0.05 then
+                targetHH = hum.HipHeight
+            elseif baseFootBottomY and itemLowestBottomY and itemLowestBottomY < (baseFootBottomY - 0.12) then
+                targetHH = baseHH + (baseFootBottomY - itemLowestBottomY)
+            end
+        end
+    end
+    if targetHH then
+        clone:SetAttribute("RH_TargetHipHeight", targetHH)
+    end
+
     if next(hiddenMap) ~= nil then
         local hideKey = (previewOnly and "Preview_" or "") .. slotKey
         hiddenBodyPartsBySlot[hideKey] = hiddenMap
-        enforceHiddenBodyParts()
+    end
+    enforceHiddenBodyParts()
+
+    -- Re-apply any saved user colors (if switching toggles after picking colors)
+    if savedColorsBySlot[slotKey] then
+        for gIdx, cEntry in pairs(savedColorsBySlot[slotKey]) do
+            RHRigColor.applyColorToModel(clone, char, cEntry.c3, gIdx, cEntry.tex)
+        end
     end
 
     -- Replay internal AnimationController animations 1:1
@@ -1638,6 +2407,7 @@ local function clearAllWornLayers()
     keepTogglesOpenUntil = 0
     hiddenBodyPartsBySlot = {}
     bakedLayersBackup = {}
+    if char then pcall(function() RHRigColor.syncHipHeight(char) end) end
     if exitPreviewRemote then
         pcall(function() exitPreviewRemote:FireServer() end)
     end
@@ -1806,19 +2576,25 @@ end
 task.spawn(function()
     while task.wait(0.25) do
         local char = lp.Character
-        if char and next(bakedLayersBackup) ~= nil then
-            for slotKey, bkp in pairs(bakedLayersBackup) do
-                restoreOrRepairSlot(slotKey, bkp)
+        if char then
+            if next(bakedLayersBackup) ~= nil then
+                for slotKey, bkp in pairs(bakedLayersBackup) do
+                    restoreOrRepairSlot(slotKey, bkp)
+                end
             end
+            pcall(enforceHiddenBodyParts)
         end
     end
 end)
 
 -- Auto-restore baked layers upon character respawn
 lp.CharacterAdded:Connect(function(newChar)
+    RHRigColor.origHipHeight = nil
+    RHRigColor.appliedHipHeight = nil
     task.wait(1.0)
     pcall(registerDefaultAvatar)
     newChar:WaitForChild("Humanoid", 10)
+    RHRigColor.snapshotOrigHipHeight(newChar)
     for slotKey, bkp in pairs(bakedLayersBackup) do
         pcall(function()
             local bKey = bkp:GetAttribute("RH_CustomB64Key")
@@ -3324,6 +4100,7 @@ findItemImage = function(name, cat)
 end
 
 -- Curated Master Catalog (Includes Fluttering Butterfly & Enchanting Heirloom sets)
+do
 local masterList = {
 	-- HEELS / SHOES
 	{"Heels", "Fluttering Butterfly Fairy Heels", "Fluttering Butterfly Fairy Heels", "38,000", ""},
@@ -3524,6 +4301,7 @@ local masterList = {
 for _, it in ipairs(masterList) do
     addOrUpdateCatalogItem(it[1], it[2], it[3], it[4], it[5], false)
 end
+end
 
 -- Live Server Synchronizer
 local function syncWithLiveServer()
@@ -3697,7 +4475,7 @@ local function clickButtonVIM(btn)
     return ok
 end
 
-local function applyDirectColorToItem(item, c3, group)
+local function applyDirectColorToItem(item, c3, group, texOverride)
     if not item or not c3 then return false end
     local char = lp.Character
     if not char then return false end
@@ -3714,116 +4492,6 @@ local function applyDirectColorToItem(item, c3, group)
         else
             slotKey = "Acc_" .. cleanKeyName
         end
-    end
-
-    local function isSkinPart(p)
-        local pn = p.Name:lower()
-        if standardBodyParts[p.Name] or p.Name == "HumanoidRootPart" or p.Name == "Head" then
-            return true
-        end
-        if pn == "coloredleg" or pn:find("skin") or pn:find("skintone")
-           or pn == "leg" or pn == "arm" or pn == "hand" or pn == "foot" or pn == "thigh" or pn == "body" then
-            return true
-        end
-        return false
-    end
-
-    local function modelHasNumberedGroups(m)
-        for _, d in ipairs(m:GetDescendants()) do
-            if (d:IsA("BasePart") or d:IsA("SurfaceAppearance")) and not d:FindFirstAncestor("Configuration") then
-                if d:GetAttribute("MultiColor") ~= nil or tonumber(d.Name) ~= nil then
-                    return true
-                end
-            end
-        end
-        return tonumber(m.Name) ~= nil or m:GetAttribute("MultiColor") ~= nil
-    end
-
-    local function partMatchesGroup(p, hasNumbers)
-        local mc = p:GetAttribute("MultiColor")
-        if mc ~= nil then
-            return tonumber(mc) == group
-        end
-        if hasNumbers then
-            if tonumber(p.Name) == group then return true end
-            local par = p.Parent
-            while par and par ~= char do
-                if tonumber(par.Name) == group then return true end
-                par = par.Parent
-            end
-            return false
-        end
-        local n = (p.Name .. " " .. (p.Parent and p.Parent.Name or "")):lower()
-        local isGroup2 = n:find("2") or n:find("trim") or n:find("lace") or n:find("accent")
-                      or n:find("ribbon") or n:find("bow") or n:find("secondary") or n:find("buckle")
-                      or n:find("detail") or n:find("gem") or n:find("jewel") or n:find("metal")
-        if group == 2 then
-            return isGroup2
-        else
-            return not isGroup2 or n:find("1") or n:find("main") or n:find("base")
-        end
-    end
-
-    local function colorSinglePart(p)
-        if p:IsA("MeshPart") then
-            pcall(function() p.TextureID = "" end)
-        end
-        local sm = p:FindFirstChildOfClass("SpecialMesh")
-        if sm then
-            pcall(function()
-                sm.TextureId = ""
-                sm.VertexColor = Vector3.new(c3.R, c3.G, c3.B)
-            end)
-        end
-        local sa = p:FindFirstChildOfClass("SurfaceAppearance")
-        if sa then
-            pcall(function() sa.Color = c3 end)
-        end
-        p.Color = c3
-    end
-
-    local function applyColorToModelParts(m)
-        if not m then return false end
-        local hasNumbers = modelHasNumberedGroups(m)
-        local allTargets = m:GetDescendants()
-        if m:IsA("BasePart") then table.insert(allTargets, m) end
-
-        local coloredCount = 0
-        for _, p in ipairs(allTargets) do
-            if p:IsA("BasePart") and not isSkinPart(p) then
-                if partMatchesGroup(p, hasNumbers) then
-                    colorSinglePart(p)
-                    coloredCount = coloredCount + 1
-                end
-            elseif p:IsA("SpecialMesh") and p.Parent and not isSkinPart(p.Parent) then
-                if partMatchesGroup(p.Parent, hasNumbers) or partMatchesGroup(p, hasNumbers) then
-                    pcall(function()
-                        p.TextureId = ""
-                        p.VertexColor = Vector3.new(c3.R, c3.G, c3.B)
-                    end)
-                end
-            end
-        end
-
-        if coloredCount == 0 and group == 2 then
-            local parts = {}
-            for _, p in ipairs(allTargets) do
-                if p:IsA("BasePart") and not isSkinPart(p) then
-                    table.insert(parts, p)
-                end
-            end
-            table.sort(parts, function(a, b)
-                return (a.Size.X * a.Size.Y * a.Size.Z) < (b.Size.X * b.Size.Y * b.Size.Z)
-            end)
-            local half = math.max(1, math.floor(#parts / 2))
-            for i = 1, half do
-                if parts[i] then
-                    colorSinglePart(parts[i])
-                    coloredCount = coloredCount + 1
-                end
-            end
-        end
-        return coloredCount > 0
     end
 
     local didColor = false
@@ -3843,7 +4511,7 @@ local function applyDirectColorToItem(item, c3, group)
                 end
             end
             if bakedModel then
-                if applyColorToModelParts(bakedModel) then didColor = true end
+                if RHRigColor.applyColorToModel(bakedModel, char, c3, group, texOverride) then didColor = true end
                 if bakedModel:GetAttribute("RH_BakedLayer") then
                     bakedLayersBackup[bakedModel.Name] = deepClone(bakedModel)
                 end
@@ -3854,7 +4522,7 @@ local function applyDirectColorToItem(item, c3, group)
     for _, info in ipairs(getEquippedFolders()) do
         for _, child in ipairs(info.folder:GetChildren()) do
             if child.Name == item.name or child.Name == assetName or (not previewBeforeSet[child] and activePreviewItem) then
-                if applyColorToModelParts(child) then didColor = true end
+                if RHRigColor.applyColorToModel(child, char, c3, group, texOverride) then didColor = true end
             end
         end
     end
@@ -3976,7 +4644,7 @@ local function openItemColorAndToggles(item)
                                             local sc = savedColorsBySlot[sk]
                                             if sc then
                                                 for gIdx, cEntry in pairs(sc) do
-                                                    applyDirectColorToItem({name=item.name, assetName=assetName, cat=item.cat, slotKey=sk}, cEntry.c3, gIdx)
+                                                    applyDirectColorToItem({name=item.name, assetName=assetName, cat=item.cat, slotKey=sk}, cEntry.c3, gIdx, cEntry.tex)
                                                 end
                                             end
                                         end
@@ -4056,126 +4724,8 @@ local function openItemColorAndToggles(item)
                     end
                 end
 
-                local function isSkinPart(p)
-                    local pn = p.Name:lower()
-                    if standardBodyParts[p.Name] or p.Name == "HumanoidRootPart" or p.Name == "Head" then
-                        return true
-                    end
-                    if pn == "coloredleg" or pn:find("skin") or pn:find("skintone")
-                       or pn == "leg" or pn == "arm" or pn == "hand" or pn == "foot" or pn == "thigh" or pn == "body" then
-                        return true
-                    end
-                    return false
-                end
-
-                local function modelHasNumberedGroups(m)
-                    for _, d in ipairs(m:GetDescendants()) do
-                        if (d:IsA("BasePart") or d:IsA("SurfaceAppearance")) and not d:FindFirstAncestor("Configuration") then
-                            if d:GetAttribute("MultiColor") ~= nil or tonumber(d.Name) ~= nil then
-                                return true
-                            end
-                        end
-                    end
-                    return tonumber(m.Name) ~= nil or m:GetAttribute("MultiColor") ~= nil
-                end
-
-                local function partMatchesGroup(p, hasNumbers)
-                    local mc = p:GetAttribute("MultiColor")
-                    if mc ~= nil then
-                        return tonumber(mc) == group
-                    end
-                    if hasNumbers then
-                        if tonumber(p.Name) == group then return true end
-                        local par = p.Parent
-                        while par and par ~= char do
-                            if tonumber(par.Name) == group then return true end
-                            par = par.Parent
-                        end
-                        return false
-                    end
-                    local n = (p.Name .. " " .. (p.Parent and p.Parent.Name or "")):lower()
-                    local isGroup2 = n:find("2") or n:find("trim") or n:find("lace") or n:find("accent")
-                                  or n:find("ribbon") or n:find("bow") or n:find("secondary") or n:find("buckle")
-                                  or n:find("detail") or n:find("gem") or n:find("jewel") or n:find("metal")
-                    if group == 2 then
-                        return isGroup2
-                    else
-                        return not isGroup2 or n:find("1") or n:find("main") or n:find("base")
-                    end
-                end
-
-                local function colorSinglePart(p)
-                    if p:IsA("MeshPart") then
-                        pcall(function() p.TextureID = "" end)
-                    end
-                    local sm = p:FindFirstChildOfClass("SpecialMesh")
-                    if sm then
-                        pcall(function()
-                            sm.TextureId = ""
-                            sm.VertexColor = Vector3.new(c3.R, c3.G, c3.B)
-                        end)
-                    end
-                    local sa = p:FindFirstChildOfClass("SurfaceAppearance")
-                    if sa then
-                        local saGroup = sa:GetAttribute("MultiColor") or tonumber(sa.Name)
-                        if not hasNumbers or saGroup == nil or tonumber(saGroup) == group then
-                            -- In Roblox, SurfaceAppearance.Color tints ColorMap; if no ColorMap or recoloring, set Color cleanly
-                            pcall(function() sa.Color = c3 end)
-                            if texOverride then pcall(function() sa.ColorMap = texOverride end) end
-                        end
-                    elseif texOverride then
-                        if p:IsA("MeshPart") then pcall(function() p.TextureID = texOverride end) end
-                        if sm then pcall(function() sm.TextureId = texOverride end) end
-                    end
-                    p.Color = c3
-                end
-
                 local function applyColorToModelParts(m)
-                    if not m then return end
-                    local hasNumbers = modelHasNumberedGroups(m)
-                    local allTargets = m:GetDescendants()
-                    if m:IsA("BasePart") then table.insert(allTargets, m) end
-
-                    local coloredCount = 0
-                    for _, p in ipairs(allTargets) do
-                        if p:IsA("BasePart") and not isSkinPart(p) then
-                            if partMatchesGroup(p, hasNumbers) then
-                                colorSinglePart(p)
-                                coloredCount = coloredCount + 1
-                            end
-                        elseif p:IsA("SurfaceAppearance") and p.Parent and not isSkinPart(p.Parent) then
-                            if partMatchesGroup(p, hasNumbers) then
-                                pcall(function() p.Color = c3 end)
-                                if texOverride then pcall(function() p.ColorMap = texOverride end) end
-                                coloredCount = coloredCount + 1
-                            end
-                        elseif p:IsA("SpecialMesh") and p.Parent and not isSkinPart(p.Parent) then
-                            if partMatchesGroup(p.Parent, hasNumbers) or partMatchesGroup(p, hasNumbers) then
-                                pcall(function()
-                                    p.TextureId = texOverride or ""
-                                    p.VertexColor = Vector3.new(c3.R, c3.G, c3.B)
-                                end)
-                                coloredCount = coloredCount + 1
-                            end
-                        end
-                    end
-
-                    -- Fallback: if Group 2 matched 0 parts on an un-numbered model, color secondary/smaller parts
-                    if coloredCount == 0 and group == 2 then
-                        local parts = {}
-                        for _, p in ipairs(allTargets) do
-                            if p:IsA("BasePart") and not isSkinPart(p) then
-                                table.insert(parts, p)
-                            end
-                        end
-                        table.sort(parts, function(a, b)
-                            return (a.Size.X * a.Size.Y * a.Size.Z) < (b.Size.X * b.Size.Y * b.Size.Z)
-                        end)
-                        local half = math.max(1, math.floor(#parts / 2))
-                        for i = 1, half do
-                            if parts[i] then colorSinglePart(parts[i]) end
-                        end
-                    end
+                    return RHRigColor.applyColorToModel(m, char, c3, group, texOverride)
                 end
 
                 -- Recolor target item in Preview Stage AND/OR Baked Closet, saving colors for promotion/restore!
@@ -4235,43 +4785,62 @@ local function openItemColorAndToggles(item)
                 end
             end
 
-            local numGroups = 2
+            local pf = getPreviewFolder(false)
+            local bf = getBakedFolder(false)
             local customMeta, canonCustom = nil, nil
             if findCustomRbxmSpecRef then customMeta, canonCustom = findCustomRbxmSpecRef(item) end
-            if customMeta then
-                numGroups = customMeta.maxColors or 3
-                local pf = getPreviewFolder(false)
-                local bf = getBakedFolder(false)
-                local cleanC = tostring(canonCustom or customMeta.name or item.name):gsub("%s*%b()%s*", ""):gsub("[^%w]", "")
-                local sk = ((item.cat == "Halos") and "Halo_" or "Acc_") .. cleanC
-                local bm = (pf and ((item.slotKey and pf:FindFirstChild(item.slotKey)) or pf:FindFirstChild(sk)))
-                        or (bf and ((item.slotKey and bf:FindFirstChild(item.slotKey)) or bf:FindFirstChild(sk)))
-                if bm then
-                    local cfgColors = bm:FindFirstChild("Colors", true)
-                    if cfgColors then
-                        for _, cVal in ipairs(cfgColors:GetChildren()) do
-                            local gn = tonumber(tostring(cVal.Name):match("%d+"))
-                            if gn and gn > numGroups then numGroups = gn end
+
+            local function findTargetColorModel()
+                local cleanA = tostring(item.name or ""):lower():gsub("%s*%b()%s*", ""):gsub("[^%w]", "")
+                local cleanB = tostring(assetName or ""):lower():gsub("%s*%b()%s*", ""):gsub("[^%w]", "")
+                for _, folder in ipairs({pf, bf}) do
+                    if folder then
+                        if item.slotKey and folder:FindFirstChild(item.slotKey) then
+                            return folder:FindFirstChild(item.slotKey)
+                        end
+                        for _, ch in ipairs(folder:GetChildren()) do
+                            local cn = tostring(ch:GetAttribute("RH_ItemName") or ch.Name):lower():gsub("%s*%b()%s*", ""):gsub("[^%w]", "")
+                            if (cleanA ~= "" and cn == cleanA) or (cleanB ~= "" and cn == cleanB) then
+                                return ch
+                            end
                         end
                     end
                 end
-            else
-                pcall(function()
-                    local inv = ReplicatedStorage:FindFirstChild("Inventory")
-                    local gn = inv and inv:FindFirstChild("GetNumColorGroups")
-                    if gn and gn:IsA("RemoteFunction") then
-                        local res = gn:InvokeServer(assetName)
-                        if type(res) == "number" and res >= 1 and res <= 8 then
-                            numGroups = res
+                for _, info in ipairs(getEquippedFolders()) do
+                    for _, ch in ipairs(info.folder:GetChildren()) do
+                        if ch.Name == item.name or ch.Name == assetName or (not previewBeforeSet[ch] and activePreviewItem) then
+                            return ch
                         end
                     end
-                end)
+                end
+                return findSpecificItemOnAvatar(assetName, item.cat, nil)
             end
+
+            local bm = findTargetColorModel()
+            local modelGroups = bm and RHRigColor.countModelGroups(bm) or 0
+            local assetMeta = (not customMeta) and RHRigColor.getAssetColorMeta(assetName) or nil
+            local numGroups = 2
+            if customMeta then
+                numGroups = math.max(customMeta.maxColors or 2, modelGroups)
+            else
+                local remoteNum = assetMeta and assetMeta.numGroups or 0
+                numGroups = math.max(remoteNum, modelGroups)
+                if numGroups == 0 then numGroups = 2 end
+                if bm then
+                    bm:SetAttribute("RH_MaxColorGroup", numGroups)
+                end
+            end
+            numGroups = math.clamp(numGroups, 1, 12)
+
             colorMod:SetItemToUnequip(assetName, item.cat)
             pcall(function() colorMod:RememberSelectionKey(assetName) end)
             colorMod:Appear(onColorPicked, true, false, "Generic", numGroups, false)
             local names = {}
-            for idx = 1, numGroups do names[idx] = "Color " .. tostring(idx) end
+            local realNames = assetMeta and assetMeta.colorNames or nil
+            for idx = 1, numGroups do
+                local rn = realNames and realNames[idx]
+                names[idx] = (type(rn) == "string" and rn ~= "") and rn or ("Color " .. tostring(idx))
+            end
             pcall(function() colorMod:SetNames(unpack(names)) end)
             opened = true
         end
@@ -4305,15 +4874,15 @@ local CUSTOM_RBXM_B64 = {
 CUSTOM_RBXM_REGISTRY = {
     -- ACCESSORIES (Strict exact aliases — never generic single words like "bodice" or "sleeves"!)
     ["scepter"]      = { name = "Queen of the Ocean Sparkling Scepter", cat = "Accessories", maxColors = 8, aliases = {"queenoftheoceansparklingscepter", "oceansparklingscepter", "oceanscepter"} },
-    ["bodice"]       = { name = "Queen of the Ocean Opulent Bodice", cat = "Accessories", maxColors = 5, aliases = {"queenoftheoceanopulentbodice", "queenoftheoceanbodice", "oceanopulentbodice"} },
+    ["bodice"]       = { name = "Queen of the Ocean Opulent Bodice", cat = "Accessories", maxColors = 5, hideUpperTorso = true, aliases = {"queenoftheoceanopulentbodice", "queenoftheoceanbodice", "oceanopulentbodice"} },
     ["crown"]        = { name = "Queen of the Ocean's Coastal Crown", cat = "Accessories", maxColors = 10, aliases = {"queenoftheoceanscoastalcrown", "queenoftheoceancoastalcrown", "oceancoastalcrown"} },
     ["hair"]         = { name = "Queen Harmony Hair", cat = "Accessories", maxColors = 2, aliases = {"queenharmonyhair"} },
     ["sleeves"]      = { name = "Queen of the Ocean Silken Sleeves", cat = "Accessories", maxColors = 3, aliases = {"queenoftheoceansilkensleeves", "queenoftheoceansleeves", "oceansilkensleeves"} },
-    ["tail"]         = { name = "Queen of the Ocean Tail", cat = "Accessories", maxColors = 5, hideLegs = true, aliases = {"queenoftheoceantail", "queenoftheoceanmermaidtail", "oceantail"} },
+    ["tail"]         = { name = "Queen of the Ocean Tail", cat = "Accessories", maxColors = 5, hideLegs = true, hideLowerTorso = true, aliases = {"queenoftheoceantail", "queenoftheoceanmermaidtail", "oceantail"} },
     -- HALOS (10 exact halos mapped strictly 1:1 to their catalog items)
     ["val21"]        = { name = "Valentines Halo 2021", cat = "Halos", maxColors = 3, aliases = {"valentineshalo2021", "valhalo2021", "val21halo"} },
     ["val20"]        = { name = "Valentines Halo 2020", cat = "Halos", maxColors = 2, aliases = {"valentineshalo2020", "valhalo2020", "val20halo"} },
-    ["lucky21"]      = { name = "Lucky Halo 2021", cat = "Halos", maxColors = 2, aliases = {"luckyhalo2021", "lucky21halo"} },
+    ["lucky21"]      = { name = "Lucky Halo 2021", cat = "Halos", maxColors = 3, aliases = {"luckyhalo2021", "lucky21halo"} },
     ["winter22"]     = { name = "Winter Halo 2022", cat = "Halos", maxColors = 4, aliases = {"winterhalo2022", "winterhalo22", "winter22halo"} },
     ["spring22"]     = { name = "Spring Halo 2022", cat = "Halos", maxColors = 4, aliases = {"springhalo2022", "spring22halo"} },
     ["glimmering"]   = { name = "Glimmering Light Halo", cat = "Halos", maxColors = 2, aliases = {"glimmeringlighthalo"} },
@@ -4377,18 +4946,6 @@ local function findCustomRbxmSpec(item)
 end
 findCustomRbxmSpecRef = findCustomRbxmSpec
 
-local HELPER_TRANSPARENT_PARTS = {
-    ["Head"]=true, ["UpperTorso"]=true, ["LowerTorso"]=true, ["Torso"]=true,
-    ["LeftHand"]=true, ["RightHand"]=true, ["LeftLowerArm"]=true, ["RightLowerArm"]=true,
-    ["LeftUpperArm"]=true, ["RightUpperArm"]=true, ["LeftUpperLeg"]=true, ["RightUpperLeg"]=true,
-    ["LeftLowerLeg"]=true, ["RightLowerLeg"]=true, ["LeftFoot"]=true, ["RightFoot"]=true,
-    ["Middle"]=true, ["Scalp"]=true, ["StationaryHaloBase"]=true, ["FakeHead"]=true,
-    ["Track"]=true, ["Pivot"]=true, ["RotationalOrigin"]=true, ["clickboxhelper"]=true,
-    ["__HaloMotionRoot_Everfriend2026Float"]=true, ["HumanoidRootPart"]=true,
-    ["LowerTorsoCR"]=true, ["LeftUpperLegCR"]=true, ["LeftLowerLegCR"]=true, ["LeftFootCR"]=true,
-    ["NoColor"]=true,
-}
-
 local function equipCustomRbxmItem(item, meta, canonName, b64Key, isPreviewOnly)
     local char = lp.Character
     if not char or not meta then return false end
@@ -4440,19 +4997,9 @@ local function equipCustomRbxmItem(item, meta, canonName, b64Key, isPreviewOnly)
     exactModel:SetAttribute("RH_CustomRbxm", true)
     exactModel:SetAttribute("RH_CustomB64Key", b64Key)
 
-    local skinColor = (char:FindFirstChild("Head") and char.Head:IsA("BasePart") and char.Head.Color)
-                   or Color3.fromRGB(255, 224, 189)
-
     local anchorWelds = {}
     local mermaidWelds = {}
     local allParts = {}
-    local inConfig = setmetatable({}, {__mode = "k"})
-    for _, f in ipairs(exactModel:GetDescendants()) do
-        if f.Name == "Configuration" or f.Name == "Colors" then
-            inConfig[f] = true
-            for _, sub in ipairs(f:GetDescendants()) do inConfig[sub] = true end
-        end
-    end
 
     -- 1. Strip Scripts/dangling nil joints, set massless/non-colliding, preserve Bones, Motor6Ds, SurfaceAppearances, Particles, Lights!
     for _, d in ipairs(exactModel:GetDescendants()) do
@@ -4466,18 +5013,9 @@ local function equipCustomRbxmItem(item, meta, canonName, b64Key, isPreviewOnly)
             d.Massless = true
             if HELPER_TRANSPARENT_PARTS[d.Name] then
                 d.Transparency = 1
-            elseif d.Name:lower() == "coloredleg" then
-                d.Color = skinColor
             end
             d:SetAttribute("RH_OrigTransparency", d.Transparency)
             table.insert(allParts, d)
-            if not inConfig[d] then
-                local mc = tonumber(d.Name)
-                if mc then d:SetAttribute("MultiColor", mc) end
-            end
-        elseif d:IsA("SurfaceAppearance") and d.Parent and not inConfig[d] then
-            local mc = tonumber(d.Name) or tonumber(d.Parent.Name)
-            if mc then d:SetAttribute("MultiColor", mc) end
         elseif (d:IsA("Weld") or d:IsA("WeldConstraint")) and d.Name == "AnchorWeld" then
             table.insert(anchorWelds, d)
         elseif (d:IsA("Weld") or d:IsA("WeldConstraint")) and d.Name == "MermaidBodyPartWeld" then
@@ -4775,9 +5313,31 @@ local function equipCustomRbxmItem(item, meta, canonName, b64Key, isPreviewOnly)
         end
     end
 
+    RHRigColor.formatModel(exactModel, b64Key)
+    RHRigColor.applySkinToModel(exactModel, char)
+
+    local hiddenMap = {}
     if meta.hideLegs then
-        local hiddenMap = {}
         for _, lName in ipairs(legPartNames) do hiddenMap[lName] = true end
+    end
+    if meta.hideUpperTorso then
+        hiddenMap["UpperTorso"] = true
+        hiddenMap["Torso"] = true
+    end
+    if meta.hideLowerTorso then
+        hiddenMap["LowerTorso"] = true
+    end
+    if meta.hideTorso then
+        hiddenMap["UpperTorso"] = true
+        hiddenMap["LowerTorso"] = true
+        hiddenMap["Torso"] = true
+    end
+    if meta.hideArms then
+        for _, aName in ipairs({"LeftUpperArm","LeftLowerArm","Left Arm","RightUpperArm","RightLowerArm","Right Arm"}) do
+            hiddenMap[aName] = true
+        end
+    end
+    if next(hiddenMap) ~= nil then
         hiddenBodyPartsBySlot[hideKey] = hiddenMap
         enforceHiddenBodyParts()
     end
@@ -4902,7 +5462,7 @@ local function equipCustomRbxmItem(item, meta, canonName, b64Key, isPreviewOnly)
     -- Re-apply any saved colors on this slot
     if savedColorsBySlot[slotKey] then
         for gIdx, cEntry in pairs(savedColorsBySlot[slotKey]) do
-            applyDirectColorToItem({name=dispName, assetName=dispName, cat=cat, slotKey=slotKey}, cEntry.c3, gIdx)
+            applyDirectColorToItem({name=dispName, assetName=dispName, cat=cat, slotKey=slotKey}, cEntry.c3, gIdx, cEntry.tex)
         end
     end
 
@@ -5131,6 +5691,8 @@ local function executeSingleEquip(item)
 
     if notifyToastRef then notifyToastRef("CLONING " .. item.name .. "...", 1.8) end
 
+    RHRigColor.snapshotOrigHipHeight(char)
+
     -- 3. Clean server preview state ONLY if server actually has an active preview (never wipe owned outfit!)
     if exitPreviewRemote and serverPreviewActive then
         pcall(function() exitPreviewRemote:FireServer() end)
@@ -5320,6 +5882,7 @@ startPreviewRef = function(item)
     end
 
     clearPreviewStage()
+    RHRigColor.snapshotOrigHipHeight(char)
     if hideCustomToggleBarRef then hideCustomToggleBarRef() end
     if notifyToastRef then notifyToastRef("LOADING PREVIEW: " .. item.name .. "...", 1.8) end
 
@@ -5496,7 +6059,7 @@ confirmCloneRef = function(item)
             local sk = baked:GetAttribute("RH_SlotKey") or baked.Name
             if savedColorsBySlot[sk] then
                 for gIdx, cEntry in pairs(savedColorsBySlot[sk]) do
-                    applyDirectColorToItem({name=targetItem.name, assetName=itemName, cat=itemCat, slotKey=sk}, cEntry.c3, gIdx)
+                    applyDirectColorToItem({name=targetItem.name, assetName=itemName, cat=itemCat, slotKey=sk}, cEntry.c3, gIdx, cEntry.tex)
                 end
                 bakedLayersBackup[sk] = deepClone(baked)
             end
@@ -5515,6 +6078,9 @@ confirmCloneRef = function(item)
                 pcall(function() exitPreviewRemote:FireServer() end)
             end)
         end
+        enforceHiddenBodyParts()
+        task.delay(0.18, enforceHiddenBodyParts)
+        task.delay(0.45, enforceHiddenBodyParts)
         hideTryOnOverlays()
         releasePlayerMovement()
         updateTabCounts()
@@ -5560,7 +6126,7 @@ local C = {
 }
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name           = "RH_Wardrobe_v54"
+ScreenGui.Name           = "RH_Wardrobe_v55"
 ScreenGui.ResetOnSpawn   = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.DisplayOrder   = 999
@@ -5581,8 +6147,10 @@ local function stroke(t, c, parent)
 	return mk("UIStroke", {Thickness = t, Color = c, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, parent)
 end
 
+local UI = {}
+
 -- Floating Toast Notification Banner (tells you the exact instant a clone locks on!)
-local ToastFrame = mk("Frame", {
+UI.ToastFrame = mk("Frame", {
 	Name             = "RH_ToastBanner",
 	Size             = UDim2.new(0, 230, 0, 26),
 	Position         = UDim2.new(0.5, -115, 0, 8),
@@ -5591,10 +6159,10 @@ local ToastFrame = mk("Frame", {
 	Visible          = false,
 	ZIndex           = 200,
 }, ScreenGui)
-corner(6, ToastFrame)
-stroke(1, C.borderHi, ToastFrame)
+corner(6, UI.ToastFrame)
+stroke(1, C.borderHi, UI.ToastFrame)
 
-local ToastText = mk("TextLabel", {
+UI.ToastText = mk("TextLabel", {
 	Size               = UDim2.new(1, -12, 1, 0),
 	Position           = UDim2.new(0, 6, 0, 0),
 	BackgroundTransparency = 1,
@@ -5604,19 +6172,21 @@ local ToastText = mk("TextLabel", {
 	TextSize           = 8.5,
 	TextTruncate       = Enum.TextTruncate.AtEnd,
 	ZIndex             = 201,
-}, ToastFrame)
+}, UI.ToastFrame)
 
-local toastGen = 0
-notifyToastRef = function(msg, dur)
-	toastGen = toastGen + 1
-	local myGen = toastGen
-	ToastText.Text = tostring(msg or "")
-	ToastFrame.Visible = true
-	task.delay(dur or 2.2, function()
-		if toastGen == myGen and ToastFrame then
-			ToastFrame.Visible = false
-		end
-	end)
+do
+	local toastGen = 0
+	notifyToastRef = function(msg, dur)
+		toastGen = toastGen + 1
+		local myGen = toastGen
+		UI.ToastText.Text = tostring(msg or "")
+		UI.ToastFrame.Visible = true
+		task.delay(dur or 2.2, function()
+			if toastGen == myGen and UI.ToastFrame then
+				UI.ToastFrame.Visible = false
+			end
+		end)
+	end
 end
 
 -- Floating Draggable Toggle Button
@@ -5636,31 +6206,33 @@ corner(6, ToggleBtn)
 stroke(1, C.borderHi, ToggleBtn)
 
 -- Draggable Toggle Button on mobile
-local btnDragging, btnDragStart, btnStartPos
-ToggleBtn.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		btnDragging  = true
-		btnDragStart = input.Position
-		btnStartPos  = ToggleBtn.Position
-	end
-end)
-ToggleBtn.InputChanged:Connect(function(input)
-	if btnDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-		local delta = input.Position - btnDragStart
-		ToggleBtn.Position = UDim2.new(btnStartPos.X.Scale, btnStartPos.X.Offset + delta.X, btnStartPos.Y.Scale, btnStartPos.Y.Offset + delta.Y)
-	end
-end)
-ToggleBtn.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		btnDragging = false
-	end
-end)
+do
+	local btnDragging, btnDragStart, btnStartPos
+	ToggleBtn.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			btnDragging  = true
+			btnDragStart = input.Position
+			btnStartPos  = ToggleBtn.Position
+		end
+	end)
+	ToggleBtn.InputChanged:Connect(function(input)
+		if btnDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - btnDragStart
+			ToggleBtn.Position = UDim2.new(btnStartPos.X.Scale, btnStartPos.X.Offset + delta.X, btnStartPos.Y.Scale, btnStartPos.Y.Offset + delta.Y)
+		end
+	end)
+	ToggleBtn.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			btnDragging = false
+		end
+	end)
+end
 
 -- Compact Mobile Window: 270px W x 380px H
-local W, H = 270, 380
+UI.W, UI.H = 270, 380
 local Main = mk("Frame", {
-	Size             = UDim2.new(0, W, 0, H),
-	Position         = UDim2.new(0.5, -W/2, 0.5, -H/2),
+	Size             = UDim2.new(0, UI.W, 0, UI.H),
+	Position         = UDim2.new(0.5, -UI.W/2, 0.5, -UI.H/2),
 	BackgroundColor3 = C.bg,
 	BorderSizePixel  = 0,
 	Visible          = false,
@@ -5684,49 +6256,52 @@ end
 
 local closeInspRef = nil
 
-local lastToggleTick = 0
-local function toggleMain()
-    local now = tick()
-    if now - lastToggleTick < 0.25 then return end
-    lastToggleTick = now
+do
+	local lastToggleTick = 0
+	ToggleBtn.Activated:Connect(function()
+		local now = tick()
+		if now - lastToggleTick < 0.25 then return end
+		lastToggleTick = now
 
-    Main.Visible = not Main.Visible
-    updateToggleBtnState()
-    if not Main.Visible and closeInspRef then
-        closeInspRef()
-    end
+		Main.Visible = not Main.Visible
+		updateToggleBtnState()
+		if not Main.Visible and closeInspRef then
+			closeInspRef()
+		end
+	end)
 end
-ToggleBtn.Activated:Connect(toggleMain)
 
 -- Draggable Main Window
-local dragging, dragStart, startPos
-Main.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		dragging  = true
-		dragStart = input.Position
-		startPos  = Main.Position
-	end
-end)
-Main.InputChanged:Connect(function(input)
-	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-		local delta = input.Position - dragStart
-		Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-	end
-end)
-Main.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		dragging = false
-	end
-end)
+do
+	local dragging, dragStart, startPos
+	Main.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging  = true
+			dragStart = input.Position
+			startPos  = Main.Position
+		end
+	end)
+	Main.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - dragStart
+			Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end)
+	Main.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+end
 
 -- Title Bar
-local TitleBar = mk("Frame", {
+UI.TitleBar = mk("Frame", {
 	Size             = UDim2.new(1, 0, 0, 26),
 	BackgroundColor3 = C.panel,
 	BorderSizePixel  = 0,
 	ZIndex           = 11,
 }, Main)
-corner(6, TitleBar)
+corner(6, UI.TitleBar)
 
 mk("TextLabel", {
 	Size               = UDim2.new(0, 110, 1, 0),
@@ -5738,7 +6313,7 @@ mk("TextLabel", {
 	TextSize           = 9,
 	TextXAlignment     = Enum.TextXAlignment.Left,
 	ZIndex             = 12,
-}, TitleBar)
+}, UI.TitleBar)
 
 local TitleStatsBtn = mk("TextButton", {
 	Size            = UDim2.new(0, 48, 0, 18),
@@ -5751,62 +6326,63 @@ local TitleStatsBtn = mk("TextButton", {
 	BorderSizePixel = 0,
 	ZIndex          = 12,
 	AutoButtonColor = false,
-}, TitleBar)
+}, UI.TitleBar)
 corner(4, TitleStatsBtn)
 stroke(1, C.border, TitleStatsBtn)
 
-local MinBtn = mk("TextButton", {
-	Size            = UDim2.new(0, 18, 0, 18),
-	Position        = UDim2.new(1, -44, 0, 4),
-	BackgroundColor3= C.btn,
-	Text            = "_",
-	TextColor3      = C.text,
-	Font            = Enum.Font.GothamBold,
-	TextSize        = 9,
-	BorderSizePixel = 0,
-	ZIndex          = 12,
-	AutoButtonColor = false,
-}, TitleBar)
-corner(4, MinBtn)
-stroke(1, C.border, MinBtn)
+do
+	local MinBtn = mk("TextButton", {
+		Size            = UDim2.new(0, 18, 0, 18),
+		Position        = UDim2.new(1, -44, 0, 4),
+		BackgroundColor3= C.btn,
+		Text            = "_",
+		TextColor3      = C.text,
+		Font            = Enum.Font.GothamBold,
+		TextSize        = 9,
+		BorderSizePixel = 0,
+		ZIndex          = 12,
+		AutoButtonColor = false,
+	}, UI.TitleBar)
+	corner(4, MinBtn)
+	stroke(1, C.border, MinBtn)
 
-local CloseBtn = mk("TextButton", {
-	Size            = UDim2.new(0, 18, 0, 18),
-	Position        = UDim2.new(1, -22, 0, 4),
-	BackgroundColor3= C.btn,
-	Text            = "X",
-	TextColor3      = C.text,
-	Font            = Enum.Font.GothamBold,
-	TextSize        = 8.5,
-	BorderSizePixel = 0,
-	ZIndex          = 12,
-	AutoButtonColor = false,
-}, TitleBar)
-corner(4, CloseBtn)
-stroke(1, C.border, CloseBtn)
+	local CloseBtn = mk("TextButton", {
+		Size            = UDim2.new(0, 18, 0, 18),
+		Position        = UDim2.new(1, -22, 0, 4),
+		BackgroundColor3= C.btn,
+		Text            = "X",
+		TextColor3      = C.text,
+		Font            = Enum.Font.GothamBold,
+		TextSize        = 8.5,
+		BorderSizePixel = 0,
+		ZIndex          = 12,
+		AutoButtonColor = false,
+	}, UI.TitleBar)
+	corner(4, CloseBtn)
+	stroke(1, C.border, CloseBtn)
 
-local function closeMain()
-    Main.Visible = false
-    updateToggleBtnState()
-    if closeInspRef then closeInspRef() end
+	CloseBtn.Activated:Connect(function()
+		Main.Visible = false
+		updateToggleBtnState()
+		if closeInspRef then closeInspRef() end
+	end)
+
+	local ContentArea = mk("Frame", {
+		Size               = UDim2.new(1, 0, 1, -26),
+		Position           = UDim2.new(0, 0, 0, 26),
+		BackgroundTransparency = 1,
+		ClipsDescendants   = true,
+		ZIndex             = 11,
+	}, Main)
+	UI.ContentArea = ContentArea
+
+	local isMinimized = false
+	MinBtn.Activated:Connect(function()
+		isMinimized = not isMinimized
+		ContentArea.Visible = not isMinimized
+		Main.Size = isMinimized and UDim2.new(0, UI.W, 0, 26) or UDim2.new(0, UI.W, 0, UI.H)
+	end)
 end
-CloseBtn.Activated:Connect(closeMain)
-
-local ContentArea = mk("Frame", {
-	Size               = UDim2.new(1, 0, 1, -26),
-	Position           = UDim2.new(0, 0, 0, 26),
-	BackgroundTransparency = 1,
-	ClipsDescendants   = true,
-	ZIndex             = 11,
-}, Main)
-
-local isMinimized = false
-local function toggleMin()
-	isMinimized = not isMinimized
-	ContentArea.Visible = not isMinimized
-	Main.Size = isMinimized and UDim2.new(0, W, 0, 26) or UDim2.new(0, W, 0, H)
-end
-MinBtn.Activated:Connect(toggleMin)
 
 -- Left Category Sidebar
 local CatScroll = mk("ScrollingFrame", {
@@ -5817,7 +6393,7 @@ local CatScroll = mk("ScrollingFrame", {
 	ScrollBarThickness = 2,
 	CanvasSize         = UDim2.new(0, 0, 0, #catOrder * 34 + 6),
 	ZIndex             = 12,
-}, ContentArea)
+}, UI.ContentArea)
 
 mk("UIListLayout", {
 	Padding             = UDim.new(0, 3),
@@ -5833,7 +6409,7 @@ local SearchBoxFrame = mk("Frame", {
 	BackgroundColor3   = C.panel,
 	BorderSizePixel    = 0,
 	ZIndex             = 13,
-}, ContentArea)
+}, UI.ContentArea)
 corner(4, SearchBoxFrame)
 stroke(1, C.border, SearchBoxFrame)
 
@@ -5861,14 +6437,14 @@ local GridScroll = mk("ScrollingFrame", {
 	CanvasSize         = UDim2.new(0, 0, 0, 0),
 	AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	ZIndex             = 12,
-}, ContentArea)
+}, UI.ContentArea)
 
 mk("UIGridLayout", {
 	CellSize    = UDim2.new(0, 58, 0, 68),
 	CellPadding = UDim2.new(0, 3, 0, 3),
 	SortOrder   = Enum.SortOrder.LayoutOrder,
 }, GridScroll)
-mk("UIPadding", {PaddingTop = UDim.new(0, 2), PaddingLeft = UDim.new(0, 2)}, GridScroll)
+mk("UIPadding", {PaddingTop = UDim.new(0, 2), PaddingLeft = UDim2.new(0, 2)}, GridScroll)
 
 -- ============================================================
 -- 5B. VISUAL STAT SPOOFER PANEL (Monochrome, Real-Time)
@@ -5879,8 +6455,9 @@ local StatsPanel = mk("Frame", {
 	BackgroundTransparency = 1,
 	Visible            = false,
 	ZIndex             = 12,
-}, ContentArea)
+}, UI.ContentArea)
 
+do
 mk("TextLabel", {
 	Size               = UDim2.new(1, -10, 0, 18),
 	Position           = UDim2.new(0, 6, 0, 4),
@@ -5993,7 +6570,7 @@ local function rebuildStatLabelCache(force)
 	for _, gui in ipairs(pg:GetChildren()) do
 		if gui.Name == "Shop" then
 			if gui:FindFirstChild("Header") then table.insert(roots, gui.Header) end
-		elseif gui.Name ~= "RH_Wardrobe_v54" then
+		elseif gui.Name ~= "RH_Wardrobe_v55" then
 			table.insert(roots, gui)
 		end
 	end
@@ -6263,6 +6840,8 @@ task.spawn(function()
 		task.wait(1)
 	end
 end)
+
+end -- Stat Spoofer scope
 
 -- Slide-up Inspector (140px height)
 local InspHeight = 140
@@ -6925,7 +7504,7 @@ local function refreshGrid()
 			if aHas ~= bHas then
 				return aHas > bHas
 			end
-			return a.name:lower() < b.name:lower()
+			return tostring(a.name or ""):lower() < tostring(b.name or ""):lower()
 		end)
 	end
 
@@ -6995,15 +7574,16 @@ for i, cat in ipairs(catOrder) do
 	btn.Activated:Connect(function() setActiveCategory(cat) end)
 end
 
-updateTabCounts()
+pcall(updateTabCounts)
 
 SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
 	currentSearch = SearchBox.Text
 	refreshGrid()
 end)
 
-setActiveCategory("Heels")
 Main.Visible = true
 updateToggleBtnState()
+pcall(setActiveCategory, "Heels")
+pcall(updateTabCounts)
 
-print("[RH Wardrobe v54] Preview-First customize toggles & colors before cloning, multi-halo stacking, 1:1 RBXMs active.")
+print("[RH Wardrobe v55] 100% Royale High MultiColor formatting (16 RBXMs + all items), articulated heels & HipHeight persistence, full rig visibility active.")
