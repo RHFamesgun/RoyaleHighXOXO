@@ -5395,37 +5395,19 @@ local SearchBox = mk("TextBox", {
 	ZIndex             = 14,
 }, SearchBoxFrame)
 
--- Item Grid (58px x 68px mini cards)
+-- Item Grid (58px x 68px mini cards with deterministic explicit 3-column layout, zero UIGridLayout/AutomaticCanvasSize issues!)
 local GridScroll = mk("ScrollingFrame", {
 	Size               = UDim2.new(1, -70, 1, -26),
 	Position           = UDim2.new(0, 70, 0, 26),
-	BackgroundTransparency = 1,
+	BackgroundColor3   = C.bg,
+	BackgroundTransparency = 0,
 	BorderSizePixel    = 0,
 	ScrollBarThickness = 2,
 	ClipsDescendants   = true,
 	CanvasSize         = UDim2.new(0, 0, 0, 0),
 	ZIndex             = 12,
 }, UI.ContentArea)
-pcall(function() GridScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y end)
-
-local function ensureGridLayout()
-	local gl = GridScroll:FindFirstChildOfClass("UIGridLayout")
-	if not gl then
-		gl = mk("UIGridLayout", {
-			CellSize    = UDim2.new(0, 58, 0, 68),
-			CellPadding = UDim2.new(0, 3, 0, 3),
-			SortOrder   = Enum.SortOrder.LayoutOrder,
-		}, GridScroll)
-		gl:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-			GridScroll.CanvasSize = UDim2.new(0, 0, 0, gl.AbsoluteContentSize.Y + 12)
-		end)
-	end
-	if not GridScroll:FindFirstChildOfClass("UIPadding") then
-		mk("UIPadding", {PaddingTop = UDim.new(0, 2), PaddingLeft = UDim.new(0, 2)}, GridScroll)
-	end
-	return gl
-end
-ensureGridLayout()
+pcall(function() GridScroll.ScrollingDirection = Enum.ScrollingDirection.Y end)
 
 -- ============================================================
 -- 5B. VISUAL STAT SPOOFER PANEL (Monochrome, Real-Time)
@@ -5448,12 +5430,18 @@ local cardInstances = {}
 local function makeCard(item, order)
 	local safeName = tostring(item.name or item.assetName or "Item")
 	local safeImg = (type(item.img) == "string") and item.img or ""
-	local card = mk("Frame", {
+	local col = (order - 1) % 3
+	local row = math.floor((order - 1) / 3)
+	local card = mk("TextButton", {
 		Name             = "Card_" .. safeName:sub(1, 10),
 		Size             = UDim2.new(0, 58, 0, 68),
+		Position         = UDim2.new(0, 4 + col * 62, 0, 4 + row * 72),
 		BackgroundColor3 = C.card,
+		Text             = "",
 		BorderSizePixel  = 0,
 		Visible          = true,
+		Active           = true,
+		AutoButtonColor  = true,
 		LayoutOrder      = order,
 		ZIndex           = 13,
 	}, GridScroll)
@@ -5563,14 +5551,7 @@ local function makeCard(item, order)
 		ZIndex             = 14,
 	}, card)
 
-	local btn = mk("TextButton", {
-		Size               = UDim2.new(1, 0, 1, 0),
-		BackgroundTransparency = 1,
-		Text               = "",
-		Active             = true,
-		ZIndex             = 16,
-	}, card)
-	onClick(btn, function()
+	onClick(card, function()
 		if UI.openInsp then
 			UI.openInsp(item)
 		elseif notifyToastRef then
@@ -5583,118 +5564,131 @@ local function makeCard(item, order)
 end
 
 local function refreshGrid()
-	for _, card in pairs(cardInstances) do pcall(function() card:Destroy() end) end
-	cardInstances = {}
-	for _, ch in ipairs(GridScroll:GetChildren()) do
-		if ch:IsA("GuiObject") then pcall(function() ch:Destroy() end) end
-	end
-	ensureGridLayout()
+	local okRun, errRun = pcall(function()
+		for _, card in pairs(cardInstances) do pcall(function() card:Destroy() end) end
+		cardInstances = {}
+		for _, ch in ipairs(GridScroll:GetChildren()) do
+			if ch:IsA("GuiObject") then pcall(function() ch:Destroy() end) end
+		end
 
-	if currentCat == "Stats" then return end
+		if currentCat == "Stats" then return end
 
-	local list = {}
-	if currentCat == "Worn" then
-		local okW, wl = pcall(getWornItemsList)
-		list = (okW and type(wl) == "table") and wl or {}
-	else
-		list = categories[currentCat] or {}
-	end
+		local list = {}
+		if currentCat == "Worn" then
+			local okW, wl = pcall(getWornItemsList)
+			list = (okW and type(wl) == "table") and wl or {}
+		else
+			list = categories[currentCat] or {}
+		end
 
-	local search = (currentCat == "Worn") and "" or tostring(currentSearch or ""):lower()
-	local filtered = {}
-	for _, item in ipairs(list) do
-		if type(item) == "table" then
-			local nm = tostring(item.name or item.assetName or "")
-			if search == "" or nm:lower():find(search, 1, true) then
-				table.insert(filtered, item)
+		local search = (currentCat == "Worn") and "" or tostring(currentSearch or ""):lower()
+		local filtered = {}
+		for _, item in ipairs(list) do
+			if type(item) == "table" then
+				local nm = tostring(item.name or item.assetName or "")
+				if search == "" or nm:lower():find(search, 1, true) then
+					table.insert(filtered, item)
+				end
 			end
 		end
-	end
 
-	if #filtered == 0 then
-		local gl = GridScroll:FindFirstChildOfClass("UIGridLayout")
-		if gl then gl:Destroy() end
-		local emptyCard = mk("Frame", {
-			Name             = "EmptyNotice",
-			Size             = UDim2.new(1, -8, 0, 64),
-			BackgroundColor3 = C.card,
-			BorderSizePixel  = 0,
-			LayoutOrder      = 1,
-			ZIndex           = 13,
-		}, GridScroll)
-		corner(4, emptyCard)
-		stroke(1, C.border, emptyCard)
+		if #filtered == 0 then
+			local emptyCard = mk("Frame", {
+				Name             = "EmptyNotice",
+				Size             = UDim2.new(1, -8, 0, 64),
+				Position         = UDim2.new(0, 4, 0, 4),
+				BackgroundColor3 = C.card,
+				BorderSizePixel  = 0,
+				ZIndex           = 13,
+			}, GridScroll)
+			corner(4, emptyCard)
+			stroke(1, C.border, emptyCard)
 
-		local emptyMsg = (currentCat == "Worn")
-			and "NO ITEMS WORN\n\nEquip items from Heels, Skirts, or Bodices to wear and stack them!"
-			or ("No matching items in " .. tostring(currentCat) .. " (total=" .. tostring(#list) .. ")")
-		mk("TextLabel", {
-			Size               = UDim2.new(1, -12, 1, 0),
-			Position           = UDim2.new(0, 6, 0, 0),
-			BackgroundTransparency = 1,
-			Text               = emptyMsg,
-			TextColor3         = C.sub,
+			local emptyMsg = (currentCat == "Worn")
+				and "NO ITEMS WORN\n\nEquip items from Heels, Skirts, or Bodices to wear and stack them!"
+				or ("No matching items in " .. tostring(currentCat) .. " (total=" .. tostring(#list) .. ")")
+			mk("TextLabel", {
+				Size               = UDim2.new(1, -12, 1, 0),
+				Position           = UDim2.new(0, 6, 0, 0),
+				BackgroundTransparency = 1,
+				Text               = emptyMsg,
+				TextColor3         = C.sub,
+				Font               = Enum.Font.GothamBold,
+				TextSize           = 7.5,
+				TextWrapped        = true,
+				ZIndex             = 14,
+			}, emptyCard)
+			cardInstances[emptyCard] = emptyCard
+			GridScroll.CanvasSize = UDim2.new(0, 0, 0, 76)
+			return
+		end
+
+		if currentCat ~= "Worn" then
+			-- Sort: Items with valid images FIRST, items with NO image LAST
+			pcall(function()
+				table.sort(filtered, function(a, b)
+					local aHas = (type(a.img) == "string" and a.img ~= "") and 1 or 0
+					local bHas = (type(b.img) == "string" and b.img ~= "") and 1 or 0
+					if aHas ~= bHas then
+						return aHas > bHas
+					end
+					return tostring(a.name or ""):lower() < tostring(b.name or ""):lower()
+				end)
+			end)
+		end
+
+		local firstCardErr = nil
+		local madeCount = 0
+		for order, item in ipairs(filtered) do
+			local okC, errC = pcall(makeCard, item, order)
+			if okC then
+				madeCount = madeCount + 1
+			elseif not firstCardErr then
+				firstCardErr = tostring(errC)
+			end
+		end
+		if madeCount == 0 and firstCardErr then
+			local errCard = mk("Frame", {
+				Name             = "GridErrNotice",
+				Size             = UDim2.new(1, -8, 0, 68),
+				Position         = UDim2.new(0, 4, 0, 4),
+				BackgroundColor3 = C.card,
+				BorderSizePixel  = 0,
+				ZIndex           = 15,
+			}, GridScroll)
+			corner(4, errCard)
+			stroke(1, C.borderHi, errCard)
+			mk("TextLabel", {
+				Size               = UDim2.new(1, -8, 1, -4),
+				Position           = UDim2.new(0, 4, 0, 2),
+				BackgroundTransparency = 1,
+				Text               = "CARD ERR: " .. firstCardErr,
+				TextColor3         = C.text,
+				Font               = Enum.Font.GothamBold,
+				TextSize           = 7,
+				TextWrapped        = true,
+				ZIndex             = 16,
+			}, errCard)
+			cardInstances[errCard] = errCard
+		end
+		GridScroll.CanvasSize = UDim2.new(0, 0, 0, math.ceil(math.max(1, madeCount) / 3) * 72 + 12)
+	end)
+	if not okRun then
+		warn("[RH Wardrobe v55] refreshGrid error:", errRun)
+		pcall(function() SearchBox.PlaceholderText = "ERR: " .. tostring(errRun):sub(1, 24) end)
+		local errBox = mk("TextLabel", {
+			Size               = UDim2.new(1, -8, 0, 64),
+			Position           = UDim2.new(0, 4, 0, 4),
+			BackgroundColor3   = C.card,
+			Text               = "GRID ERR: " .. tostring(errRun),
+			TextColor3         = C.text,
 			Font               = Enum.Font.GothamBold,
 			TextSize           = 7.5,
 			TextWrapped        = true,
-			ZIndex             = 14,
-		}, emptyCard)
-		cardInstances[emptyCard] = emptyCard
-		GridScroll.CanvasSize = UDim2.new(0, 0, 0, 76)
-		return
-	end
-
-	if currentCat ~= "Worn" then
-		-- Sort: Items with valid images FIRST, items with NO image LAST
-		pcall(function()
-			table.sort(filtered, function(a, b)
-				local aHas = (type(a.img) == "string" and a.img ~= "") and 1 or 0
-				local bHas = (type(b.img) == "string" and b.img ~= "") and 1 or 0
-				if aHas ~= bHas then
-					return aHas > bHas
-				end
-				return tostring(a.name or ""):lower() < tostring(b.name or ""):lower()
-			end)
-		end)
-	end
-
-	local firstCardErr = nil
-	local madeCount = 0
-	for order, item in ipairs(filtered) do
-		local okC, errC = pcall(makeCard, item, order)
-		if okC then
-			madeCount = madeCount + 1
-		elseif not firstCardErr then
-			firstCardErr = tostring(errC)
-		end
-	end
-	if madeCount == 0 and firstCardErr then
-		local gl = GridScroll:FindFirstChildOfClass("UIGridLayout")
-		if gl then gl:Destroy() end
-		local errCard = mk("Frame", {
-			Name             = "GridErrNotice",
-			Size             = UDim2.new(1, -8, 0, 68),
-			BackgroundColor3 = C.card,
-			BorderSizePixel  = 0,
-			LayoutOrder      = 1,
-			ZIndex           = 15,
+			ZIndex             = 30,
 		}, GridScroll)
-		corner(4, errCard)
-		stroke(1, C.borderHi, errCard)
-		mk("TextLabel", {
-			Size               = UDim2.new(1, -8, 1, -4),
-			Position           = UDim2.new(0, 4, 0, 2),
-			BackgroundTransparency = 1,
-			Text               = "CARD ERR: " .. firstCardErr,
-			TextColor3         = C.text,
-			Font               = Enum.Font.GothamBold,
-			TextSize           = 7,
-			TextWrapped        = true,
-			ZIndex             = 16,
-		}, errCard)
-		cardInstances[errCard] = errCard
+		cardInstances[errBox] = errBox
 	end
-	GridScroll.CanvasSize = UDim2.new(0, 0, 0, math.ceil(math.max(1, madeCount) / 3) * 72 + 16)
 end
 
 UI.updateTabCounts = updateTabCounts
@@ -5731,6 +5725,7 @@ local function setActiveCategory(cat)
 		StatsPanel.Visible     = false
 		SearchBoxFrame.Visible = true
 		GridScroll.Visible     = true
+		pcall(function() GridScroll.CanvasPosition = Vector2.new(0, 0) end)
 		refreshGrid()
 	end
 end
