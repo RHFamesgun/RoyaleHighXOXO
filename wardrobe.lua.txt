@@ -5081,6 +5081,7 @@ ScreenGui.Name           = "RH_Wardrobe_v55"
 ScreenGui.ResetOnSpawn   = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.DisplayOrder   = 999
+pcall(function() ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling end)
 do
 	local okP = pcall(function() ScreenGui.Parent = getGuiParent() end)
 	if not okP or not ScreenGui.Parent then
@@ -5237,36 +5238,37 @@ do
 	end)
 end
 
--- Draggable Main Window
+-- Title Bar (Window drag attached strictly to TitleBar so CatScroll/GridScroll clicks are NEVER swallowed!)
+UI.TitleBar = mk("Frame", {
+	Size             = UDim2.new(1, 0, 0, 26),
+	BackgroundColor3 = C.panel,
+	BorderSizePixel  = 0,
+	Active           = true,
+	ZIndex           = 11,
+}, Main)
 do
 	local dragging, dragStart, startPos
-	Main.InputBegan:Connect(function(input)
+	UI.TitleBar.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging  = true
 			dragStart = input.Position
 			startPos  = Main.Position
+			pcall(function()
+				input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then
+						dragging = false
+					end
+				end)
+			end)
 		end
 	end)
-	Main.InputChanged:Connect(function(input)
+	UserInputService.InputChanged:Connect(function(input)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 			local delta = input.Position - dragStart
 			Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 		end
 	end)
-	Main.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = false
-		end
-	end)
 end
-
--- Title Bar
-UI.TitleBar = mk("Frame", {
-	Size             = UDim2.new(1, 0, 0, 26),
-	BackgroundColor3 = C.panel,
-	BorderSizePixel  = 0,
-	ZIndex           = 11,
-}, Main)
 corner(6, UI.TitleBar)
 
 mk("TextLabel", {
@@ -5368,35 +5370,6 @@ mk("UIListLayout", {
 }, CatScroll)
 mk("UIPadding", {PaddingTop = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3)}, CatScroll)
 
--- Create sidebar category buttons immediately so sections ALWAYS render right inside CatScroll!
-for i, cat in ipairs(catOrder) do
-	local count = #(categories[cat] or {})
-	local btn = mk("TextButton", {
-		Size             = UDim2.new(1, -4, 0, 30),
-		BackgroundColor3 = C.tabInact,
-		Text             = cat .. "\n(" .. count .. ")",
-		TextColor3       = C.tabInaTxt,
-		Font             = Enum.Font.GothamBold,
-		TextSize         = 7.5,
-		BorderSizePixel  = 0,
-		LayoutOrder      = i,
-		ZIndex           = 20,
-		Active           = true,
-		AutoButtonColor  = false,
-	}, CatScroll)
-	corner(4, btn)
-	stroke(1, C.border, btn)
-	tabButtons[cat] = btn
-	onClick(btn, function()
-		if UI.setActiveCategory then
-			local okSw, errSw = pcall(UI.setActiveCategory, cat)
-			if not okSw and notifyToastRef then
-				notifyToastRef("Tab err: " .. tostring(errSw), 3.0)
-			end
-		end
-	end)
-end
-
 -- Search Box
 local SearchBoxFrame = mk("Frame", {
 	Size               = UDim2.new(1, -74, 0, 22),
@@ -5430,15 +5403,20 @@ local GridScroll = mk("ScrollingFrame", {
 	BorderSizePixel    = 0,
 	ScrollBarThickness = 2,
 	CanvasSize         = UDim2.new(0, 0, 0, 0),
-	AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	ZIndex             = 12,
 }, UI.ContentArea)
+pcall(function() GridScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y end)
 
-mk("UIGridLayout", {
-	CellSize    = UDim2.new(0, 58, 0, 68),
-	CellPadding = UDim2.new(0, 3, 0, 3),
-	SortOrder   = Enum.SortOrder.LayoutOrder,
-}, GridScroll)
+do
+	local GridLayout = mk("UIGridLayout", {
+		CellSize    = UDim2.new(0, 58, 0, 68),
+		CellPadding = UDim2.new(0, 3, 0, 3),
+		SortOrder   = Enum.SortOrder.LayoutOrder,
+	}, GridScroll)
+	GridLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		GridScroll.CanvasSize = UDim2.new(0, 0, 0, GridLayout.AbsoluteContentSize.Y + 10)
+	end)
+end
 mk("UIPadding", {PaddingTop = UDim.new(0, 2), PaddingLeft = UDim2.new(0, 2)}, GridScroll)
 
 -- ============================================================
@@ -5700,6 +5678,34 @@ local function setActiveCategory(cat)
 end
 
 UI.setActiveCategory = setActiveCategory
+
+-- Create sidebar category buttons wired DIRECTLY to setActiveCategory
+for i, cat in ipairs(catOrder) do
+	local count = #(categories[cat] or {})
+	local btn = mk("TextButton", {
+		Size             = UDim2.new(1, -4, 0, 30),
+		BackgroundColor3 = C.tabInact,
+		Text             = cat .. "\n(" .. count .. ")",
+		TextColor3       = C.tabInaTxt,
+		Font             = Enum.Font.GothamBold,
+		TextSize         = 7.5,
+		BorderSizePixel  = 0,
+		LayoutOrder      = i,
+		ZIndex           = 20,
+		Active           = true,
+		AutoButtonColor  = true,
+	}, CatScroll)
+	corner(4, btn)
+	stroke(1, C.border, btn)
+	tabButtons[cat] = btn
+	onClick(btn, function()
+		local okSw, errSw = pcall(setActiveCategory, cat)
+		if not okSw and notifyToastRef then
+			notifyToastRef("Tab err: " .. tostring(errSw), 3.5)
+		end
+	end)
+end
+
 onClick(TitleStatsBtn, function()
 	pcall(setActiveCategory, "Stats")
 end)
@@ -5712,8 +5718,12 @@ end)
 Main.Visible = true
 updateToggleBtnState()
 local okInit, errInit = pcall(setActiveCategory, "Heels")
-if not okInit and notifyToastRef then
-	notifyToastRef("Grid init err: " .. tostring(errInit), 4.0)
+if not okInit then
+	warn("[RH Wardrobe v55] Grid init err:", errInit)
+	if notifyToastRef then notifyToastRef("Grid init err: " .. tostring(errInit), 5.0) end
+else
+	local hCnt = #(categories.Heels or {})
+	if notifyToastRef then notifyToastRef("Wardrobe Ready (" .. tostring(hCnt) .. " Heels)", 2.2) end
 end
 pcall(updateTabCounts)
 
